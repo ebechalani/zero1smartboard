@@ -137,6 +137,19 @@ describe('workspace fingerprint', () => {
     expect(workspaceFingerprint(moved)).toBe(workspaceFingerprint(WORKSPACE));
   });
 
+  it('ignores the random ids Blockly gives on every load', () => {
+    // Saving and restoring the same program renumbers every id; that must not
+    // count as a change, or students are warned before touching anything.
+    const reloaded = structuredClone(WORKSPACE);
+    let n = 0;
+    const renumber = (block: { id?: string; inputs?: Record<string, { block: object }> }): void => {
+      if (block.id) block.id = `blockly-fresh-${n++}`;
+      for (const input of Object.values(block.inputs ?? {})) renumber(input.block as typeof block);
+    };
+    for (const block of reloaded.blocks.blocks) renumber(block);
+    expect(workspaceFingerprint(reloaded)).toBe(workspaceFingerprint(WORKSPACE));
+  });
+
   it('notices a changed field or an added block', () => {
     const edited = structuredClone(WORKSPACE);
     edited.blocks.blocks[1].inputs!.DO.block.fields.STATE = 'OFF';

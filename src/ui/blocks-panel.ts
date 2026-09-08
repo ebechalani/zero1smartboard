@@ -244,9 +244,26 @@ export function parseWorkspaceJson(text: string): object | null {
 /**
  * A comparable form of a workspace that ignores where the blocks are placed
  * (`x` / `y`), so that merely dragging blocks around does not count as a change.
+ *
+ * Blockly gives every block and variable a fresh random `id` each time a
+ * workspace is loaded, so ids are renumbered in order of appearance. Without
+ * that, the same program saved and restored would look different and students
+ * would be asked "your blocks will be lost" before they changed anything.
  */
 export function workspaceFingerprint(workspace: object): string {
-  return JSON.stringify(workspace, (key, value: unknown) => (key === 'x' || key === 'y' ? undefined : value));
+  const seen = new Map<string, string>();
+  return JSON.stringify(workspace, (key, value: unknown) => {
+    if (key === 'x' || key === 'y') return undefined;
+    if (key === 'id' && typeof value === 'string') {
+      let id = seen.get(value);
+      if (id === undefined) {
+        id = `#${seen.size}`;
+        seen.set(value, id);
+      }
+      return id;
+    }
+    return value;
+  });
 }
 
 // ---------------------------------------------------------------------------
