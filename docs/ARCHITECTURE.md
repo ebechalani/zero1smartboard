@@ -548,7 +548,7 @@ ignored: call Serial.begin(9600) in setup()". `Serial` must be truthy
 
 ### 6.4 `Servo`
 
-`attach(pin, min=544, max=2400)`, `detach()`, `write(v)` (v < 200 → angle
+`attach(pin, min=544, max=2400)`, `detach()`, `write(v)` (v < 544 → angle
 clamped 0..180, else treated as microseconds), `writeMicroseconds(us)`
 (angle = map(us, min, max, 0, 180)), `read()`, `readMicroseconds()`,
 `attached()`. `write` before `attach` → console warning once. Calls
@@ -829,3 +829,9 @@ export async function runSketch(source: string, opts?: { stopAfterMs?: number; m
 Module tests live next to their module name: `tests/parser.test.ts`,
 `tests/codegen.test.ts`, `tests/board.test.ts`, `tests/executor.test.ts`,
 `tests/libs.test.ts`, `tests/peripherals.test.ts`, `tests/examples.test.ts`.
+
+---
+
+## 11. Block programming
+
+See docs/BLOCKS.md (block set, Arduino generator rules, UI behaviour, tests, examples).
