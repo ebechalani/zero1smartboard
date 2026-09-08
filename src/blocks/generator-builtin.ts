@@ -17,7 +17,7 @@ export function installBuiltinGenerators(g: ArduinoGenerator): void {
   f['controls_if'] = (block: Block, gen: ArduinoGenerator): string => {
     let code = '';
     for (let n = 0; block.getInput(`IF${n}`); n++) {
-      const condition = gen.value(block, `IF${n}`, Order.NONE, 'false');
+      const condition = gen.condition(block, `IF${n}`);
       const branch = gen.statementToCode(block, `DO${n}`);
       code += `${n === 0 ? 'if' : ' else if'} (${condition}) {\n${branch}}`;
     }
@@ -70,8 +70,7 @@ export function installBuiltinGenerators(g: ArduinoGenerator): void {
 
   f['controls_whileUntil'] = (block: Block, gen: ArduinoGenerator): string => {
     const until = block.getFieldValue('MODE') === 'UNTIL';
-    let condition = gen.value(block, 'BOOL', until ? Order.UNARY_PREFIX : Order.NONE, 'false');
-    if (until) condition = `!${condition}`;
+    const condition = until ? `!${gen.value(block, 'BOOL', Order.UNARY_PREFIX, 'false')}` : gen.condition(block, 'BOOL');
     const body = gen.statementToCode(block, 'DO');
     return `while (${condition}) {\n${body}}\n`;
   };
@@ -122,8 +121,7 @@ export function installBuiltinGenerators(g: ArduinoGenerator): void {
     };
     const [symbol, order] = operators[op] ?? operators['ADD']!;
     const a = gen.value(block, 'A', order, '0');
-    let b = gen.value(block, 'B', order, '0');
-    if (symbol === '-' && b.startsWith('-')) b = ` ${b}`; // avoid "--"
+    const b = gen.value(block, 'B', order, '0');
     return [`${a} ${symbol} ${b}`, order];
   };
 
@@ -349,7 +347,7 @@ export function installBuiltinGenerators(g: ArduinoGenerator): void {
   };
 
   f['procedures_ifreturn'] = (block: Block, gen: ArduinoGenerator): string => {
-    const condition = gen.value(block, 'CONDITION', Order.NONE, 'false');
+    const condition = gen.condition(block, 'CONDITION');
     const root = block.getRootBlock();
     let statement = 'return;';
     if (root.type === 'procedures_defreturn') {

@@ -248,6 +248,28 @@ export function formatNumber(value: unknown): string {
 
 const REPEAT_COUNTER_BASES = ['i', 'j', 'k'];
 
+/** `(a == b)` → `a == b`, but only when the first `(` closes at the very end (string literals are skipped). */
+function stripOuterParentheses(code: string): string {
+  if (!code.startsWith('(') || !code.endsWith(')')) return code;
+  let depth = 0;
+  let inString = false;
+  for (let i = 0; i < code.length; i++) {
+    const ch = code[i];
+    if (inString) {
+      if (ch === '\\') i++;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') inString = true;
+    else if (ch === '(') depth++;
+    else if (ch === ')') {
+      depth--;
+      if (depth === 0 && i < code.length - 1) return code;
+    }
+  }
+  return code.slice(1, -1);
+}
+
 /**
  * Blockly code generator that produces an Arduino sketch.
  *
@@ -486,6 +508,15 @@ export class ArduinoGenerator extends Blockly.CodeGenerator {
     return '0';
   }
 
+  /**
+   * Code of a Boolean input written inside `if (…)` / `while (…)`: the
+   * parentheses that some value blocks carry (`(digitalRead(BUTTON_1) == HIGH)`)
+   * would be doubled, so a redundant outer pair is dropped.
+   */
+  condition(block: Blockly.Block, name: string): string {
+    return stripOuterParentheses(this.value(block, name, Order.NONE, 'false'));
+  }
+
   /** The block connected to a value input, if any. */
   inputBlock(block: Blockly.Block, name: string): Blockly.Block | null {
     return block.getInputTargetBlock(name);
@@ -561,8 +592,10 @@ export class ArduinoGenerator extends Blockly.CodeGenerator {
     for (const variable of Blockly.Variables.allUsedVarModels(workspace)) {
       const id = variable.getId();
       if (paramIds.has(id)) {
-        // Skip a parameter unless it is also used outside the function(s) that declare it.
+        // Skip a parameter unless it is also used outside the function(s) that
+        // declare it. (Call blocks list the parameters too; they do not count.)
         const usedElsewhere = allBlocks.some((b) => {
+          if (b.type === 'procedures_callnoreturn' || b.type === 'procedures_callreturn') return false;
           if (!b.getVarModels().some((v) => v.getId() === id)) return false;
           const root = b.getRootBlock();
           if (root.type !== 'procedures_defnoreturn' && root.type !== 'procedures_defreturn') return true;
