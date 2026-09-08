@@ -1,0 +1,41 @@
+# Line endings
+#
+# Every text file is stored AND checked out with LF, on Windows too. Without
+# this, Git's core.autocrlf setting (on by default on Windows) rewrites files
+# to CRLF on checkout, which shows the whole project as modified on one
+# machine and not on another. Node, Vite, Vitest and the Arduino IDE all read
+# LF files correctly on Windows.
+* text=auto eol=lf
+
+# Explicit for the file types in this project, so the rule survives even if
+# someone changes the line above.
+*.ts   text eol=lf
+*.ino  text eol=lf
+*.html text eol=lf
+*.css  text eol=lf
+*.json text eol=lf
+*.md   text eol=lf
+*.yml  text eol=lf
+
+# Never convert these: Git would corrupt them by rewriting bytes that happen
+# to look like line endings.
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.webp binary
+*.ico  binary
+*.svg  text eol=lf
+*.woff  binary
+*.woff2 binary
+*.ttf  binary
+*.otf  binary
+*.pdf  binary
+*.zip  binary
+
+# Keep the generated lockfile out of diffs and merge noise.
+package-lock.json -diff linguist-generated
+
+# GitHub language stats: this is a TypeScript project that ships Arduino
+# teaching sketches, so do not let the .ino files dominate the language bar.
+src/examples/*.ino linguist-documentation
