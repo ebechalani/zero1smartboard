@@ -194,11 +194,12 @@ describe('toolbox and theme', () => {
     }
   });
 
-  it('is a dark purple theme', () => {
+  it('is a light theme with dark toolbox text', () => {
     expect(ZERO1_THEME.name).toBe('zero1');
-    expect(ZERO1_THEME.getComponentStyle('workspaceBackgroundColour')).toBe('#1b1533');
-    expect(ZERO1_THEME.getComponentStyle('toolboxBackgroundColour')).toBe('#241a3d');
-    expect(ZERO1_THEME.getComponentStyle('flyoutBackgroundColour')).toBe('#2a2048');
+    expect(ZERO1_THEME.getComponentStyle('workspaceBackgroundColour')).toBe('#fcfbff');
+    expect(ZERO1_THEME.getComponentStyle('toolboxBackgroundColour')).toBe('#f5f3fa');
+    expect(ZERO1_THEME.getComponentStyle('toolboxForegroundColour')).toBe('#1e1633');
+    expect(ZERO1_THEME.getComponentStyle('flyoutBackgroundColour')).toBe('#ece7f8');
   });
 });
 

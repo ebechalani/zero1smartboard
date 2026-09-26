@@ -22,8 +22,16 @@ No installation is needed for students: the simulator is a static web page.
 - **Serial Monitor**, **Pin Map** (the lesson table with live pin states),
   **console** with error messages a student can understand, and a
   **Generated JS** tab for the curious.
+- **New** starts from the same blank sketch as the Arduino IDE's
+  *File > New* (or an empty blocks program), asking first if work would be
+  lost.
 - **21 example sketches** grouped by Outputs, Inputs, Display and Projects,
   each with its expected behaviour written in the header comment.
+- **Share** — copy a link that opens the work in the simulator, send it to
+  the teacher by email (type the teacher's address once; Gmail, Outlook or
+  the computer's email app opens a ready-to-send email with the link and the
+  Arduino code — nothing is sent until the student presses Send), or
+  download the sketch as an `.ino` file for the Arduino IDE.
 - **Settings** for the few hardware details that differ between board
   revisions (button wiring, 7-segment polarity and bit order, LCD address,
   buzzer type, LDR direction).

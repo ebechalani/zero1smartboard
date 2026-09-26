@@ -96,7 +96,7 @@ export async function createBlocksPanel(container: HTMLElement, opts: BlocksPane
     renderer: 'zelos',
     theme: blocks.ZERO1_THEME,
     toolbox: blocks.TOOLBOX,
-    grid: { spacing: 24, length: 3, colour: '#3b2f5c', snap: true },
+    grid: { spacing: 24, length: 3, colour: '#d3cbe6', snap: true },
     zoom: { controls: true, wheel: true, startScale: 0.85 },
     trashcan: true,
     move: { scrollbars: true, drag: true, wheel: false },

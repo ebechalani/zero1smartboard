@@ -679,14 +679,15 @@ and re-registers the LCD if the address changed.
 
 ### 8.1 Layout
 
-Single page, dark purple theme matching the PCB (background `#17112a`,
-panels `#241a3d`, accent `#8b5cf6`, text `#ede9fe`, monospace for code and
-serial). Responsive grid:
+Single page, light theme with the PCB purple as the accent (page background
+`#f5f3fa`, white cards, borders `#e2dcee`, accent `#7c3aed`, text `#1e1633`,
+muted text `#5f5878`, monospace for code and serial; every text colour meets
+WCAG AA on its background). Responsive grid:
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│ header: ZERO1 Smart Board Simulator · [Examples ▾] [▶ Run] [■ Stop] │
-│         [↺ Reset] [⚙ Settings] [GitHub]                             │
+│ header: ZERO1 Smart Board Simulator · [＋ New] [Examples ▾] [▶ Run] │
+│         [■ Stop] [↺ Reset] [⚙ Settings] [🔗 Share]                  │
 ├───────────────────────────────┬─────────────────────────────────────┤
 │ board SVG (scales to fit)     │ tabs: Code | Serial Monitor |       │
 │                               │       Pin Map | Generated JS        │
@@ -735,13 +736,26 @@ export function createBoardView(container: HTMLElement, board: Zero1Board): Boar
 ### 8.3 App (`app.ts`, others) — owner: ui-app
 
 - `main.ts`: creates `RealClock`, `createZero1Board`, mounts `App`.
-- Editor (`editor.ts`): CodeMirror 6 with `@codemirror/lang-cpp`, one-dark
-  theme, line numbers, tab = 2 spaces, `Ctrl/Cmd+Enter` = Run. Diagnostics
+- Editor (`editor.ts`): CodeMirror 6 with `@codemirror/lang-cpp`, a light
+  theme and syntax colours matching the app palette, line numbers, tab = 2 spaces, `Ctrl/Cmd+Enter` = Run. Diagnostics
   from `transpile()` shown with `@codemirror/lint` `setDiagnostics`. Code is
   persisted to `localStorage` (`z1.code`) and restored on load; an
   `Examples` menu replaces the code (confirm if the current code differs
-  from the last loaded example). URL hash `#code=<base64url>` loads shared
-  code ("Share" button copies such a link).
+  from the last loaded example). **New** puts the Arduino IDE's blank sketch
+  (`BLANK_SKETCH`, File > New) in the editor, with the same confirmation; in
+  Blocks mode it resets the workspace to `DEFAULT_WORKSPACE`. Neither stops a
+  running sketch. URL hash `#code=<base64url>` loads shared code.
+- Share dialog (`share-dialog.ts`, opened by the "Share" button): the
+  `#code=` / `#blocks=` link with Copy link; "Send to your teacher" — the
+  teacher's email (strictly validated: no spaces or `, ; ? & # < > " '`) and
+  an optional name, remembered in `localStorage` (`z1.teacherEmail`,
+  `z1.studentName`), then Gmail / Outlook web compose links, a `mailto:` link
+  (CRLF line breaks, RFC 6068) or "Copy email text". The email carries the
+  link and the Arduino code; the simulator itself sends nothing. Email links
+  are kept under ~1900 characters (`mailto:`) / ~8000 (web mail): a longer
+  email keeps the link only, else the code only, and as a last resort the
+  full text is copied to the clipboard to paste (`fitShareEmail`).
+  "Download .ino" saves the sketch as `zero1_<name>.ino`.
 - Run: `transpile()` → on error show diagnostics in the editor and console,
   else `board.reset()`, `executor.run(js)`; buttons reflect status; the
   header shows a running indicator and elapsed `millis()`.

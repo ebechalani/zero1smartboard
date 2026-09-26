@@ -17,7 +17,7 @@ export class ArduinoGenerator extends Blockly.CodeGenerator {}
 export const arduinoGenerator: ArduinoGenerator;           // workspaceToCode(ws) → full sketch text
 export function workspaceToArduino(ws: Blockly.Workspace): string; // registerZero1Blocks() + generate
 export const TOOLBOX: Blockly.utils.toolbox.ToolboxDefinition;     // category toolbox (§11.2 order)
-export const ZERO1_THEME: Blockly.Theme;                   // dark purple theme matching the app
+export const ZERO1_THEME: Blockly.Theme;                   // light theme matching the app
 export const DEFAULT_WORKSPACE: object;                    // serialization JSON: one setup hat + one loop hat
 export interface BlockExample { id: string; title: string; group: string; description: string; workspace: object; }
 export const BLOCK_EXAMPLES: BlockExample[];               // §11.6
@@ -235,8 +235,10 @@ App behaviour:
   (debounced) and restored on load, else `DEFAULT_WORKSPACE`. The Examples
   menu lists `BLOCK_EXAMPLES` (grouped) and loads them into the workspace
   (confirm when the current workspace differs from the last loaded example).
-  Share copies `#blocks=<base64url JSON>`; loading such a hash switches to
-  Blocks mode.
+  Share opens the share dialog with a `#blocks=<base64url JSON>` link (the
+  email to the teacher and the downloaded `.ino` carry the sketch generated
+  from the blocks); loading such a hash switches to Blocks mode. New resets
+  the workspace to `DEFAULT_WORKSPACE` (same confirmation as an example).
 - In **Code mode** the Blocks tab is hidden and everything works as today.
 - Switching **Blocks → Code** puts the generated sketch into the editor,
   editable (the blocks stay saved). Switching **Code → Blocks** restores the

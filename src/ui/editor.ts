@@ -11,8 +11,8 @@ import { basicSetup } from 'codemirror';
 import { EditorView, keymap } from '@codemirror/view';
 import { Compartment, EditorState, Prec } from '@codemirror/state';
 import { cpp } from '@codemirror/lang-cpp';
-import { oneDark } from '@codemirror/theme-one-dark';
-import { indentUnit } from '@codemirror/language';
+import { HighlightStyle, indentUnit, syntaxHighlighting } from '@codemirror/language';
+import { tags as t } from '@lezer/highlight';
 import { indentWithTab } from '@codemirror/commands';
 import { lintGutter, setDiagnostics, type Diagnostic as CmDiagnostic } from '@codemirror/lint';
 import type { Diagnostic } from '../types';
@@ -49,17 +49,58 @@ export interface Editor {
   destroy(): void;
 }
 
-/** Colours that blend the one-dark theme into the purple board palette. */
-const purpleOverrides = EditorView.theme(
-  {
-    '&': { backgroundColor: '#1a1330', height: '100%' },
-    '.cm-gutters': { backgroundColor: '#1a1330', borderRight: '1px solid #2f2350' },
-    '.cm-activeLineGutter': { backgroundColor: '#2a1f4a' },
-    '.cm-activeLine': { backgroundColor: '#2a1f4a66' },
-    '.cm-scroller': { fontFamily: '"JetBrains Mono", "Fira Code", Consolas, "Courier New", monospace' },
+/**
+ * Light editor chrome matching the app palette (src/ui/style.css): white
+ * page, lavender gutter, purple caret/selection. Selectors mirror the ones of
+ * CodeMirror's base theme so that these rules win over its light defaults.
+ */
+const lightTheme = EditorView.theme({
+  '&': { backgroundColor: '#ffffff', color: '#1e1633', height: '100%' },
+  '.cm-scroller': { fontFamily: '"JetBrains Mono", "Fira Code", Consolas, "Courier New", monospace' },
+  '.cm-content': { caretColor: '#5b21b6' },
+  '.cm-cursor, .cm-dropCursor': { borderLeft: '2px solid #5b21b6', marginLeft: '-1px' },
+  '.cm-gutters': { backgroundColor: '#f7f5fc', color: '#6b6385', borderRight: '1px solid #e2dcee' },
+  '.cm-activeLineGutter': { backgroundColor: '#ebe5fb', color: '#1e1633' },
+  // Translucent, or it would hide the selection drawn underneath the text.
+  '.cm-activeLine': { backgroundColor: '#7c3aed0d' },
+  '.cm-selectionBackground': { backgroundColor: '#e4def3' },
+  '&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground, .cm-content ::selection': {
+    backgroundColor: '#d6c8fb',
   },
-  { dark: true },
-);
+  '.cm-selectionMatch': { backgroundColor: '#fbefc0' },
+  '&.cm-focused .cm-matchingBracket': { backgroundColor: '#e6dcfe', outline: '1px solid #8b5cf6' },
+  '&.cm-focused .cm-nonmatchingBracket': { backgroundColor: '#fde0e2', outline: '1px solid #e0707e' },
+  '.cm-foldPlaceholder': { backgroundColor: '#ede8fd', border: '1px solid #d6cdf3', color: '#5b21b6' },
+  '.cm-panels': { backgroundColor: '#f7f5fc', color: '#1e1633' },
+  '.cm-panels.cm-panels-top': { borderBottom: '1px solid #e2dcee' },
+  '.cm-panels.cm-panels-bottom': { borderTop: '1px solid #e2dcee' },
+  '.cm-tooltip': {
+    backgroundColor: '#ffffff',
+    border: '1px solid #e2dcee',
+    borderRadius: '6px',
+    boxShadow: '0 8px 24px rgba(46, 26, 92, 0.14)',
+  },
+  '.cm-tooltip-autocomplete ul li[aria-selected]': { backgroundColor: '#7c3aed', color: '#ffffff' },
+});
+
+/**
+ * Syntax colours for Arduino C++ on the white editor (every colour is at least
+ * 4.5:1 on the background and on the active line). Replaces basicSetup's
+ * fallback style, whose brown comments look dated and which leaves function
+ * calls such as pinMode() uncoloured.
+ */
+const lightHighlight = HighlightStyle.define([
+  { tag: [t.keyword, t.controlKeyword, t.definitionKeyword, t.modifier, t.operatorKeyword, t.self], color: '#7c3aed' },
+  { tag: [t.typeName, t.namespace, t.className], color: '#0e7490' },
+  { tag: [t.function(t.variableName), t.function(t.propertyName)], color: '#1d4ed8' },
+  { tag: t.function(t.definition(t.variableName)), color: '#1d4ed8', fontWeight: '600' },
+  { tag: [t.special(t.name), t.macroName, t.bool, t.null, t.atom], color: '#be185d' },
+  { tag: [t.number, t.escape], color: '#a55200' },
+  { tag: [t.string, t.character, t.special(t.string)], color: '#047857' },
+  { tag: t.processingInstruction, color: '#a21caf' },
+  { tag: [t.comment, t.meta], color: '#6b6385' },
+  { tag: t.invalid, color: '#c0262d' },
+]);
 
 /**
  * Mount a CodeMirror editor into `container`.
@@ -115,8 +156,8 @@ export function createEditor(container: HTMLElement, options: EditorOptions): Ed
         basicSetup,
         stopShortcut,
         cpp(),
-        oneDark,
-        purpleOverrides,
+        lightTheme,
+        syntaxHighlighting(lightHighlight),
         lintGutter(),
         indentUnit.of('  '),
         EditorState.tabSize.of(2),

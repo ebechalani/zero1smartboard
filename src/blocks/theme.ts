@@ -1,6 +1,10 @@
 /**
- * Dark purple Blockly theme matching the simulator UI (docs/BLOCKS.md §11.1).
- * Built on the Zelos theme so that it renders well with the 'zelos' renderer.
+ * Light Blockly theme matching the simulator UI (docs/BLOCKS.md §11.1): an
+ * almost-white workspace, a pale lavender toolbox and flyout with dark text,
+ * and purple accents (scrollbars, keyboard cursor) taken from the app palette
+ * in src/ui/style.css. Block colours are unchanged (white text on coloured
+ * blocks). Built on the Zelos theme so that it renders well with the 'zelos'
+ * renderer.
  */
 import * as Blockly from 'blockly';
 import { BLOCK_COLOURS } from './blocks';
@@ -54,22 +58,26 @@ export const ZERO1_THEME: Blockly.Theme = Blockly.Theme.defineTheme('zero1', {
     procedure_category: { colour: CATEGORY_COLOURS['functions']! },
   },
   componentStyles: {
-    workspaceBackgroundColour: '#1b1533',
-    toolboxBackgroundColour: '#241a3d',
-    toolboxForegroundColour: '#ede9fe',
-    flyoutBackgroundColour: '#2a2048',
-    flyoutForegroundColour: '#ede9fe',
+    workspaceBackgroundColour: '#fcfbff',
+    toolboxBackgroundColour: '#f5f3fa',
+    toolboxForegroundColour: '#1e1633',
+    flyoutBackgroundColour: '#ece7f8',
+    flyoutForegroundColour: '#1e1633',
     flyoutOpacity: 1,
-    scrollbarColour: '#8b5cf6',
-    scrollbarOpacity: 0.5,
-    insertionMarkerColour: '#ffffff',
-    insertionMarkerOpacity: 0.3,
-    markerColour: '#a78bfa',
-    cursorColour: '#a78bfa',
-    selectedGlowColour: '#c4b5fd',
-    selectedGlowOpacity: 0.5,
-    replacementGlowColour: '#ffffff',
-    replacementGlowOpacity: 0.3,
+    scrollbarColour: '#7c3aed',
+    scrollbarOpacity: 0.35,
+    // Dark translucent ghost where a dragged block will snap, and a deep purple
+    // keyboard cursor / replacement glow: visible on the light workspace.
+    insertionMarkerColour: '#1e1633',
+    insertionMarkerOpacity: 0.2,
+    markerColour: '#5b21b6',
+    cursorColour: '#5b21b6',
+    replacementGlowColour: '#5b21b6',
+    replacementGlowOpacity: 0.6,
+    // Amber ring around the selected block: 3:1 on the workspace and a clearly
+    // different hue from every block colour.
+    selectedGlowColour: '#d97706',
+    selectedGlowOpacity: 1,
   },
   fontStyle: {
     family: 'system-ui, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
