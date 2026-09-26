@@ -17,7 +17,7 @@ import {
   registerZero1Blocks,
   workspaceToArduino,
 } from '../src/blocks';
-import { Z1_BLOCK_TYPES } from '../src/blocks/blocks';
+import { BLOCK_COLOURS, Z1_BLOCK_TYPES } from '../src/blocks/blocks';
 import { transpile } from '../src/transpiler';
 import { runSketch, type RunOptions } from './helpers';
 
@@ -201,7 +201,27 @@ describe('toolbox and theme', () => {
     expect(ZERO1_THEME.getComponentStyle('toolboxForegroundColour')).toBe('#1e1633');
     expect(ZERO1_THEME.getComponentStyle('flyoutBackgroundColour')).toBe('#ece7f8');
   });
+
+  it('outlines the selected block in a colour visible on every block and on the workspace', () => {
+    const glow = ZERO1_THEME.getComponentStyle('selectedGlowColour')!;
+    expect(glow).toBe('#1e1633');
+    const backgrounds = Object.values(BLOCK_COLOURS).map((c) => (c.startsWith('#') ? c : Blockly.utils.colour.hueToHex(Number(c))));
+    backgrounds.push(ZERO1_THEME.getComponentStyle('workspaceBackgroundColour')!);
+    for (const colour of backgrounds) expect(contrastRatio(glow, colour), colour).toBeGreaterThanOrEqual(3);
+  });
 });
+
+/** WCAG contrast ratio of two `#rrggbb` colours. */
+function contrastRatio(a: string, b: string): number {
+  const luminance = (hex: string): number => {
+    const [r, g, bl] = [1, 3, 5]
+      .map((i) => parseInt(hex.slice(i, i + 2), 16) / 255)
+      .map((c) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4));
+    return 0.2126 * r + 0.7152 * g + 0.0722 * bl;
+  };
+  const [light, dark] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+  return (light + 0.05) / (dark + 0.05);
+}
 
 describe('default workspace', () => {
   it('has one setup hat and one loop hat and generates a sketch that runs', async () => {

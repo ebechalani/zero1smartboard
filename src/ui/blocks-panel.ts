@@ -6,8 +6,8 @@
  * free of Blockly.
  *
  * Also hosts the small pure helpers the app shell needs around blocks: the
- * mode and workspace persistence (`z1.mode`, `z1.blocks`), the `#blocks=`
- * share link, and the Code → Blocks hand-off rule.
+ * mode and workspace persistence (`z1.mode`, `z1.blocks`, `z1.blocksBaseline`),
+ * the `#blocks=` share link, and the Code → Blocks hand-off rule.
  */
 import type { BlockExample } from '../blocks';
 import { decodeShareCode, encodeShareCode } from './editor';
@@ -22,6 +22,12 @@ export type AppMode = 'code' | 'blocks';
 export const MODE_STORAGE_KEY = 'z1.mode';
 /** localStorage key of the saved Blockly workspace (serialization JSON). */
 export const BLOCKS_STORAGE_KEY = 'z1.blocks';
+/**
+ * localStorage key of the workspaceFingerprint() of the last loaded example /
+ * link / new program: blocks restored unchanged after a reload still count as
+ * untouched, so New and the Examples menu do not ask "your blocks will be lost".
+ */
+export const BLOCKS_BASELINE_STORAGE_KEY = 'z1.blocksBaseline';
 
 /** Question asked when switching Code → Blocks while the editor holds hand-written changes (§11.4). */
 export const CONFIRM_TO_BLOCKS =
@@ -228,6 +234,25 @@ export function saveWorkspace(workspace: object): void {
     localStorage.setItem(BLOCKS_STORAGE_KEY, JSON.stringify(workspace));
   } catch {
     // Private mode or quota exceeded: the blocks simply are not remembered.
+  }
+}
+
+/** The fingerprint of the last loaded workspace saved by a previous visit, or null. */
+export function loadBlocksBaseline(): string | null {
+  try {
+    return localStorage.getItem(BLOCKS_BASELINE_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+/** Remember the last loaded workspace's fingerprint (null forgets it; storage errors are ignored). */
+export function saveBlocksBaseline(fingerprint: string | null): void {
+  try {
+    if (fingerprint === null) localStorage.removeItem(BLOCKS_BASELINE_STORAGE_KEY);
+    else localStorage.setItem(BLOCKS_BASELINE_STORAGE_KEY, fingerprint);
+  } catch {
+    // Private mode or quota exceeded: after a reload the blocks simply count as changed.
   }
 }
 

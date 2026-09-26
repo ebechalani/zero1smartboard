@@ -24,14 +24,24 @@ No installation is needed for students: the simulator is a static web page.
   **Generated JS** tab for the curious.
 - **New** starts from the same blank sketch as the Arduino IDE's
   *File > New* (or an empty blocks program), asking first if work would be
-  lost.
+  lost (an example that was not changed never asks, even after a reload).
 - **21 example sketches** grouped by Outputs, Inputs, Display and Projects,
   each with its expected behaviour written in the header comment.
-- **Share** — copy a link that opens the work in the simulator, send it to
-  the teacher by email (type the teacher's address once; Gmail, Outlook or
-  the computer's email app opens a ready-to-send email with the link and the
-  Arduino code — nothing is sent until the student presses Send), or
-  download the sketch as an `.ino` file for the Arduino IDE.
+- **Share** — send the work straight to the teacher's email (the student
+  types the teacher's address and their name once and presses *Send to
+  teacher*; the email carries the student's message, a link that opens the
+  work in the simulator, the Arduino code and the `.ino` file, and nothing
+  else opens). The email goes out through a small Google Apps Script relay
+  the teacher sets up once from their own Google account — see
+  [docs/EMAIL.md](docs/EMAIL.md). Share also copies the link and downloads
+  the sketch as an `.ino` file for the Arduino IDE.
+- **Arduino IDE** — get the sketch (in Blocks mode, the one made from the
+  blocks) into the desktop Arduino IDE to upload it to the real board:
+  download it as an `.ino` file with a new name each time (the IDE opens it
+  and offers to put it in a sketch folder), save it straight into the
+  *Documents › Arduino* sketchbook (Chrome and Edge), or copy the code to
+  paste into *File › New Sketch*. Without the IDE (Chromebooks), the Arduino
+  Cloud Editor can import the downloaded file.
 - **Settings** for the few hardware details that differ between board
   revisions (button wiring, 7-segment polarity and bit order, LCD address,
   buzzer type, LDR direction).

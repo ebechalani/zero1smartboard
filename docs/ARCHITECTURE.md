@@ -687,7 +687,7 @@ WCAG AA on its background). Responsive grid:
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
 │ header: ZERO1 Smart Board Simulator · [＋ New] [Examples ▾] [▶ Run] │
-│         [■ Stop] [↺ Reset] [⚙ Settings] [🔗 Share]                  │
+│         [■ Stop] [↺ Reset] [⚙ Settings] [🔗 Share] [∞ Arduino IDE]  │
 ├───────────────────────────────┬─────────────────────────────────────┤
 │ board SVG (scales to fit)     │ tabs: Code | Serial Monitor |       │
 │                               │       Pin Map | Generated JS        │
@@ -698,7 +698,10 @@ WCAG AA on its background). Responsive grid:
 │                               │ console (errors/warnings, status)   │
 └───────────────────────────────┴─────────────────────────────────────┘
 ```
-Below 1000 px width the columns stack (board on top).
+Below 1000 px width the columns stack (board on top). The header (brand,
+Code | Blocks switch, the actions, run status) is one row from 1366 px wide
+(up to 1439 px the Settings button shows only its ⚙); narrower, the actions
+move to rows of their own under the brand, the mode switch and the status.
 
 ### 8.2 Board view (`board-view.ts`, `board-svg.ts`) — owner: board-svg
 
@@ -747,15 +750,42 @@ export function createBoardView(container: HTMLElement, board: Zero1Board): Boar
   running sketch. URL hash `#code=<base64url>` loads shared code.
 - Share dialog (`share-dialog.ts`, opened by the "Share" button): the
   `#code=` / `#blocks=` link with Copy link; "Send to your teacher" — the
-  teacher's email (strictly validated: no spaces or `, ; ? & # < > " '`) and
-  an optional name, remembered in `localStorage` (`z1.teacherEmail`,
-  `z1.studentName`), then Gmail / Outlook web compose links, a `mailto:` link
-  (CRLF line breaks, RFC 6068) or "Copy email text". The email carries the
-  link and the Arduino code; the simulator itself sends nothing. Email links
-  are kept under ~1900 characters (`mailto:`) / ~8000 (web mail): a longer
-  email keeps the link only, else the code only, and as a last resort the
-  full text is copied to the clipboard to paste (`fitShareEmail`).
-  "Download .ino" saves the sketch as `zero1_<name>.ino`.
+  teacher's email (invisible characters removed, then validated: no spaces
+  or `, ; ? & # < > "`, an apostrophe only before the `@`), the student's
+  name (required) and an optional message (≤ 500 characters); email and
+  name are remembered in `localStorage` (`z1.teacherEmail`,
+  `z1.studentName`). **Send to teacher** (or Enter in those two fields)
+  POSTs `{ to, studentName, message, kind, link, code, fileName }` as
+  `text/plain` JSON (no CORS preflight) to the teacher's email relay,
+  `EMAIL_RELAY_URL` in `src/config.ts` (`sendWorkToTeacher`, 30 s timeout,
+  one send at a time). The relay (`tools/email-relay/Code.gs`, a Google Apps
+  Script web app the teacher deploys, see `docs/EMAIL.md`) checks every
+  field, the recipient against its allow-list and the link against the
+  simulator URL, limits emails per hour and sends the email with the sketch
+  attached through MailApp. Its error codes are shown as plain sentences;
+  while `EMAIL_RELAY_URL` is empty the send section is replaced by one
+  "not set up" line. "Download .ino" saves `sketchFileName()`
+  (`sketch-file.ts`).
+- Arduino IDE dialog (`arduino-ide-dialog.ts`, opened by the "Arduino IDE"
+  button with the editor text, or in Blocks mode the sketch generated from
+  the blocks — the same `exportSketch()` as Share). A web page cannot start
+  the desktop IDE (it has no URL protocol), so the dialog offers three ways:
+  **Download sketch (.ino)** saves `sketchFileName()` (`sketch-file.ts`:
+  `zero1[_<name>]_MMDD_HHMMSS.ino`) and lights up three numbered steps that
+  name the file: open it (the IDE installers open `.ino` files), click OK
+  when the IDE offers to move it into a `<name>/` sketch folder, choose
+  Arduino Uno + port and Upload. Names are unique per download because a
+  second `name.ino` would become `name (1).ino` in the Downloads folder (a
+  name IDE 2 refuses) or clash with the `name/` folder made from the first
+  one. **Save into my Arduino folder…** (only where `showDirectoryPicker`
+  exists: Chrome, Edge; `id: 'zero1-sketchbook'`, `startIn: 'documents'`)
+  writes `<name>/<name>.ino` into the picked folder, ideally the sketchbook
+  *Documents › Arduino*, which File › Open (and File › Sketchbook) opens with
+  no prompt; a cancelled picker says nothing, a refused or failed save
+  suggests Download. **Copy code** for File › New Sketch + paste (every IDE
+  version). A note sends Chromebook users to the Arduino Cloud Editor
+  (app.arduino.cc → Create → Import). Status line (`aria-live`) and Close;
+  Esc closes; every `open()` starts with no status and the steps reset.
 - Run: `transpile()` → on error show diagnostics in the editor and console,
   else `board.reset()`, `executor.run(js)`; buttons reflect status; the
   header shows a running indicator and elapsed `millis()`.
@@ -783,7 +813,8 @@ export function createBoardView(container: HTMLElement, board: Zero1Board): Boar
 - Audio (`audio.ts`): WebAudio square-wave oscillator following
   `buzzer.state.freq` (start on first user gesture; gain 0.05; mute toggle).
 - Examples menu (`examples-menu.ts`): grouped list from `src/examples/index.ts`.
-- Keyboard: `Ctrl/Cmd+Enter` run, `Esc` stop.
+- Keyboard: `Ctrl/Cmd+Enter` run, `Esc` stop — both ignored while the
+  Settings, Share or Arduino IDE dialog is open (Esc then closes the dialog).
 - `index.html`: minimal shell with `<div id="app">`, meta viewport, title
   "ZERO1 Smart Board Simulator", favicon as inline SVG data URI.
 - `style.css`: imported from `main.ts`.

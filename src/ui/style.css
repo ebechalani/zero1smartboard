@@ -127,8 +127,8 @@ p {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 10px 16px;
-  padding: 10px 14px;
+  gap: 10px 12px;
+  padding: 10px 12px;
   background: var(--panel);
   border-bottom: 1px solid var(--border);
   box-shadow: var(--shadow-sm);
@@ -164,7 +164,29 @@ p {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
+}
+/* Header buttons are a little narrower than dialog buttons: brand, mode
+   switch, the eight actions and the run status fit one row at 1366 px. */
+.z1-toolbar .z1-btn {
+  gap: 5px;
+  padding-inline: 10px;
+}
+
+/* 1366-1439 px (the usual school laptop): the gear alone keeps the header on
+   one row; the button keeps its aria-label and title. */
+@media (min-width: 1366px) and (max-width: 1439px) {
+  .z1-toolbar [data-slot='settings'] .z1-btn-label {
+    display: none;
+  }
+}
+/* Narrower: brand, mode switch and run status on the first row(s), the
+   actions on rows of their own below. */
+@media (max-width: 1365px) {
+  .z1-toolbar {
+    order: 1;
+    flex-basis: 100%;
+  }
 }
 
 .z1-run-status {
@@ -293,7 +315,7 @@ p {
   background: var(--bg);
 }
 .z1-mode-btn {
-  padding: 4px 14px;
+  padding: 4px 12px;
   border-color: transparent;
   border-radius: 6px;
   background: transparent;
@@ -592,6 +614,9 @@ input[type='range'] {
      a short sketch still gets an editor (and gutter) as tall as the panel. */
   grid-row: 2;
   min-height: 0;
+  /* Let the grid column shrink to the panel: long lines then scroll
+     horizontally inside CodeMirror instead of being cut off. */
+  min-width: 0;
 }
 .z1-panel-code .cm-editor {
   height: 100%;
@@ -619,6 +644,9 @@ input[type='range'] {
 }
 .z1-blocks {
   position: relative;
+  /* Keep Blockly's own z-indexes (toolbox 70, flyout, widgets) inside the
+     panel, so header menus such as Examples still open on top of it. */
+  isolation: isolate;
 }
 .z1-blocks-workspace {
   width: 100%;
@@ -964,27 +992,37 @@ input[type='range'] {
 }
 
 /* ---------------------------------------------------------- share dialog */
-/* share-dialog.ts: the link row, the "Send to your teacher" and "Save as a
-   file" groups and the status line. The rest comes from .z1-dialog. */
+/* share-dialog.ts: the link row, the "Send to your teacher" group (fields,
+   message, the Send button and its live status), the line shown instead of
+   that group when no email relay is set up, the "Save as a file" group and
+   the status line. The rest comes from .z1-dialog. */
 
 .z1-dialog.z1-share {
-  width: min(700px, calc(100vw - 32px)); /* the four send buttons fit on one row */
+  width: min(660px, calc(100vw - 32px));
 }
 
-.z1-share input[type='email'] {
+.z1-share input[type='email'],
+.z1-share textarea {
   /* Same look as the text inputs (the shared rule only covers type="text"). */
   font: inherit;
   color: var(--text);
   background: var(--panel);
-  border: 1px solid var(--border-strong, var(--muted));
+  border: 1px solid var(--border-strong);
   border-radius: 6px;
   padding: 5px 8px;
 }
-.z1-share input[type='email']:hover {
+.z1-share input[type='email']:hover,
+.z1-share textarea:hover {
   border-color: var(--accent);
 }
 .z1-share input[aria-invalid='true'] {
   border-color: var(--error);
+}
+.z1-share textarea {
+  width: 100%;
+  min-height: 4em;
+  line-height: 1.4;
+  resize: vertical;
 }
 
 .z1-share-row {
@@ -1030,10 +1068,35 @@ input[type='range'] {
   width: 100%;
 }
 
-.z1-share-buttons {
+/* "Send to teacher" with its status beside it (below it on a narrow screen). */
+.z1-share-send {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  align-items: center;
+  gap: 6px 12px;
+}
+.z1-share-send > .z1-btn {
+  flex: none;
+  justify-content: center;
+  min-width: 10em; /* same width for "Send to teacher" and "Sending…" */
+}
+.z1-share-send-status {
+  flex: 1 1 240px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted);
+}
+.z1-share-send-status[data-state='ok'] {
+  color: var(--ok);
+}
+.z1-share-send-status[data-state='error'] {
+  color: var(--error);
+}
+
+/* Shown instead of the send group while no email relay is set up. */
+.z1-share-off {
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
 }
 
 .z1-share-error {
@@ -1046,4 +1109,110 @@ input[type='range'] {
   font-size: 12px;
   font-weight: 500;
   color: var(--accent-soft);
+}
+
+/* ---------------------------------------------------- arduino ide dialog */
+/* arduino-ide-dialog.ts: the download button with its numbered steps, the
+   other ways (folder, copy) and the status line. The rest comes from
+   .z1-dialog. */
+
+.z1-dialog.z1-ide {
+  width: min(600px, calc(100vw - 32px));
+}
+
+.z1-ide a {
+  color: var(--accent-soft);
+  font-weight: 500;
+}
+
+.z1-ide-note {
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: var(--accent-tint);
+  color: var(--accent-soft);
+  font-size: 12.5px;
+}
+
+.z1-ide-main {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+/* The steps are readable from the start and light up once the file is downloaded. */
+.z1-ide-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  margin: 0;
+  padding: 10px 14px 10px 34px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--muted);
+  font-size: 13px;
+  transition:
+    background 0.15s,
+    border-color 0.15s,
+    color 0.15s;
+}
+.z1-ide-steps li::marker {
+  font-weight: 700;
+}
+.z1-ide-steps.is-active {
+  border-color: var(--accent);
+  background: var(--accent-tint);
+  color: var(--text);
+}
+.z1-ide-steps.is-active li::marker {
+  color: var(--accent-soft);
+}
+
+/* Buttons in one column (same width), each with its help text on the right. */
+.z1-ide-other {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 10px 12px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+.z1-ide-heading {
+  grid-column: 1 / -1;
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+.z1-ide-option {
+  display: contents;
+}
+.z1-ide-option > .z1-btn {
+  justify-content: center;
+}
+@media (max-width: 520px) {
+  .z1-ide-other {
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: 6px;
+  }
+  .z1-ide-option > .z1-setting-help {
+    margin-bottom: 6px;
+  }
+}
+
+.z1-ide-status {
+  align-self: center;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--accent-soft);
+}
+.z1-ide-status[data-tone='error'] {
+  color: var(--error);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .z1-ide-steps {
+    transition: none;
+  }
 }

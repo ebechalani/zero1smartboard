@@ -74,10 +74,10 @@ export const ZERO1_THEME: Blockly.Theme = Blockly.Theme.defineTheme('zero1', {
     cursorColour: '#5b21b6',
     replacementGlowColour: '#5b21b6',
     replacementGlowOpacity: 0.6,
-    // Amber ring around the selected block: 3:1 on the workspace and a clearly
-    // different hue from every block colour.
-    selectedGlowColour: '#d97706',
-    selectedGlowOpacity: 1,
+    // Dark outline around the selected block: at least 3:1 against every block
+    // colour and the workspace (an amber one vanished on the amber Time
+    // blocks). The zelos renderer draws it opaque (no selectedGlowOpacity).
+    selectedGlowColour: '#1e1633',
   },
   fontStyle: {
     family: 'system-ui, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',

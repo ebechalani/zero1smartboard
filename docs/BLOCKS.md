@@ -234,10 +234,14 @@ App behaviour:
   error:"). The workspace is persisted to `localStorage['z1.blocks']`
   (debounced) and restored on load, else `DEFAULT_WORKSPACE`. The Examples
   menu lists `BLOCK_EXAMPLES` (grouped) and loads them into the workspace
-  (confirm when the current workspace differs from the last loaded example).
-  Share opens the share dialog with a `#blocks=<base64url JSON>` link (the
-  email to the teacher and the downloaded `.ino` carry the sketch generated
-  from the blocks); loading such a hash switches to Blocks mode. New resets
+  (confirm when the current workspace differs from the last loaded example;
+  that example's `workspaceFingerprint` is kept in
+  `localStorage['z1.blocksBaseline']`, so an unchanged example restored after
+  a reload does not ask).
+  Share opens the share dialog with a `#blocks=<base64url JSON>` link ("Send
+  to teacher" emails that link with the sketch generated from the blocks,
+  shown in the email and attached as an `.ino`; "Download .ino" saves the
+  same sketch); loading such a hash switches to Blocks mode. New resets
   the workspace to `DEFAULT_WORKSPACE` (same confirmation as an example).
 - In **Code mode** the Blocks tab is hidden and everything works as today.
 - Switching **Blocks → Code** puts the generated sketch into the editor,

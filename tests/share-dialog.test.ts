@@ -1,39 +1,43 @@
 // @vitest-environment happy-dom
 /**
- * Share dialog tests (happy-dom): the pure email helpers (wording, link
- * encoding for Gmail / Outlook / mailto:, the length fallbacks, address
- * validation, .ino file name) and the dialog itself with its side effects
- * (open a link, clipboard, download) replaced by spies.
+ * Share dialog tests (happy-dom): address, name and message cleaning, the
+ * transport to the email relay (sendWorkToTeacher with a fake fetch), and
+ * the dialog itself with its side effects (relay, clipboard, download)
+ * replaced by spies. The relay script is tested in email-relay.test.ts.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { EMAIL_RELAY_URL } from '../src/config';
 import {
-  EMAIL_URL_BUDGET,
-  MAILTO_URL_BUDGET,
+  CODE_MAX_LENGTH,
+  LINK_MAX_LENGTH,
+  MESSAGE_MAX_LENGTH,
+  NAME_MAX_LENGTH,
+  SEND_ERROR_TEXT,
   STUDENT_NAME_STORAGE_KEY,
   TEACHER_EMAIL_STORAGE_KEY,
-  WEBMAIL_URL_BUDGET,
-  buildShareEmail,
-  composeEmailUrl,
+  cleanEmail,
+  cleanMessage,
+  cleanName,
   createShareDialog,
-  fitShareEmail,
-  inoFileName,
   isValidEmail,
-  shareEmailWorkText,
-  type EmailProvider,
+  sendWorkToTeacher,
+  type SendWorkError,
+  type SendWorkRequest,
+  type SendWorkResult,
   type ShareDialogOptions,
-  type ShareEmailInput,
 } from '../src/ui/share-dialog';
 
 const SKETCH = 'void setup() {\n  pinMode(A1, OUTPUT);\n}\n\nvoid loop() {\n  digitalWrite(A1, HIGH);\n}\n';
 const URL_CODE = 'https://example.org/sim/#code=dm9pZCBzZXR1cCgpIHt9';
-
-/** Text that breaks naive URL building: every URL delimiter, `%`, `+`, quotes, unicode and line breaks. */
-const TRICKY = 'a & b # c ? d % e + f = g / h\nTempérature: 24°C ✓ 🌡 "q" <x> \'y\'\n%0A%20+';
+const RELAY = 'https://relay.example/macros/s/abc/exec';
+/** 26 Sep 2026, 14:32:05 local time: the file name stamp is 0926_143205. */
+const NOW = new Date(2026, 8, 26, 14, 32, 5);
 
 afterEach(() => {
   document.body.innerHTML = '';
   localStorage.clear();
   vi.restoreAllMocks();
+  vi.useRealTimers();
 });
 
 function mount(): HTMLElement {
@@ -42,181 +46,33 @@ function mount(): HTMLElement {
   return el;
 }
 
-/** Split `a=1&b=2` into decoded pairs (fails the test on a stray `&` or `=`). */
-function params(query: string): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const pair of query.split('&')) {
-    const parts = pair.split('=');
-    expect(parts).toHaveLength(2);
-    out[decodeURIComponent(parts[0])] = decodeURIComponent(parts[1]);
-  }
-  return out;
+/** A promise settled from the outside (a relay answer that has not arrived yet). */
+function deferred<T>(): { promise: Promise<T>; resolve(value: T): void; reject(err: unknown): void } {
+  let resolve!: (value: T) => void;
+  let reject!: (err: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+/** Let pending promise callbacks run. */
+async function flush(): Promise<void> {
+  for (let i = 0; i < 5; i++) await Promise.resolve();
 }
 
 // ---------------------------------------------------------------------------
-// Email text
-// ---------------------------------------------------------------------------
-
-describe('buildShareEmail', () => {
-  it('writes a sketch email with the link, the code between separators and the name', () => {
-    const { subject, body } = buildShareEmail({ url: URL_CODE, code: SKETCH, kind: 'code', studentName: 'Alex Dupont' });
-    expect(subject).toBe('ZERO1 sketch from Alex Dupont');
-    const lines = body.split('\n');
-    expect(lines[0]).toBe('Hello,');
-    expect(body).toContain('Here is my sketch for the ZERO1 Smart Board.');
-    expect(body).toContain(`Open it in the simulator:\n${URL_CODE}\n`);
-    expect(body).toContain('Arduino code:\n');
-    // The code sits between two identical separator lines.
-    const sep = lines.find((l) => /^-{10,}$/.test(l))!;
-    const first = lines.indexOf(sep);
-    const last = lines.lastIndexOf(sep);
-    expect(last).toBeGreaterThan(first);
-    expect(lines.slice(first + 1, last).join('\n')).toBe(SKETCH.trimEnd());
-    expect(lines[lines.length - 1]).toBe('Alex Dupont');
-    expect(body).not.toContain('\r');
-  });
-
-  it('leaves the name out when there is none', () => {
-    const { subject, body } = buildShareEmail({ url: URL_CODE, code: SKETCH, kind: 'code', studentName: '   ' });
-    expect(subject).toBe('ZERO1 sketch');
-    expect(body.trimEnd().endsWith('-'.repeat(10))).toBe(true);
-    expect(buildShareEmail({ url: URL_CODE, code: SKETCH, kind: 'code' }).subject).toBe('ZERO1 sketch');
-  });
-
-  it('says the code was generated from the blocks in Blocks mode', () => {
-    const { subject, body } = buildShareEmail({ url: URL_CODE, code: SKETCH, kind: 'blocks', studentName: ' Sam \n Lee ' });
-    expect(subject).toBe('ZERO1 blocks program from Sam Lee');
-    expect(body).toContain('Here is my blocks program for the ZERO1 Smart Board.');
-    expect(body).toContain('Arduino code generated from my blocks:');
-    expect(buildShareEmail({ url: URL_CODE, code: SKETCH, kind: 'blocks' }).subject).toBe('ZERO1 blocks program');
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Email links
-// ---------------------------------------------------------------------------
-
-describe('composeEmailUrl', () => {
-  it('builds a Gmail compose link whose parameters decode back to the exact text', () => {
-    const url = composeEmailUrl('gmail', 'teacher@school.edu', `Subject ${TRICKY}`, TRICKY);
-    const prefix = 'https://mail.google.com/mail/?';
-    expect(url.startsWith(prefix)).toBe(true);
-    expect(params(url.slice(prefix.length))).toEqual({
-      view: 'cm',
-      fs: '1',
-      to: 'teacher@school.edu',
-      su: `Subject ${TRICKY}`,
-      body: TRICKY,
-    });
-    expect(url).not.toMatch(/[\s#"<>]/);
-  });
-
-  it('builds an Outlook compose link whose parameters decode back to the exact text', () => {
-    const url = composeEmailUrl('outlook', 'teacher@school.edu', TRICKY, `${TRICKY}\n${SKETCH}`);
-    const prefix = 'https://outlook.office.com/mail/deeplink/compose?';
-    expect(url.startsWith(prefix)).toBe(true);
-    expect(params(url.slice(prefix.length))).toEqual({ to: 'teacher@school.edu', subject: TRICKY, body: `${TRICKY}\n${SKETCH}` });
-  });
-
-  it('builds a mailto: link with a literal @, encoded address parts and CRLF line breaks', () => {
-    const url = composeEmailUrl('mailto', 'mr.smith+robotics@school.edu', TRICKY, `line 1\nline 2\r\nline 3\r${TRICKY}`);
-    const [address, query] = url.slice('mailto:'.length).split('?');
-    expect(url.startsWith('mailto:mr.smith%2Brobotics@school.edu?')).toBe(true);
-    expect(decodeURIComponent(address)).toBe('mr.smith+robotics@school.edu');
-    const { subject, body } = params(query);
-    const crlf = (s: string): string => s.replace(/\r\n|\r|\n/g, '\r\n');
-    expect(subject).toBe(crlf(TRICKY));
-    expect(body).toBe(crlf(`line 1\nline 2\r\nline 3\r${TRICKY}`));
-    expect(body.startsWith('line 1\r\nline 2\r\nline 3\r\n')).toBe(true);
-    // Every line break is sent as %0D%0A, never as a bare %0A or %0D.
-    const breaks = url.replace(/%0D%0A/g, '');
-    expect(breaks).not.toMatch(/%0A|%0D/);
-    expect(url).not.toMatch(/[\s#"<>]/);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Length fallbacks
-// ---------------------------------------------------------------------------
-
-describe('fitShareEmail', () => {
-  // A long link (like a #blocks= link) with a short sketch.
-  const input: ShareEmailInput = {
-    url: `https://example.org/sim/#blocks=${'QUJD'.repeat(700)}`,
-    code: SKETCH,
-    kind: 'blocks',
-    studentName: 'Alex',
-  };
-  const to = 'teacher@school.edu';
-
-  it('keeps link and code when they fit', () => {
-    const full = fitShareEmail('gmail', to, input);
-    expect(full.trimmed).toBe('none');
-    expect(full.body).toBe(buildShareEmail(input).body);
-    expect(full.url).toBe(composeEmailUrl('gmail', to, full.subject, full.body));
-    expect(full.url.length).toBeLessThanOrEqual(WEBMAIL_URL_BUDGET);
-  });
-
-  it('falls back to link only, then code only, then a short body', () => {
-    for (const provider of ['gmail', 'outlook', 'mailto'] as EmailProvider[]) {
-      const full = fitShareEmail(provider, to, input, Infinity);
-      const linkOnly = fitShareEmail(provider, to, input, full.url.length - 1);
-      expect(linkOnly.trimmed).toBe('code');
-      expect(linkOnly.body).toContain(input.url);
-      expect(linkOnly.body).not.toContain('digitalWrite');
-      expect(linkOnly.body).toContain('the link shows it in the Code tab');
-
-      const codeOnly = fitShareEmail(provider, to, input, linkOnly.url.length - 1);
-      expect(codeOnly.trimmed).toBe('link');
-      expect(codeOnly.body).not.toContain(input.url);
-      expect(codeOnly.body).toContain('digitalWrite(A1, HIGH);');
-      expect(codeOnly.body).toContain('too long for an email');
-
-      const short = fitShareEmail(provider, to, input, codeOnly.url.length - 1);
-      expect(short.trimmed).toBe('all');
-      expect(short.body).toContain('pasted it below');
-      expect(short.body).not.toContain(input.url);
-      expect(short.body).not.toContain('digitalWrite');
-      expect(short.subject).toBe('ZERO1 blocks program from Alex');
-
-      for (const fitted of [full, linkOnly, codeOnly, short]) {
-        expect(fitted.url).toBe(composeEmailUrl(provider, to, fitted.subject, fitted.body));
-      }
-    }
-  });
-
-  it('uses the per-provider budgets by default', () => {
-    expect(EMAIL_URL_BUDGET).toEqual({ gmail: WEBMAIL_URL_BUDGET, outlook: WEBMAIL_URL_BUDGET, mailto: MAILTO_URL_BUDGET });
-    // The 2800-character link fits a web mail link but not a mailto: link.
-    expect(fitShareEmail('outlook', to, input).trimmed).toBe('none');
-    const mailto = fitShareEmail('mailto', to, input);
-    expect(mailto.trimmed).toBe('link');
-    expect(mailto.url.length).toBeLessThanOrEqual(MAILTO_URL_BUDGET);
-    // A short code link fits everything, even in a mailto: link.
-    const small = { url: URL_CODE, code: SKETCH, kind: 'code' as const };
-    expect(fitShareEmail('mailto', to, small).trimmed).toBe('none');
-  });
-
-  it('gives the pasted text everything the full email carries after the greeting', () => {
-    const work = shareEmailWorkText(input);
-    expect(work).toContain(input.url);
-    expect(work).toContain(SKETCH.trimEnd());
-    expect(buildShareEmail(input).body.endsWith(work)).toBe(true);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Validation & file name
+// Cleaning & validation
 // ---------------------------------------------------------------------------
 
 describe('isValidEmail', () => {
-  it('accepts normal school addresses', () => {
-    for (const ok of ['teacher@school.edu', 'j.dupont@lycee-example.edu.lb', 'mr.smith+robotics@school.org', 'T_Nguyen@Sub.School.EDU']) {
-      expect(isValidEmail(ok), ok).toBe(true);
-    }
+  it('accepts normal school addresses, with an apostrophe before the @', () => {
+    const good = ['teacher@school.edu', 'j.dupont@lycee-example.edu.lb', 'mr.smith+robotics@school.org', 'T_Nguyen@Sub.School.EDU', "o'neil@school.edu"];
+    for (const ok of good) expect(isValidEmail(ok), ok).toBe(true);
   });
 
-  it('rejects anything that could add recipients or link parameters', () => {
+  it('rejects anything that could add recipients', () => {
     const bad = [
       'a@b.c?cc=x',
       'a@b.c&bcc=x',
@@ -230,7 +86,8 @@ describe('isValidEmail', () => {
       'a@b.c#x',
       '<a@b.c>',
       '"a"@b.c',
-      "o'neil@b.c",
+      "a@b'c.d",
+      "a@b.c'd",
       'a@@b.c',
       'a@b.c\nbcc@x.y',
       `${'a'.repeat(250)}@b.cd`,
@@ -239,17 +96,110 @@ describe('isValidEmail', () => {
   });
 });
 
-describe('inoFileName', () => {
-  it('names the file after the student, keeping only letters, digits and _', () => {
-    expect(inoFileName()).toBe('zero1_sketch.ino');
-    expect(inoFileName('   ')).toBe('zero1_sketch.ino');
-    expect(inoFileName('محمد')).toBe('zero1_sketch.ino');
-    expect(inoFileName('Alex Dupont')).toBe('zero1_Alex_Dupont.ino');
-    expect(inoFileName('Élise-Marie O\'Neil')).toBe('zero1_Elise_Marie_O_Neil.ino');
-    expect(inoFileName('../../etc/passwd')).toBe('zero1_etc_passwd.ino');
-    const long = inoFileName('abcdefghij '.repeat(10));
-    expect(long).toMatch(/^zero1_[A-Za-z0-9_]{1,40}\.ino$/);
-    expect(long.endsWith('_.ino')).toBe(false);
+describe('cleaning what the student typed', () => {
+  it('removes invisible characters and spaces around the address', () => {
+    expect(cleanEmail('  teacher@school.edu\n')).toBe('teacher@school.edu');
+    expect(cleanEmail('​teacher@⁠school.edu‮\u0000\t')).toBe('teacher@school.edu');
+    expect(cleanEmail('﻿teacher@school.edu')).toBe('teacher@school.edu');
+    // Visible problems stay, so the student sees the error.
+    expect(cleanEmail('teacher @school.edu')).toBe('teacher @school.edu');
+  });
+
+  it('keeps the name on one line, at most 60 characters', () => {
+    expect(cleanName('  Alex \n\t Dupont​ ')).toBe('Alex Dupont');
+    expect(cleanName('Alex\r\nBcc: x@evil.com')).toBe('Alex Bcc: x@evil.com');
+    expect(cleanName('‮‍')).toBe('');
+    expect(cleanName('x'.repeat(80))).toHaveLength(NAME_MAX_LENGTH);
+    // Never half an emoji at the cut.
+    expect(cleanName(`${'x'.repeat(59)}🙂`)).toBe('x'.repeat(59));
+  });
+
+  it('keeps the line breaks of the message, at most 500 characters', () => {
+    expect(cleanMessage(' Hello Miss,\r\n\r\n\r\n\r\nHere it is.​\u0007 ')).toBe('Hello Miss,\n\nHere it is.');
+    expect(cleanMessage('a b\tc')).toBe('a b c');
+    expect(cleanMessage('x'.repeat(600))).toHaveLength(MESSAGE_MAX_LENGTH);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Transport
+// ---------------------------------------------------------------------------
+
+describe('sendWorkToTeacher', () => {
+  const request: SendWorkRequest = {
+    to: 'teacher@school.edu',
+    studentName: 'Alex',
+    message: '',
+    kind: 'code',
+    link: URL_CODE,
+    code: SKETCH,
+    fileName: 'zero1_Alex_0926_143205.ino',
+  };
+
+  function answer(body: string, status = 200): typeof fetch {
+    return vi.fn<typeof fetch>(() => Promise.resolve(new Response(body, { status })));
+  }
+
+  it('POSTs the request as a plain text JSON body, so the browser sends no CORS preflight', async () => {
+    const fetchImpl = answer('{"ok":true}');
+    expect(await sendWorkToTeacher(RELAY, request, fetchImpl)).toEqual({ ok: true });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    const [url, init] = vi.mocked(fetchImpl).mock.calls[0];
+    expect(url).toBe(RELAY);
+    expect(init!.method).toBe('POST');
+    expect(init!.headers).toBeUndefined();
+    expect(init!.redirect).toBe('follow');
+    expect(JSON.parse(init!.body as string)).toEqual(request);
+    // What the browser would send: a "simple" text/plain request.
+    expect(new Request(RELAY, init).headers.get('content-type')).toBe('text/plain;charset=UTF-8');
+  });
+
+  it("passes on the relay's own errors", async () => {
+    const result = await sendWorkToTeacher(RELAY, request, answer('{"ok":false,"error":"rate_limited","message":"More than 60"}'));
+    expect(result).toEqual({ ok: false, error: 'rate_limited', message: 'More than 60' });
+    for (const error of ['bad_request', 'recipient_not_allowed', 'quota_exceeded', 'send_failed']) {
+      expect(await sendWorkToTeacher(RELAY, request, answer(JSON.stringify({ ok: false, error })))).toEqual({ ok: false, error, message: '' });
+    }
+  });
+
+  it('reports anything that is not a relay answer as bad_response', async () => {
+    const bodies = ['<!doctype html><title>Sign in</title>', '', '[]', 'null', '{"ok":"yes"}', '{"ok":false,"error":"exploded"}', '{"ok":false}'];
+    for (const body of bodies) {
+      const result = await sendWorkToTeacher(RELAY, request, answer(body, 200));
+      expect(result, body).toMatchObject({ ok: false, error: 'bad_response' });
+    }
+    const notFound = await sendWorkToTeacher(RELAY, request, answer('Not Found', 404));
+    expect(notFound).toMatchObject({ ok: false, error: 'bad_response' });
+    expect((notFound as { message: string }).message).toContain('HTTP 404');
+  });
+
+  it('reports network errors (offline, CORS refusal) as network', async () => {
+    const fetchImpl = vi.fn<typeof fetch>(() => Promise.reject(new TypeError('Failed to fetch')));
+    expect(await sendWorkToTeacher(RELAY, request, fetchImpl)).toEqual({ ok: false, error: 'network', message: 'Failed to fetch' });
+  });
+
+  it('gives up after the timeout', async () => {
+    vi.useFakeTimers();
+    let signal: AbortSignal | undefined;
+    const fetchImpl = vi.fn<typeof fetch>(
+      (_url, init) =>
+        new Promise((_resolve, reject) => {
+          signal = init!.signal!;
+          signal.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')));
+        }),
+    );
+    const pending = sendWorkToTeacher(RELAY, request, fetchImpl, 30000);
+    await vi.advanceTimersByTimeAsync(29999);
+    expect(signal!.aborted).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(signal!.aborted).toBe(true);
+    expect(await pending).toMatchObject({ ok: false, error: 'timeout' });
+  });
+
+  it('does not call anything without a relay URL', async () => {
+    const fetchImpl = answer('{"ok":true}');
+    expect(await sendWorkToTeacher('', request, fetchImpl)).toMatchObject({ ok: false, error: 'not_configured' });
+    expect(fetchImpl).not.toHaveBeenCalled();
   });
 });
 
@@ -260,12 +210,12 @@ describe('inoFileName', () => {
 describe('share dialog', () => {
   function setup(extra: ShareDialogOptions = {}) {
     const spies = {
-      openUrl: vi.fn<(url: string, target: '_blank' | '_self') => void>(),
+      sendWork: vi.fn<(relayUrl: string, request: SendWorkRequest) => Promise<SendWorkResult>>(() => Promise.resolve({ ok: true })),
       copyText: vi.fn<(text: string) => Promise<void>>(() => Promise.resolve()),
       toast: vi.fn<(text: string) => void>(),
-      download: vi.fn<(filename: string, text: string) => void>(),
+      download: vi.fn<(fileName: string, text: string) => void>(),
     };
-    const dialog = createShareDialog(mount(), { ...spies, ...extra });
+    const dialog = createShareDialog(mount(), { relayUrl: RELAY, ...spies, ...extra });
     const el = dialog.element;
     const q = <T extends HTMLElement>(selector: string): T => el.querySelector<T>(selector)!;
     return {
@@ -273,17 +223,37 @@ describe('share dialog', () => {
       spies,
       email: q<HTMLInputElement>('#z1-share-email'),
       name: q<HTMLInputElement>('#z1-share-name'),
+      message: q<HTMLTextAreaElement>('#z1-share-message'),
       link: q<HTMLInputElement>('#z1-share-url'),
-      error: q<HTMLElement>('#z1-share-email-error'),
+      emailError: q<HTMLElement>('#z1-share-email-error'),
+      nameError: q<HTMLElement>('#z1-share-name-error'),
       status: q<HTMLElement>('[data-role="status"]'),
+      sendStatus: q<HTMLElement>('[data-role="send-status"]'),
+      section: q<HTMLElement>('[data-role="send"]'),
+      notSetUp: q<HTMLElement>('[data-role="send-off"]'),
+      sendButton: q<HTMLButtonElement>('[data-action="send"]'),
       click: (action: string) => q<HTMLButtonElement>(`[data-action="${action}"]`).click(),
+      press: (input: HTMLElement, key = 'Enter') => {
+        const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true });
+        input.dispatchEvent(event);
+        return event;
+      },
     };
   }
 
   const payload = { url: URL_CODE, code: SKETCH, kind: 'code' as const };
 
+  /** Open the dialog with valid fields. */
+  function ready(extra: ShareDialogOptions = {}) {
+    const ui = setup(extra);
+    ui.dialog.open(payload);
+    ui.email.value = 'teacher@school.edu';
+    ui.name.value = 'Alex';
+    return ui;
+  }
+
   it('is labelled by its heading, labels every field and shows the link when opened', () => {
-    const { dialog, link } = setup();
+    const { dialog, link, email, name, message, section, notSetUp } = setup();
     expect(dialog.isOpen()).toBe(false);
     dialog.open(payload);
     expect(dialog.isOpen()).toBe(true);
@@ -292,101 +262,346 @@ describe('share dialog', () => {
     expect(el.querySelector(`#${el.getAttribute('aria-labelledby')}`)!.textContent).toBe('Share your work');
     expect(link.value).toBe(URL_CODE);
     expect(link.readOnly).toBe(true);
-    for (const input of el.querySelectorAll('input')) {
-      expect(el.querySelector(`label[for="${input.id}"]`), input.id).not.toBeNull();
+    for (const field of el.querySelectorAll('input, textarea')) {
+      expect(el.querySelector(`label[for="${field.id}"]`), field.id).not.toBeNull();
     }
-    const email = el.querySelector<HTMLInputElement>('#z1-share-email')!;
+    expect(el.querySelector('label[for="z1-share-name"]')!.textContent).toBe('Your name');
+    expect(el.querySelector('label[for="z1-share-message"]')!.textContent).toBe('Message for your teacher (optional)');
     expect(email.type).toBe('email');
-    expect(email.autocomplete).toBe('email');
+    // The field holds another person's address: the browser must not fill in the student's own.
+    expect(email.autocomplete).toBe('off');
+    expect(name.autocomplete).toBe('name');
+    expect(name.required).toBe(true);
+    expect(message.maxLength).toBe(MESSAGE_MAX_LENGTH);
+    expect(section.hidden).toBe(false);
+    expect(notSetUp.hidden).toBe(true);
+    expect(el.textContent).toContain('Your name, message, link and code are emailed to your teacher.');
+    // One way to send, and no leftovers of the old email buttons.
+    expect([...el.querySelectorAll('button')].map((b) => b.textContent)).toEqual(['Copy link', 'Send to teacher', 'Download .ino', 'Close']);
     // An empty teacher address is where the student starts typing.
     expect(document.activeElement).toBe(email);
   });
 
-  it('shows an error and opens nothing when the teacher email is missing or invalid', () => {
-    const { dialog, spies, email, error, click } = setup();
+  it('hides the send section when no relay is set up', () => {
+    const { dialog, section, notSetUp, email, click, spies } = setup({ relayUrl: '' });
     dialog.open(payload);
-    click('send-gmail');
-    expect(error.textContent).toContain("teacher's email");
+    expect(section.hidden).toBe(true);
+    expect(notSetUp.hidden).toBe(false);
+    expect(notSetUp.textContent).toBe('Sending to your teacher is not set up on this simulator yet — use Copy link or Download .ino.');
+    expect(notSetUp.classList.contains('z1-muted')).toBe(true);
+    expect(dialog.element.querySelector('[data-role="intro"]')!.textContent).not.toContain('teacher');
+    expect(document.activeElement).not.toBe(email);
+    // Enter in the hidden fields sends nothing; the other ways to share still work.
+    email.value = 'teacher@school.edu';
+    email.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
+    expect(spies.sendWork).not.toHaveBeenCalled();
+    click('download');
+    expect(spies.download).toHaveBeenCalledTimes(1);
+  });
+
+  it('follows EMAIL_RELAY_URL by default', () => {
+    const dialog = createShareDialog(mount());
+    expect(dialog.element.querySelector<HTMLElement>('[data-role="send"]')!.hidden).toBe(EMAIL_RELAY_URL === '');
+  });
+
+  it('shows an error and sends nothing when the teacher email is missing or invalid', () => {
+    const { dialog, spies, email, name, emailError, click, press } = setup();
+    dialog.open(payload);
+    name.value = 'Alex';
+    click('send');
+    expect(emailError.textContent).toContain("teacher's email");
     expect(email.getAttribute('aria-invalid')).toBe('true');
 
-    for (const bad of ['a@b.c?cc=x', 'a@b.c&bcc=x', 'a b@c.d', 'x', 'a@b']) {
+    for (const bad of ['a@b.c?cc=x', 'a@b.c&bcc=x', 'a b@c.d', 'x', 'a@b', 'a@b.c,d@e.f', "a@b'c.d"]) {
       email.value = bad;
-      for (const action of ['send-gmail', 'send-outlook', 'send-mailto', 'copy-email']) click(action);
-      expect(error.textContent).toContain('does not look like an email address');
+      click('send');
+      press(email);
+      expect(emailError.textContent).toContain('does not look like an email address');
       expect(document.activeElement).toBe(email);
     }
-    expect(spies.openUrl).not.toHaveBeenCalled();
-    expect(spies.copyText).not.toHaveBeenCalled();
+    expect(spies.sendWork).not.toHaveBeenCalled();
     expect(localStorage.getItem(TEACHER_EMAIL_STORAGE_KEY)).toBeNull();
 
     // Typing again clears the error.
     email.value = 'teacher@school.edu';
     email.dispatchEvent(new Event('input'));
-    expect(error.textContent).toBe('');
+    expect(emailError.textContent).toBe('');
     expect(email.hasAttribute('aria-invalid')).toBe(false);
   });
 
-  it('opens the provider compose link with the full email', () => {
-    const { dialog, spies, email, name, status, click } = setup();
+  it('requires the student name', () => {
+    const { dialog, spies, email, name, nameError, emailError, click } = setup();
     dialog.open(payload);
-    email.value = '  teacher@school.edu ';
-    name.value = 'Alex';
-    const expected = buildShareEmail({ ...payload, studentName: 'Alex' });
+    email.value = 'teacher@school.edu';
+    name.value = '  ​ ';
+    click('send');
+    expect(nameError.textContent).toBe('Type your name, so your teacher knows who sent it.');
+    expect(name.getAttribute('aria-invalid')).toBe('true');
+    expect(name.value).toBe('');
+    expect(document.activeElement).toBe(name);
+    expect(emailError.textContent).toBe('');
+    expect(spies.sendWork).not.toHaveBeenCalled();
 
-    click('send-gmail');
-    expect(spies.openUrl).toHaveBeenLastCalledWith(
-      composeEmailUrl('gmail', 'teacher@school.edu', expected.subject, expected.body),
-      '_blank',
-    );
-    expect(status.textContent).toContain('Gmail opened in a new tab');
-    expect(spies.toast).toHaveBeenLastCalledWith(status.textContent);
+    // Both missing: both errors, the email field first.
+    email.value = '';
+    click('send');
+    expect(emailError.textContent).not.toBe('');
+    expect(nameError.textContent).not.toBe('');
+    expect(document.activeElement).toBe(email);
 
-    click('send-outlook');
-    expect(spies.openUrl).toHaveBeenLastCalledWith(
-      composeEmailUrl('outlook', 'teacher@school.edu', expected.subject, expected.body),
-      '_blank',
-    );
-
-    click('send-mailto');
-    const [url, target] = spies.openUrl.mock.lastCall!;
-    expect(target).toBe('_self');
-    expect(url.startsWith('mailto:teacher@school.edu?subject=ZERO1%20sketch%20from%20Alex&body=Hello%2C%0D%0A')).toBe(true);
-    expect(spies.openUrl).toHaveBeenCalledTimes(3);
-    expect(spies.copyText).not.toHaveBeenCalled();
+    name.value = 'A';
+    name.dispatchEvent(new Event('input'));
+    expect(nameError.textContent).toBe('');
+    expect(name.hasAttribute('aria-invalid')).toBe(false);
   });
 
-  it('copies the work to the clipboard when it is too long for any email link', async () => {
-    const { dialog, spies, email, status, click } = setup();
-    const huge = { url: `https://example.org/#code=${'x'.repeat(20000)}`, code: 'int a;\n'.repeat(3000), kind: 'code' as const };
-    dialog.open(huge);
+  it('sends the work to the relay and says when it was sent', async () => {
+    vi.useFakeTimers({ now: NOW, toFake: ['Date'] });
+    const answer = deferred<SendWorkResult>();
+    const sendWork = vi.fn((_relayUrl: string, _request: SendWorkRequest) => answer.promise);
+    const { dialog, spies, email, name, message, sendButton, sendStatus, click } = setup({ sendWork });
+    dialog.open({ ...payload, kind: 'blocks' });
+    email.value = '​ Teacher@School.edu ';
+    name.value = ' Élise \n Martin ';
+    message.value = 'Hello Miss,\r\nhere is my project.';
+    click('send');
+
+    // The cleaned values are written back and remembered.
+    expect(email.value).toBe('Teacher@School.edu');
+    expect(name.value).toBe('Élise Martin');
+    expect(localStorage.getItem(TEACHER_EMAIL_STORAGE_KEY)).toBe('Teacher@School.edu');
+    expect(localStorage.getItem(STUDENT_NAME_STORAGE_KEY)).toBe('Élise Martin');
+
+    // While sending: one request, the button disabled, a status for screen readers.
+    expect(sendWork).toHaveBeenCalledTimes(1);
+    expect(sendWork.mock.calls[0][1]).toMatchObject({ to: 'Teacher@School.edu', studentName: 'Élise Martin', message: 'Hello Miss,\nhere is my project.' });
+    expect(sendButton.disabled).toBe(true);
+    expect(sendButton.textContent).toBe('Sending…');
+    expect(sendStatus.textContent).toBe('Sending to Teacher@School.edu…');
+    expect(sendStatus.getAttribute('role')).toBe('status');
+    expect(sendStatus.dataset.state).toBe('sending');
+    answer.resolve({ ok: true });
+    await flush();
+
+    expect(sendButton.disabled).toBe(false);
+    expect(sendButton.textContent).toBe('Send to teacher');
+    expect(sendStatus.textContent).toBe('Sent to Teacher@School.edu. Your teacher will get it in a minute.');
+    expect(sendStatus.dataset.state).toBe('ok');
+    expect(spies.toast).toHaveBeenLastCalledWith(sendStatus.textContent);
+    // The message is for this email only.
+    expect(message.value).toBe('');
+    expect(localStorage.length).toBe(2);
+  });
+
+  it('builds the relay request from the fields and the work', async () => {
+    vi.useFakeTimers({ now: NOW, toFake: ['Date'] });
+    const { dialog, spies, email, name, message, click } = setup();
+    dialog.open({ ...payload, kind: 'blocks' });
+    email.value = "o'neil@school.edu";
+    name.value = 'Élise Martin';
+    message.value = 'Hi!\n\n\n\nDone.';
+    click('send');
+    await flush();
+    expect(spies.sendWork).toHaveBeenCalledTimes(1);
+    expect(spies.sendWork).toHaveBeenCalledWith(RELAY, {
+      to: "o'neil@school.edu",
+      studentName: 'Élise Martin',
+      message: 'Hi!\n\nDone.',
+      kind: 'blocks',
+      link: URL_CODE,
+      code: SKETCH,
+      fileName: 'zero1_Elise_Martin_0926_143205.ino',
+    });
+  });
+
+  it('sends once, however often the button is clicked or Enter is pressed', async () => {
+    const answer = deferred<SendWorkResult>();
+    const sendWork = vi.fn(() => answer.promise);
+    const { email, name, click, press } = ready({ sendWork });
+    click('send');
+    click('send');
+    press(email);
+    press(name);
+    expect(sendWork).toHaveBeenCalledTimes(1);
+    answer.resolve({ ok: true });
+    await flush();
+    click('send');
+    await flush();
+    expect(sendWork).toHaveBeenCalledTimes(2);
+  });
+
+  it('sends on Enter in the email or name field, never submits the form', async () => {
+    const { dialog, spies, email, name, message, press } = ready();
+    const enter = press(email);
+    expect(enter.defaultPrevented).toBe(true);
+    await flush();
+    expect(spies.sendWork).toHaveBeenCalledTimes(1);
+    press(name);
+    await flush();
+    expect(spies.sendWork).toHaveBeenCalledTimes(2);
+    // Enter in the message is a new line; other keys do nothing.
+    expect(press(message).defaultPrevented).toBe(false);
+    press(email, 'a');
+    await flush();
+    expect(spies.sendWork).toHaveBeenCalledTimes(2);
+
+    const submit = new Event('submit', { cancelable: true });
+    dialog.element.querySelector('form')!.dispatchEvent(submit);
+    expect(submit.defaultPrevented).toBe(true);
+    expect(dialog.isOpen()).toBe(true);
+  });
+
+  it('explains every relay error in plain words', async () => {
+    const errors: SendWorkError[] = ['network', 'timeout', 'rate_limited', 'quota_exceeded', 'bad_request', 'send_failed', 'bad_response', 'not_configured'];
+    for (const error of errors) {
+      const { sendStatus, sendButton, message, click } = ready({
+        sendWork: () => Promise.resolve({ ok: false, error, message: 'technical details' }),
+      });
+      message.value = 'keep me';
+      click('send');
+      await flush();
+      expect(sendStatus.textContent, error).toBe(SEND_ERROR_TEXT[error]);
+      expect(sendStatus.dataset.state).toBe('error');
+      expect(sendStatus.textContent).not.toContain('technical');
+      expect(sendButton.disabled).toBe(false);
+      // Nothing was sent: the message stays for the next try.
+      expect(message.value).toBe('keep me');
+      document.body.innerHTML = '';
+    }
+    expect(SEND_ERROR_TEXT.network).toBe('Could not reach the email service. Check your internet connection and try again.');
+    expect(SEND_ERROR_TEXT.timeout).toBe(SEND_ERROR_TEXT.network);
+  });
+
+  it('shows a refused address next to the email field', async () => {
+    const { email, emailError, sendStatus, click } = ready({
+      sendWork: () => Promise.resolve({ ok: false, error: 'recipient_not_allowed', message: '' }),
+    });
+    click('send');
+    await flush();
+    expect(emailError.textContent).toBe("This simulator can only send to school teachers' addresses. Check the email address.");
+    expect(email.getAttribute('aria-invalid')).toBe('true');
+    expect(document.activeElement).toBe(email);
+    expect(sendStatus.textContent).toBe('');
+  });
+
+  it('treats a failing sendWork and an offline browser as a network problem', async () => {
+    const failing = ready({ sendWork: () => Promise.reject(new Error('boom')) });
+    failing.click('send');
+    await flush();
+    expect(failing.sendStatus.textContent).toBe(SEND_ERROR_TEXT.network);
+    expect(failing.sendButton.disabled).toBe(false);
+    document.body.innerHTML = '';
+
+    vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false);
+    const offline = ready();
+    offline.click('send');
+    await flush();
+    expect(offline.spies.sendWork).not.toHaveBeenCalled();
+    expect(offline.sendStatus.textContent).toBe(SEND_ERROR_TEXT.network);
+  });
+
+  it('leaves a too long link out and refuses empty or too long code', async () => {
+    // Opening again re-reads the remembered fields.
+    localStorage.setItem(TEACHER_EMAIL_STORAGE_KEY, 'teacher@school.edu');
+    localStorage.setItem(STUDENT_NAME_STORAGE_KEY, 'Alex');
+    const { dialog, spies, sendStatus, click } = setup();
+    const longLink = `https://example.org/#blocks=${'x'.repeat(LINK_MAX_LENGTH)}`;
+    dialog.open({ ...payload, url: longLink });
+    click('send');
+    await flush();
+    expect(spies.sendWork.mock.lastCall![1].link).toBe('');
+    expect(sendStatus.textContent).toBe(
+      'Sent to teacher@school.edu. Your teacher will get it in a minute. Your link was too long, so the email has your code only.',
+    );
+
+    dialog.open({ ...payload, code: 'x'.repeat(CODE_MAX_LENGTH + 1) });
+    click('send');
+    await flush();
+    expect(sendStatus.textContent).toBe('Your code is too long to send by email. Use Download .ino instead.');
+    dialog.open({ ...payload, code: ' \n' });
+    click('send');
+    await flush();
+    expect(sendStatus.textContent).toBe('Your sketch is empty — there is nothing to send yet.');
+    expect(spies.sendWork).toHaveBeenCalledTimes(1);
+  });
+
+  it('clears old errors and re-reads the stored fields when opened again', async () => {
+    const { dialog, email, name, emailError, sendStatus, status, click } = setup({
+      sendWork: () => Promise.resolve({ ok: false, error: 'send_failed', message: '' }),
+    });
+    dialog.open(payload);
+    click('send'); // empty fields: errors
+    expect(emailError.textContent).not.toBe('');
     email.value = 'teacher@school.edu';
-    click('send-gmail');
-    const [url] = spies.openUrl.mock.lastCall!;
-    expect(url.length).toBeLessThanOrEqual(WEBMAIL_URL_BUDGET);
-    expect(spies.copyText).toHaveBeenCalledWith(shareEmailWorkText(huge));
-    await Promise.resolve();
-    expect(status.textContent).toContain('too long for an email link');
-    expect(status.textContent).toContain('Ctrl+V');
+    name.value = 'Alex';
+    click('send');
+    await flush();
+    expect(sendStatus.textContent).toBe(SEND_ERROR_TEXT.send_failed);
+    click('download');
+    expect(status.textContent).not.toBe('');
+    dialog.close();
+
+    localStorage.setItem(TEACHER_EMAIL_STORAGE_KEY, 'other@school.edu');
+    dialog.open(payload);
+    expect(email.value).toBe('other@school.edu');
+    expect(name.value).toBe('Alex');
+    expect(emailError.textContent).toBe('');
+    expect(email.hasAttribute('aria-invalid')).toBe(false);
+    expect(sendStatus.textContent).toBe('');
+    expect(status.textContent).toBe('');
+  });
+
+  it('keeps showing a send in progress when opened again', async () => {
+    const answer = deferred<SendWorkResult>();
+    const { dialog, sendButton, sendStatus, click } = ready({ sendWork: () => answer.promise });
+    click('send');
+    dialog.close();
+    dialog.open(payload);
+    expect(sendButton.disabled).toBe(true);
+    expect(sendStatus.dataset.state).toBe('sending');
+    answer.resolve({ ok: true });
+    await flush();
+    expect(sendButton.disabled).toBe(false);
+    expect(sendStatus.dataset.state).toBe('ok');
   });
 
   it('remembers the teacher email and the student name for the next time', () => {
     const first = setup();
     first.dialog.open(payload);
-    first.email.value = 'teacher@school.edu';
-    first.name.value = 'Alex';
-    first.click('send-outlook');
+    first.email.value = ' teacher@school.edu​';
+    first.email.dispatchEvent(new Event('change'));
+    expect(first.email.value).toBe('teacher@school.edu');
     expect(localStorage.getItem(TEACHER_EMAIL_STORAGE_KEY)).toBe('teacher@school.edu');
-    expect(localStorage.getItem(STUDENT_NAME_STORAGE_KEY)).toBe('Alex');
 
-    // A later edit is saved when the field changes, without sending.
     first.name.value = 'Alex D.';
     first.name.dispatchEvent(new Event('change'));
     expect(localStorage.getItem(STUDENT_NAME_STORAGE_KEY)).toBe('Alex D.');
+    first.message.value = 'not remembered';
+    first.dialog.close();
 
     const second = setup();
     second.dialog.open(payload);
     expect(second.email.value).toBe('teacher@school.edu');
     expect(second.name.value).toBe('Alex D.');
+    expect(second.message.value).toBe('');
+    // Both fields are known: the focus does not jump to the email field.
+    expect(document.activeElement).not.toBe(second.email);
+  });
+
+  it('works without localStorage', () => {
+    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+      throw new Error('denied');
+    });
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new Error('denied');
+    });
+    const { dialog, email, click } = setup();
+    dialog.open(payload);
+    expect(email.value).toBe('');
+    email.value = 'teacher@school.edu';
+    email.dispatchEvent(new Event('change'));
+    click('download');
+    expect(dialog.isOpen()).toBe(true);
   });
 
   it('copies the link, and asks for Ctrl+C when the clipboard refuses', async () => {
@@ -406,37 +621,36 @@ describe('share dialog', () => {
     expect(document.activeElement).toBe(link);
   });
 
-  it('copies the whole email as text', async () => {
-    const { dialog, spies, email, name, status, click } = setup();
-    dialog.open({ ...payload, kind: 'blocks' });
-    email.value = 'teacher@school.edu';
-    name.value = 'Sam';
-    click('copy-email');
-    const { subject, body } = buildShareEmail({ ...payload, kind: 'blocks', studentName: 'Sam' });
-    expect(subject).toBe('ZERO1 blocks program from Sam');
-    expect(spies.copyText).toHaveBeenCalledWith(`To: teacher@school.edu\nSubject: ${subject}\n\n${body}`);
-    await Promise.resolve();
-    expect(status.textContent).toContain('Email text copied');
-    expect(spies.openUrl).not.toHaveBeenCalled();
-  });
-
-  it('downloads the sketch as an .ino file named after the student', () => {
-    const { dialog, spies, name, click } = setup();
+  it('downloads the sketch as a unique .ino file named after the student', () => {
+    vi.useFakeTimers({ now: NOW, toFake: ['Date'] });
+    const { dialog, spies, name, status, click } = setup();
     dialog.open(payload);
     click('download');
-    expect(spies.download).toHaveBeenLastCalledWith('zero1_sketch.ino', SKETCH);
+    expect(spies.download).toHaveBeenLastCalledWith('zero1_0926_143205.ino', SKETCH);
+    expect(status.textContent).toBe('Downloading zero1_0926_143205.ino');
     name.value = 'Élise Martin';
     click('download');
-    expect(spies.download).toHaveBeenLastCalledWith('zero1_Elise_Martin.ino', SKETCH);
+    expect(spies.download).toHaveBeenLastCalledWith('zero1_Elise_Martin_0926_143205.ino', SKETCH);
+    expect(localStorage.getItem(STUDENT_NAME_STORAGE_KEY)).toBe('Élise Martin');
   });
 
-  it('closes with the Close button and does not submit on Enter', () => {
+  it('downloads through a link inside the modal dialog by default', () => {
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:sketch');
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
+    const parents: (Element | null)[] = [];
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) {
+      parents.push(this.parentElement);
+    });
+    const { dialog, click } = setup({ download: undefined });
+    dialog.open(payload);
+    click('download');
+    expect(parents).toHaveLength(1);
+    expect(dialog.element.contains(parents[0])).toBe(true);
+  });
+
+  it('closes with the Close button', () => {
     const { dialog, click } = setup();
     dialog.open(payload);
-    const submit = new Event('submit', { cancelable: true });
-    dialog.element.querySelector('form')!.dispatchEvent(submit);
-    expect(submit.defaultPrevented).toBe(true);
-    expect(dialog.isOpen()).toBe(true);
     click('close');
     expect(dialog.isOpen()).toBe(false);
   });
