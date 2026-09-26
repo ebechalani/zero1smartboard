@@ -679,14 +679,15 @@ and re-registers the LCD if the address changed.
 
 ### 8.1 Layout
 
-Single page, dark purple theme matching the PCB (background `#17112a`,
-panels `#241a3d`, accent `#8b5cf6`, text `#ede9fe`, monospace for code and
-serial). Responsive grid:
+Single page, light theme with the PCB purple as the accent (page background
+`#f5f3fa`, white cards, borders `#e2dcee`, accent `#7c3aed`, text `#1e1633`,
+muted text `#5f5878`, monospace for code and serial; every text colour meets
+WCAG AA on its background). Responsive grid:
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│ header: ZERO1 Smart Board Simulator · [Examples ▾] [▶ Run] [■ Stop] │
-│         [↺ Reset] [⚙ Settings] [GitHub]                             │
+│ header: ZERO1 Smart Board Simulator · [＋ New] [Examples ▾] [▶ Run] │
+│         [■ Stop] [↺ Reset] [⚙ Settings] [🔗 Share] [∞ Arduino IDE]  │
 ├───────────────────────────────┬─────────────────────────────────────┤
 │ board SVG (scales to fit)     │ tabs: Code | Serial Monitor |       │
 │                               │       Pin Map | Generated JS        │
@@ -697,7 +698,11 @@ serial). Responsive grid:
 │                               │ console (errors/warnings, status)   │
 └───────────────────────────────┴─────────────────────────────────────┘
 ```
-Below 1000 px width the columns stack (board on top).
+Below 1000 px width the columns stack (board on top). The header (brand,
+Code | Blocks switch, the actions, run status) is one row from 1366 px wide
+(up to 1439 px the Settings button shows only its ⚙; the run status texts
+stay short, e.g. "2 errors", "Error at 1523 ms"); narrower, the actions
+move to rows of their own under the brand, the mode switch and the status.
 
 ### 8.2 Board view (`board-view.ts`, `board-svg.ts`) — owner: board-svg
 
@@ -735,13 +740,55 @@ export function createBoardView(container: HTMLElement, board: Zero1Board): Boar
 ### 8.3 App (`app.ts`, others) — owner: ui-app
 
 - `main.ts`: creates `RealClock`, `createZero1Board`, mounts `App`.
-- Editor (`editor.ts`): CodeMirror 6 with `@codemirror/lang-cpp`, one-dark
-  theme, line numbers, tab = 2 spaces, `Ctrl/Cmd+Enter` = Run. Diagnostics
+- Editor (`editor.ts`): CodeMirror 6 with `@codemirror/lang-cpp`, a light
+  theme and syntax colours matching the app palette, line numbers, tab = 2 spaces, `Ctrl/Cmd+Enter` = Run. Diagnostics
   from `transpile()` shown with `@codemirror/lint` `setDiagnostics`. Code is
   persisted to `localStorage` (`z1.code`) and restored on load; an
   `Examples` menu replaces the code (confirm if the current code differs
-  from the last loaded example). URL hash `#code=<base64url>` loads shared
-  code ("Share" button copies such a link).
+  from the last loaded example). **New** puts the Arduino IDE's blank sketch
+  (`BLANK_SKETCH`, File > New) in the editor, with the same confirmation; in
+  Blocks mode it resets the workspace to `DEFAULT_WORKSPACE`. Neither stops a
+  running sketch. URL hash `#code=<base64url>` loads shared code.
+- Share dialog (`share-dialog.ts`, opened by the "Share" button): the
+  `#code=` / `#blocks=` link with Copy link; "Send to your teacher" — the
+  teacher's email (invisible characters removed, then validated: no spaces
+  or `, ; ? & # < > "`, an apostrophe only before the `@`), the student's
+  name (required) and an optional message (≤ 500 characters); email and
+  name are remembered in `localStorage` (`z1.teacherEmail`,
+  `z1.studentName`). **Send to teacher** (or Enter in those two fields)
+  POSTs `{ to, studentName, message, kind, link, code, fileName }` as
+  `text/plain` JSON (no CORS preflight) to the teacher's email relay,
+  `EMAIL_RELAY_URL` in `src/config.ts` (`sendWorkToTeacher`, 30 s timeout,
+  one send at a time). The relay (`tools/email-relay/Code.gs`, a Google Apps
+  Script web app the teacher deploys, see `docs/EMAIL.md`) checks every
+  field, the recipient against its allow-list and the link against the
+  simulator URL, limits emails per hour and sends the email with the sketch
+  attached through MailApp. Its error codes are shown as plain sentences
+  (an answer that comes after the student closed the dialog is also shown
+  as a page toast, and still on show at the next open);
+  while `EMAIL_RELAY_URL` is empty the send section is replaced by one
+  "not set up" line. "Download .ino" saves `sketchFileName()`
+  (`sketch-file.ts`).
+- Arduino IDE dialog (`arduino-ide-dialog.ts`, opened by the "Arduino IDE"
+  button with the editor text, or in Blocks mode the sketch generated from
+  the blocks — the same `exportSketch()` as Share). A web page cannot start
+  the desktop IDE (it has no URL protocol), so the dialog offers three ways:
+  **Download sketch (.ino)** saves `sketchFileName()` (`sketch-file.ts`:
+  `zero1[_<name>]_MMDD_HHMMSS.ino`) and lights up three numbered steps that
+  name the file: open it (the IDE installers open `.ino` files), click OK
+  when the IDE offers to move it into a `<name>/` sketch folder, choose
+  Arduino Uno + port and Upload. Names are unique per download because a
+  second `name.ino` would become `name (1).ino` in the Downloads folder (a
+  name IDE 2 refuses) or clash with the `name/` folder made from the first
+  one. **Save into my Arduino folder…** (only where `showDirectoryPicker`
+  exists: Chrome, Edge; `id: 'zero1-sketchbook'`, `startIn: 'documents'`)
+  writes `<name>/<name>.ino` into the picked folder, ideally the sketchbook
+  *Documents › Arduino*, which File › Open (and File › Sketchbook) opens with
+  no prompt; a cancelled picker says nothing, a refused or failed save
+  suggests Download. **Copy code** for File › New Sketch + paste (every IDE
+  version). A note sends Chromebook users to the Arduino Cloud Editor
+  (app.arduino.cc → Create → Import). Status line (`aria-live`) and Close;
+  Esc closes; every `open()` starts with no status and the steps reset.
 - Run: `transpile()` → on error show diagnostics in the editor and console,
   else `board.reset()`, `executor.run(js)`; buttons reflect status; the
   header shows a running indicator and elapsed `millis()`.
@@ -769,7 +816,8 @@ export function createBoardView(container: HTMLElement, board: Zero1Board): Boar
 - Audio (`audio.ts`): WebAudio square-wave oscillator following
   `buzzer.state.freq` (start on first user gesture; gain 0.05; mute toggle).
 - Examples menu (`examples-menu.ts`): grouped list from `src/examples/index.ts`.
-- Keyboard: `Ctrl/Cmd+Enter` run, `Esc` stop.
+- Keyboard: `Ctrl/Cmd+Enter` run, `Esc` stop — both ignored while the
+  Settings, Share or Arduino IDE dialog is open (Esc then closes the dialog).
 - `index.html`: minimal shell with `<div id="app">`, meta viewport, title
   "ZERO1 Smart Board Simulator", favicon as inline SVG data URI.
 - `style.css`: imported from `main.ts`.

@@ -22,9 +22,11 @@ import {
   createBlocksPanel,
   encodeShareBlocks,
   loadBlockExamples,
+  loadBlocksBaseline,
   loadMode,
   loadSavedWorkspace,
   needsConfirmToBlocks,
+  saveBlocksBaseline,
   saveMode,
   saveWorkspace,
   workspaceFingerprint,
@@ -36,11 +38,22 @@ import { createPinMap, type PinMap } from './pinmap';
 import { createConsolePanel, type ConsolePanel } from './console-panel';
 import { createControls, type Controls } from './controls';
 import { createSettingsDialog, type SettingsDialog } from './settings';
+import { createShareDialog, type ShareDialog } from './share-dialog';
+import { createArduinoIdeDialog, type ArduinoIdeDialog } from './arduino-ide-dialog';
 import { createExamplesMenu, type ExamplesMenu } from './examples-menu';
 import { createBuzzerAudio, loadMuted, saveMuted, type BuzzerAudio } from './audio';
 
-/** Repository link shown in the header. */
-export const GITHUB_URL = 'https://github.com/ebechalani/zero1smartboard';
+/** What "New" puts in the editor: exactly the Arduino IDE's File > New. */
+export const BLANK_SKETCH = `void setup() {
+  // put your setup code here, to run once:
+
+}
+
+void loop() {
+  // put your main code here, to run repeatedly:
+
+}
+`;
 
 type TabId = 'blocks' | 'code' | 'serial' | 'pinmap' | 'js';
 
@@ -49,6 +62,15 @@ type BoardViewWithRx = BoardView & { pulseRx?(): void };
 
 /** What a share link / `#example=` hash carried. */
 type HashPayload = { kind: 'code'; code: string } | { kind: 'blocks'; workspace: object };
+
+/** The work as it leaves the simulator (Share, Arduino IDE): the sketch and its share-link hash. */
+interface ExportedSketch {
+  /** The Arduino sketch (in Blocks mode: the sketch generated from the blocks). */
+  code: string;
+  kind: AppMode;
+  /** `#code=…` or `#blocks=…`. */
+  hash: string;
+}
 
 /** Delay between an edit and the live syntax check. */
 const LIVE_LINT_MS = 700;
@@ -84,6 +106,8 @@ export class App {
   private readonly consolePanel: ConsolePanel;
   private readonly controls: Controls;
   private readonly settings: SettingsDialog;
+  private readonly shareDialog: ShareDialog;
+  private readonly ideDialog: ArduinoIdeDialog;
   private readonly examplesMenu: ExamplesMenu<Example | BlockExample>;
   private readonly audio: BuzzerAudio;
 
@@ -197,17 +221,27 @@ export class App {
       },
     });
 
+    this.shareDialog = createShareDialog(root, {
+      // The relay may answer after the student closed the dialog: say it on the page too.
+      toast: (text) => {
+        if (!this.shareDialog.isOpen()) this.toast(text);
+      },
+    });
+    this.ideDialog = createArduinoIdeDialog(root);
+
     this.examplesMenu = createExamplesMenu<Example | BlockExample>(this.slot('examples'), EXAMPLES, (example) => {
       if ('source' in example) this.loadExample(example);
       else void this.loadBlockExample(example);
     });
 
     // --- header actions ---------------------------------------------------
+    this.slot('new').addEventListener('click', () => void this.newSketch());
     this.runButton.addEventListener('click', () => void this.run());
     this.stopButton.addEventListener('click', () => void this.stop());
     this.slot('reset').addEventListener('click', () => void this.reset());
     this.slot('settings').addEventListener('click', () => this.settings.open());
-    this.slot('share').addEventListener('click', () => void this.share());
+    this.slot('share').addEventListener('click', () => this.share());
+    this.slot('ide').addEventListener('click', () => this.openInIde());
     for (const mode of MODES) this.modeButtons.get(mode)!.addEventListener('click', () => void this.switchMode(mode));
 
     for (const tab of TABS) {
@@ -253,9 +287,9 @@ export class App {
 
     if (!result.ok) {
       const count = result.errors.length;
-      const summary = `${count} error${count === 1 ? '' : 's'} — fix and run again`;
-      this.consolePanel.setStatus(summary);
-      if (!this.running) this.setStatus('error', summary);
+      const errors = `${count} error${count === 1 ? '' : 's'}`;
+      this.consolePanel.setStatus(`${errors} — fix and run again`);
+      if (!this.running) this.setStatus('error', errors);
       const first = result.errors[0];
       if (first && this.mode === 'code') this.editor.goToLine(first.line, first.column);
       return;
@@ -294,7 +328,7 @@ export class App {
     this.setRunning(false);
     const millis = Math.floor(this.clock.now());
     if (executor.status === 'error') {
-      this.setStatus('error', `Stopped by an error at ${millis} ms`);
+      this.setStatus('error', `Error at ${millis} ms`);
       this.consolePanel.setStatus('Stopped by an error — click the message to jump to the line');
     } else {
       this.setStatus('stopped', `Stopped at ${millis} ms`);
@@ -352,6 +386,11 @@ export class App {
     this.lastMillisShown = -1;
   }
 
+  /**
+   * The run status in the header. Keep the texts short ("2 errors", "Error at
+   * 1523 ms") so the header stays on one row at 1366-1536 px; the console
+   * status line has the full sentence.
+   */
   private setStatus(status: ExecutorStatus, text: string): void {
     this.statusBox.dataset.status = status;
     if (this.statusText.textContent !== text) this.statusText.textContent = text;
@@ -521,7 +560,9 @@ export class App {
         panel.clear(); // unreadable saved state: start fresh rather than fail
       }
     }
-    this.lastLoadedBlocks = saved ? null : this.defaultBlocks;
+    // The baseline is saved like the workspace: an example restored untouched
+    // after a reload is still not worth a question.
+    this.lastLoadedBlocks = saved ? loadBlocksBaseline() : this.defaultBlocks;
     this.blocksPanel = panel;
     return panel;
   }
@@ -566,12 +607,18 @@ export class App {
       panel.loadWorkspace(workspace);
     } catch (err) {
       panel.clear();
-      this.lastLoadedBlocks = this.defaultBlocks;
+      this.setBlocksBaseline(this.defaultBlocks);
       this.consolePanel.push({ level: 'error', text: `Block code error: these blocks could not be loaded (${errorText(err)}).` });
       return;
     }
-    this.lastLoadedBlocks = workspaceFingerprint(panel.getWorkspaceJson());
+    this.setBlocksBaseline(workspaceFingerprint(panel.getWorkspaceJson()));
     this.toast(toast);
+  }
+
+  /** Remember the untouched workspace, also for the next visit (the workspace itself is saved on change). */
+  private setBlocksBaseline(fingerprint: string | null): void {
+    this.lastLoadedBlocks = fingerprint;
+    saveBlocksBaseline(fingerprint);
   }
 
   private async loadBlockExample(example: BlockExample): Promise<void> {
@@ -612,6 +659,32 @@ export class App {
     return code;
   }
 
+  /**
+   * Header "New": the empty sketch of the Arduino IDE's File > New, or the
+   * empty program in Blocks mode (asking first when work would be lost). Like
+   * loading an example, it does not stop a running sketch: the board keeps
+   * running the last upload until Run or Stop.
+   */
+  async newSketch(): Promise<void> {
+    if (this.mode === 'blocks') {
+      const panel = await this.ensureBlocksPanel();
+      if (!panel || this.mode !== 'blocks') return; // could not load, or the student switched back meanwhile
+      if (!this.confirmReplaceBlocks('Start a new blank program?')) return;
+      panel.clear();
+      this.setBlocksBaseline(this.defaultBlocks);
+      this.syncEditorWithBlocks(panel);
+      this.selectTab('blocks');
+      this.toast('New blank program');
+      return;
+    }
+    if (!this.confirmReplace('Start a new blank sketch?')) return;
+    this.editor.setCode(BLANK_SKETCH);
+    this.lastLoadedSource = BLANK_SKETCH;
+    this.selectTab('code');
+    this.editor.focus();
+    this.toast('New blank sketch');
+  }
+
   private loadExample(example: Example): void {
     if (!this.confirmReplace(`Replace your code with the example "${example.title}"?`)) return;
     this.editor.setCode(example.source);
@@ -621,9 +694,14 @@ export class App {
     this.toast(`Loaded example: ${example.title}`);
   }
 
-  /** Text that carries no hand-written work: empty, or exactly an example / the last loaded sketch. */
+  /** Text that carries no hand-written work: empty, the blank sketch, or exactly an example / the last loaded sketch. */
   private isUntouchedText(text: string): boolean {
-    return text.trim() === '' || text === this.lastLoadedSource || EXAMPLES.some((e) => e.source === text);
+    return (
+      text.trim() === '' ||
+      text === BLANK_SKETCH ||
+      text === this.lastLoadedSource ||
+      EXAMPLES.some((e) => e.source === text)
+    );
   }
 
   /** Ask before discarding code that differs from the last loaded example. */
@@ -631,28 +709,47 @@ export class App {
     return this.isUntouchedText(this.editor.getCode()) || window.confirm(`${question}\nYour current code will be lost.`);
   }
 
-  private async share(): Promise<void> {
-    let hash: string;
-    let what: string;
-    if (this.mode === 'blocks') {
-      const panel = this.blocksPanel;
-      if (!panel) {
-        this.toast('The blocks are still loading — try again in a moment');
-        return;
-      }
-      hash = `#blocks=${encodeShareBlocks(panel.getWorkspaceJson())}`;
-      what = 'these blocks';
-    } else {
-      hash = `#code=${encodeShareCode(this.editor.getCode())}`;
-      what = 'this sketch';
+  /**
+   * Header "Share": build the `#code=` / `#blocks=` link and open the share
+   * dialog (copy the link, email it with the code to the teacher, download
+   * the sketch as an .ino file).
+   */
+  private share(): void {
+    const sketch = this.exportSketch();
+    if (!sketch) return;
+    const url = `${location.origin}${location.pathname}${location.search}${sketch.hash}`;
+    this.shareDialog.open({ url, code: sketch.code, kind: sketch.kind });
+  }
+
+  /** Header "Arduino IDE": download / save / copy the sketch for the desktop Arduino IDE. */
+  private openInIde(): void {
+    const sketch = this.exportSketch();
+    if (!sketch) return;
+    this.ideDialog.open({ code: sketch.code, kind: sketch.kind });
+  }
+
+  /**
+   * The work to hand out: the editor text in Code mode, the sketch generated
+   * from the blocks in Blocks mode. Null (with a toast) while the blocks are
+   * still loading.
+   */
+  private exportSketch(): ExportedSketch | null {
+    if (this.mode !== 'blocks') {
+      const code = this.editor.getCode();
+      return { code, kind: 'code', hash: `#code=${encodeShareCode(code)}` };
     }
-    const url = `${location.origin}${location.pathname}${location.search}${hash}`;
+    const panel = this.blocksPanel;
+    if (!panel) {
+      this.toast('The blocks are still loading — try again in a moment');
+      return null;
+    }
+    let code: string;
     try {
-      await navigator.clipboard.writeText(url);
-      this.toast(`Link copied — paste it to share ${what}`);
+      code = panel.getCode();
     } catch {
-      window.prompt(`Copy this link to share ${what}:`, url);
+      code = this.lastGeneratedCode ?? this.editor.getCode(); // generator failure: the explanation comment
     }
+    return { code, kind: 'blocks', hash: `#blocks=${encodeShareBlocks(panel.getWorkspaceJson())}` };
   }
 
   /** Tabs that exist in the current mode (the Blocks tab is hidden in Code mode). */
@@ -703,11 +800,13 @@ export class App {
 
   private readonly onKeyDown = (e: KeyboardEvent): void => {
     if (e.defaultPrevented) return;
+    // Keys pressed in a dialog are for the dialog (Esc closes it), never for the sketch behind it.
+    if (this.settings.element.open || this.shareDialog.isOpen() || this.ideDialog.isOpen()) return;
     if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
       e.preventDefault();
       void this.run();
     } else if (e.key === 'Escape') {
-      if (this.settings.element.open || this.examplesMenu.isOpen()) return;
+      if (this.examplesMenu.isOpen()) return;
       void this.stop();
     }
   };
@@ -844,13 +943,14 @@ export class App {
           </div>
           <div class="z1-mode" role="group" aria-label="Programming mode">${modeSwitch}</div>
           <nav class="z1-toolbar" aria-label="Sketch actions">
+            <button type="button" class="z1-btn" data-slot="new" aria-label="Start a new blank sketch" title="New blank sketch"><span aria-hidden="true">＋</span> New</button>
             <div data-slot="examples"></div>
             <button type="button" class="z1-btn z1-btn-run" data-slot="run" aria-label="Run the sketch (Ctrl+Enter)" title="Run (Ctrl+Enter)"><span aria-hidden="true">▶</span> Run</button>
             <button type="button" class="z1-btn z1-btn-stop" data-slot="stop" aria-label="Stop the sketch (Esc)" title="Stop (Esc)" disabled><span aria-hidden="true">■</span> Stop</button>
             <button type="button" class="z1-btn" data-slot="reset" aria-label="Reset the board" title="Stop and reset the board"><span aria-hidden="true">↺</span> Reset</button>
-            <button type="button" class="z1-btn" data-slot="settings" aria-label="Open board settings" title="Board settings"><span aria-hidden="true">⚙</span> Settings</button>
-            <button type="button" class="z1-btn" data-slot="share" aria-label="Copy a link to this sketch" title="Copy a share link"><span aria-hidden="true">🔗</span> Share</button>
-            <a class="z1-btn" href="${GITHUB_URL}" target="_blank" rel="noopener noreferrer" aria-label="Open the project on GitHub">GitHub</a>
+            <button type="button" class="z1-btn" data-slot="settings" aria-label="Open board settings" title="Board settings"><span aria-hidden="true">⚙</span> <span class="z1-btn-label">Settings</span></button>
+            <button type="button" class="z1-btn" data-slot="share" aria-label="Share your work" title="Share: copy the link, email your teacher, download an .ino file"><span aria-hidden="true">🔗</span> Share</button>
+            <button type="button" class="z1-btn" data-slot="ide" aria-label="Open this sketch in the Arduino IDE" title="Open in the Arduino IDE"><span aria-hidden="true">∞</span> Arduino IDE</button>
           </nav>
           <div class="z1-run-status" data-slot="status" data-status="idle" role="status" aria-live="polite">
             <span class="z1-run-dot" aria-hidden="true"></span>
