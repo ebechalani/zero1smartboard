@@ -58,15 +58,16 @@ hand in their work with those two buttons.
 
      The match is exact: `myschool.edu` does **not** allow
      `j.smith@staff.myschool.edu`. Add `'staff.myschool.edu'` to the list if
-     teachers use such addresses.
+     teachers use such addresses. If students also have addresses at this
+     domain, list the teachers in `ALLOWED_ADDRESSES` instead.
    - `ALLOWED_ADDRESSES` — single addresses outside those domains, if any,
      for example `['j.smith@gmail.com']`.
    - If you leave **both lists empty**, the script only sends to **you** (the
      owner of the script). That is the simplest choice when you are the only
      teacher using it. You are always allowed, whatever the lists say.
    - Keep `SIMULATOR_URL` as it is (change it only if you host your own copy
-     of the simulator at another address). Every link in an email must start
-     with it.
+     of the simulator at another address). The **Open it in the simulator**
+     link in an email must start with it.
    - `MAX_EMAILS_PER_HOUR` (60) is enough for a class; `DEV` stays `false`.
 7. Click the **Save** icon (or press Ctrl+S).
 
@@ -199,11 +200,13 @@ that:
   the current hour. The **Executions** page of the Apps Script project lists
   every request; refused ones are logged with the reason.
 - **The URL is public** (it is written in the simulator's page), so anyone
-  could call it. That is why the script only emails the addresses you
-  allowed, only puts links to the simulator (`SIMULATOR_URL`) in its emails,
-  escapes everything the student typed, and stops after `MAX_EMAILS_PER_HOUR`
-  emails an hour. It cannot read your email, your files or anything else in
-  your account.
+  who has the URL can send a short email (a name, a message of up to 500
+  characters and some code, which may contain web addresses) from your
+  account to the addresses you allowed. That is why the script only emails
+  those addresses, escapes everything the student typed, and stops after
+  `MAX_EMAILS_PER_HOUR` emails an hour. Only the **Open it in the
+  simulator** button is checked to lead to `SIMULATOR_URL`. The script
+  cannot read your email, your files or anything else in your account.
 - **Names are typed by the students**: the name in an email is what the
   student typed, like a name written on a sheet of paper.
 
@@ -214,13 +217,13 @@ What the student sees in the Share dialog, and what to do:
 | Message | Likely cause | What to do |
 |---------|--------------|------------|
 | Sending to your teacher is not set up on this simulator yet | `EMAIL_RELAY_URL` in `src/config.ts` is empty. | Step 5. |
-| Could not reach the email service. Check your internet connection and try again. | The student is offline; the school network blocks `script.google.com`; **Who has access** is not **Anyone** (Google answers with a sign-in page the browser does not pass on); the URL is wrong; the deployment was archived. | Open the URL yourself (Step 4). Redeploy with **Who has access: Anyone** (Step 3). Ask IT to allow `script.google.com` and `script.googleusercontent.com`. |
+| Could not reach the email service. Check your internet connection and try again. | The student is offline; the school network blocks `script.google.com`; **Who has access** is not **Anyone** (Google answers with a sign-in page the browser does not pass on); the URL in `src/config.ts` is a `/dev` URL (it only works for you) or is otherwise wrong; the deployment was archived. | Open the URL in a private (incognito) window (Step 4) and check that it ends in `/exec`: signed in as yourself, even a `/dev` URL seems to work. Redeploy with **Who has access: Anyone** (Step 3). Ask IT to allow `script.google.com` and `script.googleusercontent.com`. |
 | This simulator can only send to school teachers' addresses. Check the email address. | The address is not in `ALLOWED_DOMAINS` / `ALLOWED_ADDRESSES` (with both lists empty: it is not the script owner's address), or it has a typo. | Check the address. Add the domain or the address, then deploy a new version (see *Updating the script later*). |
 | Too many emails were sent from this simulator in the last hour. Try again later. | `MAX_EMAILS_PER_HOUR` was reached, or very many students pressed Send at the same moment. | Wait a few minutes, or raise `MAX_EMAILS_PER_HOUR` and deploy a new version. |
 | The email service cannot send any more emails today… | Google's daily email limit for your account is used up. | Wait until tomorrow. A Google Workspace account has a higher limit. |
 | The email service did not accept your work. Check the email address and your name, then try again. | A field was refused: an address with unusual characters (only letters, digits and `. _ + - '` are accepted before the `@`), or a link that does not start with `SIMULATOR_URL` (for example a copy of the simulator hosted elsewhere). | Check the address. If you host your own copy of the simulator, set `SIMULATOR_URL` to its address and deploy a new version. |
 | The email could not be sent. Try again in a minute. | Google refused to send (for example the permission to send email was removed, or a temporary problem). The reason is on the **Executions** page. | Run **sendTestEmail** again (Step 2) to renew the permission, then try again. |
-| The email service gave an unexpected answer… | The URL is not the relay: a `/dev` URL (it only works for you), another script, or an old deployment. | Use the `/exec` URL that shows `{"ok":true,"service":"zero1-email-relay"}` (Step 4). |
+| The email service gave an unexpected answer… | The URL is not the relay: another script, or an old deployment. | Use the `/exec` URL that shows `{"ok":true,"service":"zero1-email-relay"}` (Step 4). |
 | Your code is too long to send by email. Use Download .ino instead. | The sketch is longer than 100,000 characters. | Download the `.ino` file. |
 
 ## For developers

@@ -152,6 +152,8 @@ export function createArduinoIdeDialog(parent: HTMLElement, options: ArduinoIdeD
   let payload: ArduinoIdePayload = { code: '', kind: 'code' };
   /** Incremented by every open(): an answer that arrives after a reopen is dropped. */
   let session = 0;
+  /** The last file downloaded. A second click in the same second gives the same name: it is not downloaded again (the browser would save "name (1).ino"). */
+  let lastFileName = '';
 
   const setStatus = (text: string, tone: 'ok' | 'error' = 'ok'): void => {
     status.textContent = text;
@@ -166,7 +168,10 @@ export function createArduinoIdeDialog(parent: HTMLElement, options: ArduinoIdeD
 
   const download = (): void => {
     const fileName = sketchFileName(studentName(), now());
-    (options.download ?? ((name, text) => downloadTextFile(name, text, dialog)))(fileName, payload.code);
+    if (fileName !== lastFileName) {
+      lastFileName = fileName;
+      (options.download ?? ((name, text) => downloadTextFile(name, text, dialog)))(fileName, payload.code);
+    }
     // Step 1 names the exact file, so the student picks the right one in the downloads list.
     const bold = document.createElement('b');
     bold.textContent = fileName;
@@ -202,6 +207,8 @@ export function createArduinoIdeDialog(parent: HTMLElement, options: ArduinoIdeD
       );
     } finally {
       saveButton.disabled = false;
+      // Disabling the focused button dropped the focus to the page: give it back.
+      if (dialog.open && !dialog.contains(document.activeElement)) saveButton.focus();
     }
   };
 

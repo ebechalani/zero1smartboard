@@ -134,6 +134,22 @@ describe('Arduino IDE dialog', () => {
     expect(m.status()).toContain('zero1_Elise_Martin_0926_143205.ino');
   });
 
+  it('downloads once on a double click (the same name would be saved as "name (1).ino")', () => {
+    let when = WHEN;
+    const m = mount({ studentName: () => '', now: () => when });
+    m.dialog.open({ code: SKETCH, kind: 'code' });
+    m.click('download');
+    m.click('download');
+    expect(m.download).toHaveBeenCalledTimes(1);
+    expect(m.status()).toContain('zero1_0926_143205.ino');
+    // A second later the name is new: that download goes ahead.
+    when = new Date(WHEN.getTime() + 1000);
+    m.click('download');
+    expect(m.download).toHaveBeenCalledTimes(2);
+    expect(m.download).toHaveBeenLastCalledWith('zero1_0926_143206.ino', SKETCH);
+    expect(m.el.querySelector('[data-role="file"] b')!.textContent).toBe('zero1_0926_143206.ino');
+  });
+
   it('uses the injected student name and falls back to zero1_<time> without one', () => {
     const m = mount({ studentName: () => '' });
     m.dialog.open({ code: SKETCH, kind: 'code' });
@@ -179,6 +195,20 @@ describe('Arduino IDE dialog', () => {
       'Saved Arduino/zero1_Alex_0926_143205/zero1_Alex_0926_143205.ino — in the Arduino IDE use File › Open… (or File › Sketchbook).',
     );
     expect(m.button('save-folder').disabled).toBe(false);
+  });
+
+  it('gives the focus back to the folder button once the save is over', async () => {
+    let finish: (folder: FakeFolder) => void = () => undefined;
+    const m = mount({ pickDirectory: () => new Promise<FakeFolder>((resolve) => (finish = resolve)) });
+    m.dialog.open({ code: SKETCH, kind: 'code' });
+    m.button('save-folder').focus();
+    m.click('save-folder');
+    m.button('save-folder').blur(); // what a browser does when the focused button is disabled
+    expect(document.activeElement).toBe(document.body);
+    finish(new FakeFolder('Arduino'));
+    await settle();
+    expect(m.status()).toContain('Saved Arduino/');
+    expect(document.activeElement).toBe(m.button('save-folder'));
   });
 
   it('says nothing when the student cancels the folder picker', async () => {
@@ -271,6 +301,20 @@ describe('Arduino IDE dialog', () => {
     m.dialog.close();
     m.dialog.open({ code: SKETCH, kind: 'code' });
     finish(new FakeFolder('Arduino'));
+    await settle();
+    expect(m.status()).toBe('');
+  });
+
+  it('drops a copy answer that arrives after the dialog was opened again', async () => {
+    const answers: { resolve(): void; reject(err: Error): void }[] = [];
+    const m = mount({ copyText: () => new Promise<void>((resolve, reject) => answers.push({ resolve, reject })) });
+    m.dialog.open({ code: SKETCH, kind: 'code' });
+    m.click('copy');
+    m.click('copy');
+    m.dialog.close();
+    m.dialog.open({ code: 'void setup() {}\nvoid loop() {}\n', kind: 'code' });
+    answers[0].resolve();
+    answers[1].reject(new Error('denied'));
     await settle();
     expect(m.status()).toBe('');
   });

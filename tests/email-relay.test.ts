@@ -363,7 +363,7 @@ describe('doPost: bad requests', () => {
     expect(post(request({ message: 'x'.repeat(500), code: 'x'.repeat(100000) })).ok).toBe(true);
   });
 
-  it('only puts links to the simulator in the email', () => {
+  it('accepts only a link that leads to the simulator', () => {
     const { post, sent } = loadRelay(SCHOOL);
     const foreign = [
       'https://evil.example/#code=abc',
@@ -405,6 +405,30 @@ describe('doPost: bad requests', () => {
     const { relay } = loadRelay();
     expect(relay.isSimulatorLink_('https://ebechalani.github.io.evil.example/', 'https://ebechalani.github.io', false)).toBe(false);
     expect(relay.isSimulatorLink_('https://ebechalani.github.io/zero1smartboard/#code=a', 'https://ebechalani.github.io', false)).toBe(true);
+  });
+
+  it('works with a SIMULATOR_URL written without its final slash', () => {
+    const url = 'https://myschool.edu/zero1';
+    const { relay, post, sent } = loadRelay({ SIMULATOR_URL: url });
+    // Step 2 of docs/EMAIL.md: the test email goes out, with a link the relay accepts.
+    expect(relay.sendTestEmail()).toEqual({ ok: true });
+    expect(sent[0].body).toContain(`${url}/#code=`);
+    // The refusal names the prefix a link really needs.
+    const refused = post(request({ to: OWNER, link: `${url}.evil.example/#code=abc` }));
+    expect(refused).toMatchObject({ ok: false, error: 'bad_request' });
+    expect(refused.message).toContain(`"link" must start with ${url}/ `);
+  });
+
+  it('refuses a name or message far over its limit before cleaning it', () => {
+    const { post, sent } = loadRelay(SCHOOL);
+    // Cleaned, these would fit; the raw text is refused all the same.
+    expect(post(request({ message: `${' '.repeat(1000)}x` }))).toMatchObject({ ok: false, error: 'bad_request' });
+    expect(post(request({ studentName: `${' '.repeat(120)}x` }))).toMatchObject({ ok: false, error: 'bad_request' });
+    expect(sent).toHaveLength(0);
+    // Up to twice the limit is cleaned as before.
+    expect(post(request({ message: `${' '.repeat(999)}x` })).ok).toBe(true);
+    expect(post(request({ studentName: `${' '.repeat(119)}x` })).ok).toBe(true);
+    expect(sent.map((e) => e.subject)).toEqual(['ZERO1 sketch from Alex Dupont', 'ZERO1 sketch from x']);
   });
 });
 
@@ -598,6 +622,15 @@ describe('helpers', () => {
     expect(relay.cleanName_(42)).toBe('');
     expect(relay.cleanMessage_('a\r\nb\rc d e')).toBe('a\nb\nc d e');
     expect(relay.cleanMessage_(null)).toBe('');
+  });
+
+  it('cleans a long run of spaces quickly', () => {
+    vi.useRealTimers();
+    const { relay } = loadRelay();
+    const spaces = ' '.repeat(100000);
+    const start = performance.now();
+    expect(relay.cleanMessage_(`a${spaces}b \t\n c `)).toBe(`a${spaces}b\n c`);
+    expect(performance.now() - start).toBeLessThan(500); // a regex like / +\n/ takes seconds here
   });
 
   it('checks addresses and recipients without the web app', () => {

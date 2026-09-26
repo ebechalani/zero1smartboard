@@ -948,6 +948,7 @@ input[type='range'] {
 
 .z1-dialog-actions {
   display: flex;
+  align-items: center;
   gap: 8px;
   padding-top: 6px;
   border-top: 1px solid var(--border);
@@ -1209,6 +1210,18 @@ input[type='range'] {
 }
 .z1-ide-status[data-tone='error'] {
   color: var(--error);
+}
+
+/* File names and paths are one long word: let them wrap anywhere rather
+   than push the Close button out of the dialog. */
+.z1-ide-status,
+.z1-share-status,
+.z1-share-send-status {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.z1-ide-steps {
+  overflow-wrap: anywhere;
 }
 
 @media (prefers-reduced-motion: reduce) {

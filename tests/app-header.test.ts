@@ -4,8 +4,10 @@
  * board to check the toolbar — New replaces the sketch with the Arduino IDE's
  * blank sketch (asking only when hand-written work would be lost), there is
  * no GitHub link, Share opens the share dialog with the `#code=` /
- * `#blocks=` link, Arduino IDE opens its dialog with the sketch, and the
- * global keys leave a sketch alone while a dialog is open.
+ * `#blocks=` link (and a relay answer that comes after the dialog was closed
+ * shows as a page toast), Arduino IDE opens its dialog with the sketch, the
+ * run status stays short, and the global keys leave a sketch alone while a
+ * dialog is open.
  *
  * Blockly is never loaded: in Blocks mode `createBlocksPanel` returns a small
  * fake panel whose "blocks" are a list of block types and whose sketch lists
@@ -27,6 +29,7 @@ import {
 } from '../src/ui/blocks-panel';
 import type { BlockExample } from '../src/blocks';
 import { EXAMPLES } from '../src/examples';
+import { SEND_ERROR_TEXT } from '../src/ui/share-dialog';
 
 // ---------------------------------------------------------------------------
 // Fake blocks panel
@@ -100,7 +103,14 @@ class FakePanel implements BlocksPanel {
   }
 }
 
-const fake = vi.hoisted(() => ({ panel: null as unknown, examples: [] as unknown[] }));
+const fake = vi.hoisted(() => ({ panel: null as unknown, examples: [] as unknown[], relayUrl: '' }));
+
+// EMAIL_RELAY_URL as the app sees it: empty, as shipped, unless a test sets fake.relayUrl.
+vi.mock('../src/config', () => ({
+  get EMAIL_RELAY_URL() {
+    return fake.relayUrl;
+  },
+}));
 
 vi.mock('../src/ui/blocks-panel', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../src/ui/blocks-panel')>()),
@@ -137,6 +147,7 @@ afterEach(() => {
   app = null;
   fake.panel = null;
   fake.examples = [];
+  fake.relayUrl = '';
   document.body.innerHTML = '';
   localStorage.clear();
   Reflect.deleteProperty(window, 'confirm');
@@ -329,6 +340,36 @@ describe('Share', () => {
     key({ key: 'Escape' });
     expect(stop).toHaveBeenCalledTimes(1);
   });
+
+  it("shows the relay's answer on the page only when the dialog was closed while sending", async () => {
+    fake.relayUrl = 'https://relay.example/macros/s/abc/exec';
+    const answers: ((body: string) => void)[] = [];
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockImplementation(() => new Promise<Response>((resolve) => answers.push((body) => resolve(new Response(body)))));
+    const root = start(MY_SKETCH);
+    button(root, 'share').click();
+    const dialog = root.querySelector<HTMLDialogElement>('dialog.z1-share')!;
+    dialog.querySelector<HTMLInputElement>('#z1-share-email')!.value = 'teacher@school.edu';
+    dialog.querySelector<HTMLInputElement>('#z1-share-name')!.value = 'Alex';
+    const send = dialog.querySelector<HTMLButtonElement>('[data-action="send"]')!;
+
+    // Open: the dialog says it (a page toast would sit under the modal backdrop).
+    send.click();
+    answers[0]('{"ok":true}');
+    await settle();
+    expect(dialog.querySelector('[data-role="send-status"]')!.textContent).toContain('Sent to teacher@school.edu');
+    expect(toastText(root)).not.toContain('Sent to');
+
+    // Closed while sending: the page says it.
+    send.click();
+    dialog.close();
+    answers[1]('{"ok":false,"error":"send_failed","message":""}');
+    await settle();
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(toastText(root)).toBe(SEND_ERROR_TEXT.send_failed);
+    expect(root.querySelector<HTMLElement>('[data-slot="toast"]')!.hidden).toBe(false);
+  });
 });
 
 describe('Arduino IDE', () => {
@@ -345,6 +386,28 @@ describe('Arduino IDE', () => {
     expect(file.name).toMatch(SKETCH_FILE);
     expect(file.text).toBe(MY_SKETCH);
     expect(dialog.querySelector('[data-role="steps"]')!.textContent).toContain(file.name);
+  });
+});
+
+describe('run status', () => {
+  const status = (root: HTMLElement): HTMLElement => root.querySelector<HTMLElement>('[data-slot="status"]')!;
+  const consoleStatus = (root: HTMLElement): string => root.querySelector('.z1-console-status')!.textContent ?? '';
+
+  // A long status would wrap the header onto a second row at 1366-1536 px.
+  it('keeps a compile error short in the header, with the full sentence in the console', async () => {
+    const root = start('void setup() {\n  pinMode(A1, OUTPUT)\n}\n\nvoid loop() {\n}\n');
+    await app!.run();
+    expect(status(root).dataset.status).toBe('error');
+    expect(status(root).textContent!.trim()).toBe('1 error');
+    expect(consoleStatus(root)).toBe('1 error — fix and run again');
+  });
+
+  it('keeps a runtime error short in the header, with the full sentence in the console', async () => {
+    const root = start('int zero = 0;\n\nvoid setup() {\n  int x = 5 / zero;\n}\n\nvoid loop() {\n}\n');
+    await app!.run();
+    expect(status(root).dataset.status).toBe('error');
+    expect(status(root).textContent!.trim()).toMatch(/^Error at \d+ ms$/);
+    expect(consoleStatus(root)).toBe('Stopped by an error — click the message to jump to the line');
   });
 });
 

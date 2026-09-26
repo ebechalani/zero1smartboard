@@ -13,9 +13,11 @@
  * and put the web app URL (ending in /exec) in the simulator's src/config.ts.
  *
  * Safety: the web app URL is public (it is written in the simulator's page),
- * so this script only emails the addresses allowed below, only puts links to
- * the simulator in its emails, and sends at most MAX_EMAILS_PER_HOUR emails
- * an hour.
+ * so anyone who has it can send a short email (a name, a message of up to 500
+ * characters and some code, which may contain web addresses) from your
+ * account. That is why this script only emails the addresses allowed below
+ * and sends at most MAX_EMAILS_PER_HOUR emails an hour. Only the "Open it in
+ * the simulator" button is checked to lead to SIMULATOR_URL.
  */
 
 // ============================================================================
@@ -27,7 +29,8 @@
  * Email domains that may receive work: the part after the "@", for example
  * ['myschool.edu']. The match is exact, so 'myschool.edu' allows
  * teacher@myschool.edu but NOT teacher@staff.myschool.edu (add
- * 'staff.myschool.edu' to the list for that).
+ * 'staff.myschool.edu' to the list for that). If students also have
+ * addresses at this domain, list the teachers in ALLOWED_ADDRESSES instead.
  */
 const ALLOWED_DOMAINS = [];
 
@@ -40,7 +43,7 @@ const ALLOWED_ADDRESSES = [];
 // With both lists empty, work can only be emailed to you, the owner of this
 // script. You are always allowed.
 
-/** The simulator. Every link put in an email must start with this address. */
+/** The simulator. The "Open it in the simulator" link in an email must start with this address. */
 const SIMULATOR_URL = 'https://ebechalani.github.io/zero1smartboard/';
 
 /** Developers only: also accept links to a copy of the simulator on http://localhost. */
@@ -139,7 +142,7 @@ function sendTestEmail() {
     kind: 'code',
     // The simulator's own #code= link for the sketch above (base64url, UTF-8, no padding).
     link:
-      SIMULATOR_URL +
+      simulatorPrefix_(SIMULATOR_URL) +
       '#code=dm9pZCBzZXR1cCgpIHsKICBwaW5Nb2RlKEExLCBPVVRQVVQpOyAvLyByZWQgTEVECn0KCnZvaWQgbG9vcCgpIHsKICBkaWdpdGFsV3JpdGUoQTEsIEhJR0gpOwogIGRlbGF5KDUwMCk7CiAgZGlnaXRhbFdyaXRlKEExLCBMT1cpOwogIGRlbGF5KDUwMCk7Cn0K',
     code: code,
     fileName: 'zero1_test.ino',
@@ -205,6 +208,11 @@ function validateRequest_(data, simulatorUrl, allowLocalhost) {
   }
   if (!isValidAddress_(data.to)) return failure_('bad_request', '"to" is not a valid email address.');
 
+  // A name or message far over its limit is refused before it is cleaned (the
+  // simulator sends them already cut), so that no request keeps the relay busy.
+  if (typeof data.studentName === 'string' && data.studentName.length > MAX_NAME_LENGTH_ * 2) {
+    return failure_('bad_request', '"studentName" is longer than ' + MAX_NAME_LENGTH_ + ' characters.');
+  }
   const studentName = cleanName_(data.studentName);
   if (studentName === '') return failure_('bad_request', '"studentName" is missing.');
   if (studentName.length > MAX_NAME_LENGTH_) {
@@ -213,6 +221,9 @@ function validateRequest_(data, simulatorUrl, allowLocalhost) {
 
   if (data.message !== undefined && data.message !== null && typeof data.message !== 'string') {
     return failure_('bad_request', '"message" must be text.');
+  }
+  if (typeof data.message === 'string' && data.message.length > MAX_MESSAGE_LENGTH_ * 2) {
+    return failure_('bad_request', '"message" is longer than ' + MAX_MESSAGE_LENGTH_ + ' characters.');
   }
   const message = cleanMessage_(data.message);
   if (message.length > MAX_MESSAGE_LENGTH_) {
@@ -224,7 +235,7 @@ function validateRequest_(data, simulatorUrl, allowLocalhost) {
   // The link may be left out (the simulator does so when it is too long); a link that is sent must lead to the simulator.
   const link = data.link === undefined || data.link === null || data.link === '' ? '' : data.link;
   if (link !== '' && !isSimulatorLink_(link, simulatorUrl, allowLocalhost)) {
-    return failure_('bad_request', '"link" must start with ' + simulatorUrl + ' and be at most ' + MAX_LINK_LENGTH_ + ' characters.');
+    return failure_('bad_request', '"link" must start with ' + simulatorPrefix_(simulatorUrl) + ' and be at most ' + MAX_LINK_LENGTH_ + ' characters.');
   }
 
   if (typeof data.code !== 'string' || data.code.trim() === '') return failure_('bad_request', '"code" is missing.');
@@ -271,15 +282,19 @@ function isRecipientAllowed_(address, allowedDomains, allowedAddresses, ownerEma
 }
 
 /**
- * Whether `link` leads to the simulator: it starts with `simulatorUrl` (made
- * to end with "/", so the host name cannot be extended) or, when
- * `allowLocalhost` is true, with http://localhost/ or http://localhost:<port>/.
+ * Whether `link` leads to the simulator: it starts with
+ * simulatorPrefix_(simulatorUrl) or, when `allowLocalhost` is true, with
+ * http://localhost/ or http://localhost:<port>/.
  */
 function isSimulatorLink_(link, simulatorUrl, allowLocalhost) {
   if (typeof link !== 'string' || link.length > MAX_LINK_LENGTH_ || !LINK_CHARACTERS_.test(link)) return false;
-  const prefix = /\/$/.test(simulatorUrl) ? simulatorUrl : simulatorUrl + '/';
-  if (link.indexOf(prefix) === 0) return true;
+  if (link.indexOf(simulatorPrefix_(simulatorUrl)) === 0) return true;
   return allowLocalhost === true && LOCALHOST_LINK_.test(link);
+}
+
+/** The simulator's address ending with "/", so that a link cannot extend its host name. */
+function simulatorPrefix_(url) {
+  return /\/$/.test(url) ? url : url + '/';
 }
 
 /** The student's name on one line: invisible characters removed, spaces collapsed. */
@@ -295,7 +310,9 @@ function cleanMessage_(value) {
     .replace(/\r\n?/g, '\n')
     .replace(/[^\S\n]/g, ' ')
     .replace(INVISIBLE_EXCEPT_NEWLINE_, '')
-    .replace(/ +\n/g, '\n')
+    .split('\n')
+    .map((line) => line.trimEnd()) // not / +\n/: that regex takes quadratic time on a long run of spaces
+    .join('\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
 }

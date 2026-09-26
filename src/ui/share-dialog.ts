@@ -76,7 +76,9 @@ export function cleanMessage(text: string): string {
     .replace(/\r\n?/g, '\n')
     .replace(/[^\S\n]/g, ' ')
     .replace(INVISIBLE_EXCEPT_NEWLINE, '')
-    .replace(/ +\n/g, '\n')
+    .split('\n')
+    .map((line) => line.trimEnd()) // not / +\n/: that regex takes quadratic time on a long run of spaces
+    .join('\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
   return cutAt(message, MESSAGE_MAX_LENGTH).trim();
@@ -335,6 +337,10 @@ export function createShareDialog(parent: HTMLElement, options: ShareDialogOptio
   let payload: SharePayload = { url: '', code: '', kind: 'code' };
   /** A send is waiting for the relay's answer: the button stays disabled. */
   let sending = false;
+  /** The relay answered while the dialog was closed: the next open() keeps that answer on show. */
+  let unseenAnswer = false;
+  /** The last file downloaded. A second click in the same second gives the same name: it is not downloaded again (the browser would save "name (1).ino"). */
+  let lastFileName = '';
 
   const notify = (text: string): void => {
     status.textContent = text;
@@ -423,6 +429,8 @@ export function createShareDialog(parent: HTMLElement, options: ShareDialogOptio
       sending = false;
       sendButton.disabled = false;
       sendButton.textContent = 'Send to teacher';
+      // Disabling the focused button dropped the focus to the page: give it back.
+      if (dialog.open && !dialog.contains(document.activeElement)) sendButton.focus();
     }
 
     if (result.ok) {
@@ -437,6 +445,7 @@ export function createShareDialog(parent: HTMLElement, options: ShareDialogOptio
     } else {
       setSendStatus('error', SEND_ERROR_TEXT[result.error]);
     }
+    unseenAnswer = !dialog.open;
   };
 
   const copyLink = (): void => {
@@ -453,8 +462,11 @@ export function createShareDialog(parent: HTMLElement, options: ShareDialogOptio
   const download = (): void => {
     remember();
     const fileName = sketchFileName(cleanName(nameInput.value), new Date());
-    if (options.download) options.download(fileName, payload.code);
-    else downloadTextFile(fileName, payload.code, dialog); // inside the modal: it makes the rest of the page inert
+    if (fileName !== lastFileName) {
+      lastFileName = fileName;
+      if (options.download) options.download(fileName, payload.code);
+      else downloadTextFile(fileName, payload.code, dialog); // inside the modal: it makes the rest of the page inert
+    }
     notify(`Downloading ${fileName}`);
   };
 
@@ -497,10 +509,14 @@ export function createShareDialog(parent: HTMLElement, options: ShareDialogOptio
       urlInput.value = next.url;
       emailInput.value = loadText(TEACHER_EMAIL_STORAGE_KEY);
       nameInput.value = loadText(STUDENT_NAME_STORAGE_KEY);
-      setFieldError(emailInput, emailError, '');
-      setFieldError(nameInput, nameError, '');
       status.textContent = '';
-      if (!sending) setSendStatus('', '');
+      // A send in progress, or an answer that came while the dialog was closed, stays on show.
+      if (!unseenAnswer) {
+        setFieldError(emailInput, emailError, '');
+        setFieldError(nameInput, nameError, '');
+        if (!sending) setSendStatus('', '');
+      }
+      unseenAnswer = false;
       if (!dialog.open) dialog.showModal();
       if (canSend && emailInput.value === '') emailInput.focus();
       else if (canSend && nameInput.value === '') nameInput.focus();

@@ -221,7 +221,12 @@ export class App {
       },
     });
 
-    this.shareDialog = createShareDialog(root);
+    this.shareDialog = createShareDialog(root, {
+      // The relay may answer after the student closed the dialog: say it on the page too.
+      toast: (text) => {
+        if (!this.shareDialog.isOpen()) this.toast(text);
+      },
+    });
     this.ideDialog = createArduinoIdeDialog(root);
 
     this.examplesMenu = createExamplesMenu<Example | BlockExample>(this.slot('examples'), EXAMPLES, (example) => {
@@ -282,9 +287,9 @@ export class App {
 
     if (!result.ok) {
       const count = result.errors.length;
-      const summary = `${count} error${count === 1 ? '' : 's'} — fix and run again`;
-      this.consolePanel.setStatus(summary);
-      if (!this.running) this.setStatus('error', summary);
+      const errors = `${count} error${count === 1 ? '' : 's'}`;
+      this.consolePanel.setStatus(`${errors} — fix and run again`);
+      if (!this.running) this.setStatus('error', errors);
       const first = result.errors[0];
       if (first && this.mode === 'code') this.editor.goToLine(first.line, first.column);
       return;
@@ -323,7 +328,7 @@ export class App {
     this.setRunning(false);
     const millis = Math.floor(this.clock.now());
     if (executor.status === 'error') {
-      this.setStatus('error', `Stopped by an error at ${millis} ms`);
+      this.setStatus('error', `Error at ${millis} ms`);
       this.consolePanel.setStatus('Stopped by an error — click the message to jump to the line');
     } else {
       this.setStatus('stopped', `Stopped at ${millis} ms`);
@@ -381,6 +386,11 @@ export class App {
     this.lastMillisShown = -1;
   }
 
+  /**
+   * The run status in the header. Keep the texts short ("2 errors", "Error at
+   * 1523 ms") so the header stays on one row at 1366-1536 px; the console
+   * status line has the full sentence.
+   */
   private setStatus(status: ExecutorStatus, text: string): void {
     this.statusBox.dataset.status = status;
     if (this.statusText.textContent !== text) this.statusText.textContent = text;

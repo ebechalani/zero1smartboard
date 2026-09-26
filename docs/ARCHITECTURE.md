@@ -700,7 +700,8 @@ WCAG AA on its background). Responsive grid:
 ```
 Below 1000 px width the columns stack (board on top). The header (brand,
 Code | Blocks switch, the actions, run status) is one row from 1366 px wide
-(up to 1439 px the Settings button shows only its ⚙); narrower, the actions
+(up to 1439 px the Settings button shows only its ⚙; the run status texts
+stay short, e.g. "2 errors", "Error at 1523 ms"); narrower, the actions
 move to rows of their own under the brand, the mode switch and the status.
 
 ### 8.2 Board view (`board-view.ts`, `board-svg.ts`) — owner: board-svg
@@ -762,7 +763,9 @@ export function createBoardView(container: HTMLElement, board: Zero1Board): Boar
   Script web app the teacher deploys, see `docs/EMAIL.md`) checks every
   field, the recipient against its allow-list and the link against the
   simulator URL, limits emails per hour and sends the email with the sketch
-  attached through MailApp. Its error codes are shown as plain sentences;
+  attached through MailApp. Its error codes are shown as plain sentences
+  (an answer that comes after the student closed the dialog is also shown
+  as a page toast, and still on show at the next open);
   while `EMAIL_RELAY_URL` is empty the send section is replaced by one
   "not set up" line. "Download .ino" saves `sketchFileName()`
   (`sketch-file.ts`).

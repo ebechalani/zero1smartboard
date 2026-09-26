@@ -119,6 +119,12 @@ describe('cleaning what the student typed', () => {
     expect(cleanMessage('a b\tc')).toBe('a b c');
     expect(cleanMessage('x'.repeat(600))).toHaveLength(MESSAGE_MAX_LENGTH);
   });
+
+  it('cleans a long run of spaces quickly', () => {
+    const start = performance.now();
+    expect(cleanMessage(`${' '.repeat(100000)}b \t\n c `)).toBe('b\n c');
+    expect(performance.now() - start).toBeLessThan(500); // a regex like / +\n/ takes seconds here
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -565,6 +571,71 @@ describe('share dialog', () => {
     expect(sendStatus.dataset.state).toBe('ok');
   });
 
+  it('shows an answer that came while the dialog was closed when it is opened again', async () => {
+    const answers: ReturnType<typeof deferred<SendWorkResult>>[] = [];
+    const { dialog, email, emailError, sendStatus, click } = ready({
+      sendWork: () => {
+        answers.push(deferred<SendWorkResult>());
+        return answers[answers.length - 1].promise;
+      },
+    });
+    // The student closes the dialog while it says "Sending…".
+    click('send');
+    dialog.close();
+    answers[0].resolve({ ok: false, error: 'send_failed', message: '' });
+    await flush();
+    dialog.open(payload);
+    expect(sendStatus.textContent).toBe(SEND_ERROR_TEXT.send_failed);
+    expect(sendStatus.dataset.state).toBe('error');
+    // Seen once: the next open starts clean.
+    dialog.close();
+    dialog.open(payload);
+    expect(sendStatus.textContent).toBe('');
+
+    // A refused address stays next to the email field.
+    email.value = 'teacher@school.edu';
+    click('send');
+    dialog.close();
+    answers[1].resolve({ ok: false, error: 'recipient_not_allowed', message: '' });
+    await flush();
+    dialog.open(payload);
+    expect(emailError.textContent).toBe(SEND_ERROR_TEXT.recipient_not_allowed);
+    expect(email.getAttribute('aria-invalid')).toBe('true');
+  });
+
+  it('gives the focus back to Send to teacher once the answer is there', async () => {
+    const answer = deferred<SendWorkResult>();
+    const { sendButton, click } = ready({ sendWork: () => answer.promise });
+    sendButton.focus();
+    click('send');
+    sendButton.blur(); // what a browser does when the focused button is disabled
+    expect(document.activeElement).toBe(document.body);
+    answer.resolve({ ok: false, error: 'send_failed', message: '' });
+    await flush();
+    expect(document.activeElement).toBe(sendButton);
+  });
+
+  it('leaves the focus alone when the student moved it, or closed the dialog, while sending', async () => {
+    const moved = deferred<SendWorkResult>();
+    const first = ready({ sendWork: () => moved.promise });
+    first.click('send');
+    first.message.focus();
+    moved.resolve({ ok: true });
+    await flush();
+    expect(document.activeElement).toBe(first.message);
+    document.body.innerHTML = '';
+
+    const closed = deferred<SendWorkResult>();
+    const second = ready({ sendWork: () => closed.promise });
+    second.sendButton.focus();
+    second.click('send');
+    second.dialog.close();
+    second.sendButton.blur();
+    closed.resolve({ ok: true });
+    await flush();
+    expect(document.activeElement).not.toBe(second.sendButton);
+  });
+
   it('remembers the teacher email and the student name for the next time', () => {
     const first = setup();
     first.dialog.open(payload);
@@ -632,6 +703,21 @@ describe('share dialog', () => {
     click('download');
     expect(spies.download).toHaveBeenLastCalledWith('zero1_Elise_Martin_0926_143205.ino', SKETCH);
     expect(localStorage.getItem(STUDENT_NAME_STORAGE_KEY)).toBe('Élise Martin');
+  });
+
+  it('downloads once on a double click (the same name would be saved as "name (1).ino")', () => {
+    vi.useFakeTimers({ now: NOW, toFake: ['Date'] });
+    const { dialog, spies, status, click } = setup();
+    dialog.open(payload);
+    click('download');
+    click('download');
+    expect(spies.download).toHaveBeenCalledTimes(1);
+    expect(status.textContent).toBe('Downloading zero1_0926_143205.ino');
+    // A second later the name is new: that download goes ahead.
+    vi.setSystemTime(new Date(NOW.getTime() + 1000));
+    click('download');
+    expect(spies.download).toHaveBeenCalledTimes(2);
+    expect(spies.download).toHaveBeenLastCalledWith('zero1_0926_143206.ino', SKETCH);
   });
 
   it('downloads through a link inside the modal dialog by default', () => {
