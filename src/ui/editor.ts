@@ -33,6 +33,8 @@ export interface EditorOptions {
   onStop(): void;
   /** Called (not debounced) after every document change. */
   onChange?(code: string): void;
+  /** Save the sketch to localStorage (default true; false in the sandboxed review frame, which has no storage). */
+  persist?: boolean;
 }
 
 export interface Editor {
@@ -47,6 +49,8 @@ export interface Editor {
   setReadOnly(readOnly: boolean): void;
   isReadOnly(): boolean;
   focus(): void;
+  /** Write a pending autosave now (before a reload prompt). */
+  flush(): void;
   destroy(): void;
 }
 
@@ -115,7 +119,7 @@ export function createEditor(container: HTMLElement, options: EditorOptions): Ed
       clearTimeout(saveTimer);
       saveTimer = null;
     }
-    saveCode(view.state.doc.toString());
+    if (options.persist !== false) saveCode(view.state.doc.toString());
   };
 
   const scheduleSave = (): void => {
@@ -180,6 +184,7 @@ export function createEditor(container: HTMLElement, options: EditorOptions): Ed
 
   return {
     getCode: () => view.state.doc.toString(),
+    flush: flushSave,
     setCode(code) {
       view.dispatch({
         changes: { from: 0, to: view.state.doc.length, insert: code },

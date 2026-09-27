@@ -47,7 +47,7 @@ import { createBuzzerAudio, loadMuted, saveMuted, type BuzzerAudio } from './aud
 import { isClassroomConfigured } from '../classroom/firebase';
 import { STUDENT_ERROR_TEXT } from '../classroom/errors';
 import { currentUsername } from '../classroom/session-store';
-import { classFromHash, handinHash } from '../share-link';
+import { classFromHash, handinHash, parseWorkspaceJson } from '../share-link';
 
 /** What "New" puts in the editor: exactly the Arduino IDE's File > New. */
 export const BLANK_SKETCH = `void setup() {
@@ -99,10 +99,47 @@ const TABS: readonly { id: TabId; label: string }[] = [
 
 const MODES: readonly AppMode[] = ['code', 'blocks'];
 
+/** Browser messages for a lazy chunk that could not be fetched (after a redeploy the hashed file is gone). */
+const CHUNK_LOAD_FAILURE = /dynamically imported module|Importing a module script failed|Failed to fetch|Load failed|ChunkLoadError/i;
+
+/** The message the review page sends the sandboxed simulator (docs/CLASSROOM.md §1.4). */
+interface ReviewMessage {
+  kind: 'code' | 'blocks';
+  code: string;
+  workspaceJson: string;
+}
+
+/**
+ * Review mode (docs/CLASSROOM.md §4.11): the simulator runs a hand-in inside
+ * review.html's `<iframe sandbox="allow-scripts">`, so its origin is opaque
+ * ('null'). Only then: on the site's own origin a `#review` hash is a link
+ * that must go to review.html (see mountApp).
+ */
+export function isReviewFrame(): boolean {
+  try {
+    return location.hash === '#review' && self.origin === 'null';
+  } catch {
+    return false;
+  }
+}
+
+/** The payload of a `z1-review` message, or null when it is not one. */
+function reviewMessageOf(data: unknown): ReviewMessage | null {
+  if (!data || typeof data !== 'object') return null;
+  const o = data as { type?: unknown; payload?: unknown };
+  if (o.type !== 'z1-review' || !o.payload || typeof o.payload !== 'object') return null;
+  const p = o.payload as Record<string, unknown>;
+  if (p.kind !== 'code' && p.kind !== 'blocks') return null;
+  if (typeof p.code !== 'string' || typeof p.workspaceJson !== 'string') return null;
+  return { kind: p.kind, code: p.code, workspaceJson: p.workspaceJson };
+}
+
 /**
  * Mount the simulator into `root` and start the animation loop.
  */
 export function mountApp(root: HTMLElement, board: Zero1Board, clock: Clock): App {
+  // A review link opened on the site's own origin: a hand-in never runs here (docs/CLASSROOM.md §3.4).
+  if (!isReviewFrame() && /^#(review|rid)=/.test(location.hash)) location.replace(`./review.html${location.hash}`);
   return new App(root, board, clock);
 }
 
@@ -159,15 +196,22 @@ export class App {
   private blocksSaveTimer: ReturnType<typeof setTimeout> | null = null;
   private unsavedWorkspace: object | null = null;
 
+  /** Review mode: inside review.html's sandbox; no storage, no links, no hand-in (docs/CLASSROOM.md §4.11). */
+  private readonly review: boolean;
+  private reviewListener: ((e: MessageEvent) => void) | null = null;
+
   constructor(
     private readonly root: HTMLElement,
     private readonly board: Zero1Board,
     private readonly clock: Clock,
   ) {
     document.body.dataset.running = 'false';
-    const fromLink = takeHashPayload();
+    const review = isReviewFrame();
+    this.review = review;
+    const fromLink = review ? null : takeHashPayload();
     // A share link decides the mode (a `#code=` link opens in Code mode even after a Blocks visit).
-    this.mode = fromLink && fromLink.kind !== 'class' ? fromLink.kind : loadMode();
+    // In review mode the payload decides it later; nothing is read from storage.
+    this.mode = review ? 'code' : fromLink && fromLink.kind !== 'class' ? fromLink.kind : loadMode();
     this.activeTab = this.mode === 'blocks' ? 'blocks' : 'code';
     root.innerHTML = this.template();
 
@@ -187,7 +231,8 @@ export class App {
 
     // --- panels -----------------------------------------------------------
     this.editor = createEditor(this.slot('editor'), {
-      initialCode: this.initialCode(fromLink),
+      initialCode: review ? '' : this.initialCode(fromLink),
+      persist: !review,
       onRun: () => void this.run(),
       onStop: () => void this.stop(),
       onChange: () => this.scheduleLiveLint(),
@@ -215,16 +260,17 @@ export class App {
       },
     });
 
-    this.audio = createBuzzerAudio({ muted: loadMuted() });
+    this.audio = createBuzzerAudio({ muted: review ? false : loadMuted() });
     this.controls = createControls(this.slot('inputs'), board, {
       initialMuted: this.audio.isMuted(),
       onMuteChange: (muted) => {
         this.audio.setMuted(muted);
-        saveMuted(muted);
+        if (!review) saveMuted(muted);
       },
     });
 
     this.settings = createSettingsDialog(root, {
+      persist: !review,
       getConfig: () => board.config,
       onApply: (config) => {
         board.applyConfig(config);
@@ -234,15 +280,17 @@ export class App {
 
     this.shareDialog = createShareDialog(root);
     this.ideDialog = createArduinoIdeDialog(root);
-    this.handinDialog = isClassroomConfigured()
-      ? createHandinDialog(root, {
-          openWork: (content) => {
-            location.hash = handinHash(content).hash; // onHashChange asks before replacing work
-          },
-          onSessionChange: (username) => this.setHandinName(username),
-          toast: (text) => this.toast(text),
-        })
-      : null;
+    this.handinDialog =
+      !review && isClassroomConfigured()
+        ? createHandinDialog(root, {
+            openWork: (content) => {
+              location.hash = handinHash(content).hash; // onHashChange asks before replacing work
+            },
+            onSessionChange: (username) => this.setHandinName(username),
+            onAppUpdated: () => this.showUpdatePrompt(),
+            toast: (text) => this.toast(text),
+          })
+        : null;
 
     this.examplesMenu = createExamplesMenu<Example | BlockExample>(this.slot('examples'), EXAMPLES, (example) => {
       if ('source' in example) this.loadExample(example);
@@ -261,6 +309,11 @@ export class App {
       this.slot('handin').addEventListener('click', () => this.handIn());
       this.setHandinName(currentUsername()); // the previous student's name shows until they sign out
     }
+    this.slot('reload').addEventListener('click', () => location.reload());
+    if (review) {
+      // The teacher reviews one hand-in: no new work, no examples, no links out of the sandbox.
+      for (const slot of ['new', 'examples', 'share', 'ide']) this.slot(slot).hidden = true;
+    }
     for (const mode of MODES) this.modeButtons.get(mode)!.addEventListener('click', () => void this.switchMode(mode));
 
     for (const tab of TABS) {
@@ -271,9 +324,10 @@ export class App {
 
     document.addEventListener('keydown', this.onKeyDown);
     document.addEventListener('keydown', this.onBlocksKeyDown, true);
-    window.addEventListener('hashchange', this.onHashChange);
+    if (!review) window.addEventListener('hashchange', this.onHashChange);
     window.addEventListener('resize', this.onWindowResize);
     window.addEventListener('pagehide', this.onPageHide);
+    window.addEventListener('vite:preloadError', this.onPreloadError);
 
     // --- loops ------------------------------------------------------------
     this.applyMode();
@@ -286,7 +340,61 @@ export class App {
       if (this.activeTab === 'pinmap') this.pinMap.refresh();
     }, SLOW_REFRESH_MS);
     if (fromLink?.kind === 'class') this.openClassLink(fromLink.code);
+    if (review) this.startReview();
   }
+
+  // -------------------------------------------------------------------------
+  // Review mode (docs/CLASSROOM.md §1.4, §4.11)
+  // -------------------------------------------------------------------------
+
+  /**
+   * Ask review.html for the hand-in and wait for it. The frame has an opaque
+   * origin, so it posts to '*'; the answer is accepted only from the parent
+   * window on the site's own origin. Nothing runs until the teacher presses Run.
+   */
+  private startReview(): void {
+    const origin = new URL(location.href).origin;
+    this.reviewListener = (event: MessageEvent) => {
+      if (event.source !== window.parent || event.origin !== origin) return;
+      const payload = reviewMessageOf(event.data);
+      if (payload) void this.loadReview(payload);
+    };
+    window.addEventListener('message', this.reviewListener);
+    window.parent.postMessage({ type: 'z1-review-ready' }, '*');
+  }
+
+  /** Show the hand-in: the blocks when they can be read, else the sketch (with the "generated from blocks" banner). */
+  private async loadReview(payload: ReviewMessage): Promise<void> {
+    if (payload.kind === 'blocks') {
+      const workspace = parseWorkspaceJson(payload.workspaceJson);
+      if (workspace) {
+        this.setMode('blocks');
+        await this.enterBlocksMode(workspace);
+        if (this.blocksPanel) return;
+      }
+    }
+    this.setMode('code');
+    this.editor.setCode(payload.code);
+    this.lastLoadedSource = payload.code;
+    this.codeBanner.hidden = payload.kind !== 'blocks';
+    this.selectTab('code');
+  }
+
+  /**
+   * The site was redeployed under this tab: a lazy chunk (Blockly, the class
+   * features) is gone. Save the work, then ask for a reload.
+   */
+  private showUpdatePrompt(): void {
+    this.editor.flush();
+    this.flushBlocksSave();
+    this.slot('update-text').textContent = STUDENT_ERROR_TEXT.app_updated;
+    this.slot('update').hidden = false;
+  }
+
+  private readonly onPreloadError = (e: Event): void => {
+    e.preventDefault(); // Vite would rethrow and reload on its own; the banner asks first
+    this.showUpdatePrompt();
+  };
 
   // -------------------------------------------------------------------------
   // Run / stop / reset
@@ -512,7 +620,7 @@ export class App {
 
   private setMode(mode: AppMode): void {
     this.mode = mode;
-    saveMode(mode);
+    if (!this.review) saveMode(mode);
     this.applyMode();
   }
 
@@ -567,12 +675,13 @@ export class App {
       this.consolePanel.push({ level: 'error', text: `The block editor could not be loaded: ${errorText(err)}` });
       this.consolePanel.setStatus('The block editor could not be loaded — check your connection and reload');
       this.blocksLoading = null; // the next attempt (Run, mode switch) tries again
+      if (CHUNK_LOAD_FAILURE.test(errorText(err)) && navigator.onLine !== false) this.showUpdatePrompt();
       return null;
     }
     await examples;
 
     this.defaultBlocks = workspaceFingerprint(panel.getWorkspaceJson()); // a new panel starts with DEFAULT_WORKSPACE
-    const saved = loadSavedWorkspace();
+    const saved = this.review ? null : loadSavedWorkspace();
     if (saved) {
       try {
         panel.loadWorkspace(saved);
@@ -604,7 +713,7 @@ export class App {
       clearTimeout(this.blocksSaveTimer);
       this.blocksSaveTimer = null;
     }
-    if (this.unsavedWorkspace) saveWorkspace(this.unsavedWorkspace);
+    if (this.unsavedWorkspace && !this.review) saveWorkspace(this.unsavedWorkspace);
     this.unsavedWorkspace = null;
   }
 
@@ -638,7 +747,7 @@ export class App {
   /** Remember the untouched workspace, also for the next visit (the workspace itself is saved on change). */
   private setBlocksBaseline(fingerprint: string | null): void {
     this.lastLoadedBlocks = fingerprint;
-    saveBlocksBaseline(fingerprint);
+    if (!this.review) saveBlocksBaseline(fingerprint);
   }
 
   private async loadBlockExample(example: BlockExample): Promise<void> {
@@ -968,6 +1077,8 @@ export class App {
     window.removeEventListener('hashchange', this.onHashChange);
     window.removeEventListener('resize', this.onWindowResize);
     window.removeEventListener('pagehide', this.onPageHide);
+    window.removeEventListener('vite:preloadError', this.onPreloadError);
+    if (this.reviewListener) window.removeEventListener('message', this.reviewListener);
     void this.stopExecutor();
     this.audio.dispose();
     this.boardView.destroy();
@@ -1008,8 +1119,9 @@ export class App {
         }>${panelContent[t.id] ?? ''}</div>`,
     ).join('');
     // The class platform's button exists only when the platform is configured (docs/CLASSROOM.md §1.1).
-    const handin = isClassroomConfigured()
-      ? '<button type="button" class="z1-btn" data-slot="handin" aria-label="Hand in your work to your teacher" title="Hand in: send this work to your teacher"><span aria-hidden="true">📥</span> <span class="z1-handin-label">Hand in</span><span class="z1-handin-name"></span></button>'
+    const handin =
+      !this.review && isClassroomConfigured()
+        ? '<button type="button" class="z1-btn" data-slot="handin" aria-label="Hand in your work to your teacher" title="Hand in: send this work to your teacher"><span aria-hidden="true">📥</span> <span class="z1-handin-label">Hand in</span><span class="z1-handin-name"></span></button>'
       : '';
     const modeSwitch = MODES.map(
       (m) =>
@@ -1020,6 +1132,7 @@ export class App {
 
     return `
       <div class="z1-app">
+        <div class="z1-update" data-slot="update" role="alert" hidden><span data-slot="update-text"></span> <button type="button" class="z1-btn" data-slot="reload">Reload</button></div>
         <header class="z1-header">
           <div class="z1-brand">
             <span class="z1-logo" aria-hidden="true">Z1</span>

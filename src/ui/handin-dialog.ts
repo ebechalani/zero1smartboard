@@ -47,6 +47,8 @@ export interface HandinDialogOptions {
   /** The App updates the header label ('' = not joined). */
   onSessionChange?(username: string): void;
   toast?(text: string): void;
+  /** The site was redeployed under this tab (an 'app_updated' error): the App shows its reload prompt. */
+  onAppUpdated?(): void;
   /** Default window.confirm. */
   confirm?(text: string): boolean;
   now?: () => Date;
@@ -311,6 +313,7 @@ export function createHandinDialog(parent: HTMLElement, options: HandinDialogOpt
   /** The §1.5 text of an error (the API fills the placeholders; fakes may pass the bare code). */
   const describe = (err: unknown): string => {
     const e = err instanceof ClassroomError ? err : toClassroomError(err, 'student');
+    if (e.code === 'app_updated') options.onAppUpdated?.(); // every shown error passes through here
     if (e.message !== e.code && e.message !== '') return e.message;
     return errorText(STUDENT_ERROR_TEXT, e.code, {
       class: info?.name ?? session?.className ?? 'This class',

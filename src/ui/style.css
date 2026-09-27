@@ -975,6 +975,19 @@ input[type='range'] {
   flex: 1;
 }
 
+/* "The simulator was updated. Reload the page to continue (your work is saved)." */
+.z1-update {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  padding: 8px 14px;
+  background: var(--accent-tint);
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+  font-weight: 500;
+}
+
 /* ----------------------------------------------------------------- toast */
 
 .z1-toast {

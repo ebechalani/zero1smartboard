@@ -848,6 +848,28 @@ export function createBoardView(container: HTMLElement, board: Zero1Board): Boar
 - Mode from links: a `#code=` / `#blocks=` link decides the mode at start-up
   (`this.mode = fromLink.kind`), so a saved Blocks mode never hides a shared
   sketch; only without a link is `loadMode()` used.
+- Review mode (`isReviewFrame()`: `location.hash === '#review'` inside an
+  opaque origin, i.e. review.html's `<iframe sandbox="allow-scripts">`): the
+  App reads and writes no storage (editor `persist: false`, no mode / blocks /
+  mute / config writes; `main.ts` skips `loadConfig()`), hides New, Examples,
+  Hand in, Share and Arduino IDE, has no `hashchange` listener, posts
+  `{ type: 'z1-review-ready' }` to the parent and accepts `{ type: 'z1-review',
+  payload }` only from `window.parent` on the site's own origin; the payload
+  decides the mode (blocks from `workspaceJson`, else the sketch with the
+  "generated from blocks" banner) and nothing runs until Run. A `#review=` /
+  `#rid=` hash on the site origin is sent to `./review.html` with
+  `location.replace` (docs/CLASSROOM.md §3.4).
+- X1 hardening: `codegen.ts` refuses the member names `constructor`,
+  `prototype`, `__proto__`, `caller`, `callee`, `arguments`, `call`, `apply`,
+  `bind` and any `__` name in members, method calls and constant string keys
+  ("'name' is not available in the simulator"); `__m` / `__mut` in
+  `src/runtime/libs/strings.ts` refuse the same names and any function
+  inherited from `Object.prototype` / `Function.prototype`.
+- Update prompt: `vite:preloadError` (and a Blockly chunk that cannot be
+  fetched while online) flushes the editor and blocks autosave and shows the
+  banner "The simulator was updated. Reload the page to continue (your work is
+  saved)." with a Reload button (`data-slot="update"`); the Hand in dialog
+  reports `app_updated` errors to it through `onAppUpdated`.
 - The class platform's data layer is §12 (A); the teacher dashboard and the
   review page are §13 (C).
 - `index.html`: minimal shell with `<div id="app">`, meta viewport, title
@@ -962,3 +984,60 @@ src/classroom/
   flow; they need the Firebase emulators: `npm run test:emulator` (Java 21), or
   `npm run test:rules` for the rules alone. `tests-emulator/mutations.sh` checks that each
   weakened copy of the rules in `tests-emulator/mutations/` makes a test fail.
+
+## 13. Teacher dashboard and review page (`teacher.html`, `review.html`, `src/teacher`, `src/review`) — owner: C
+
+Two extra Vite pages next to the simulator (`vite.config.ts`, `rollupOptions.input`;
+`base: './'` keeps every link relative for GitHub Pages). Both reuse the tokens and the
+`.z1-btn` / `.z1-dialog` / `.z1-setting` / `.z1-table` / `.z1-toast` classes of
+`src/ui/style.css` (imported, never edited) and add their own stylesheet (prefix `z1t-`
+for the dashboard, `z1r-` for the review page). Everything is vanilla DOM; every string
+that comes from a student or a teacher is rendered with `textContent` (CLASSROOM §3.4).
+
+```
+teacher.html, src/teacher/main.ts  entry: styles, then mountDashboard(); the TeacherApi (and the
+                                   Firebase SDK behind it) is loaded at page load, never on a click
+src/teacher/
+  dashboard.ts    mountDashboard(root, options): the not-configured, signed-out and main views, the
+                  top bar with the class switcher, the error banner (+ Retry), the toast, the class
+                  list, Create class, Sign out, Delete my data; parks the previous class's session
+  context.ts      DashboardContext: API, clock, storages, download / copy / confirm hooks, banner,
+                  toast, save() ("Saving…", the 10 s waiting text, SAVE_FAILED), tracked timers
+  session.ts      ClassSession: watchClass + watchTodayHandins (or the one-off period view), the
+                  members listener while a view needs it, the decode cache, the New/Seen marks
+  class-page.ts   the class header (code, joining control with the server-time countdown, hand-ins
+                  switch, current task), Show to the class overlay, the tabs, the retention check
+  overview.ts     T5: period/task/sort, "n of m handed in", one row per student, Open / .ino, zips
+  detail.ts       T6: versions, Load older (studentHandins), Open / .ino / Copy, Move to…, Delete;
+                  openLink() and inoButton() shared with the Overview
+  feed.ts         T7: All hand-ins, "(removed) name", filters
+  students.ts     T8: roster table, computers, Rename / Let join again / Remove, Add students
+  settings.ts     T9: names, keepWeeks, tasks, Delete class (code confirm, progress, Finish deleting)
+  roster-form.ts  the student-list textarea + "Shorten last names" + planRosterAdd preview; tasks form
+  handins.ts      DecodeCache, overviewRows(), review payload / link, .ino names, zip entries
+  zip.ts          makeZip(): store-only zip, CRC-32, UTF-8 names; uniqueName()
+  format.ts       time texts, storage keys (z1.teacher.*), storage access that never throws, el()
+review.html, src/review/main.ts, page.ts, review.css
+                  mountReview(): banner + Download .ino + Copy code, then
+                  <iframe sandbox="allow-scripts" src="./index.html#review">; the ready/payload
+                  handshake checks event.source and origin 'null'; #review= or #rid= (localStorage
+                  handoff `<created ms>:<payload>`, dropped after a day)
+```
+
+- **No await between a click and its effect.** Every record is decoded once when it
+  arrives (`DecodeCache`); Open is a real `<a target="_blank" rel="noopener noreferrer">`
+  whose `href` is computed at render time (large payloads write their `z1.review.<rid>`
+  handoff at render time too), `.ino` and Copy are enabled only once decoded, and
+  `signIn()` / `deleteAccount()` are the first statement of their click handlers.
+- **Listeners.** One `watchClasses` while signed in; the open class has `watchClass` and,
+  in the Today view, `watchTodayHandins`; `watchMembers` runs only while the Students tab or
+  the overlay is visible. Switching class keeps the previous session for 10 minutes (one at
+  most). Sign out stops everything and clears the review handoffs.
+- **Storage.** `z1.teacher.lastClass`, `z1.teacher.period.<code>`, `z1.teacher.seen.<code>`
+  in localStorage, `z1.teacher.pruned.<code>` in sessionStorage; all reads and writes are
+  wrapped, so a blocked storage only loses the conveniences.
+- **Tests.** `tests/teacher-dashboard.test.ts` (happy-dom, with `tests/fakes/fake-teacher-api.ts`:
+  an in-memory TeacherApi with `emit*` helpers, a `ready` deferred, call recording and
+  `failNext`), `tests/review-page.test.ts` and `tests/zip.test.ts`. The build check
+  (`scripts/check-bundle.mjs`) confirms that neither page's static import graph contains
+  Firebase.

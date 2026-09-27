@@ -17,6 +17,26 @@ export type ConcatKind = 'int' | 'float' | 'char' | 'bool' | 'string' | 'unknown
 const SPRINTF_FLOAT_WARNING = 'sprintf does not support %f on Arduino UNO; use dtostrf()';
 const SPRINTF_INT_WARNING = 'sprintf: %d prints a 16-bit int on the UNO, so this value came out wrong; use %ld for long values';
 
+/**
+ * Member names `__m` / `__mut` never look up (docs/CLASSROOM.md §3.4, X1): through them a
+ * sketch could reach `Function` and run arbitrary JavaScript. The transpiler refuses the same
+ * names at compile time (src/transpiler/codegen.ts FORBIDDEN_MEMBER_NAMES); this is the
+ * defence in depth for anything that slips through.
+ */
+export const FORBIDDEN_MEMBER_NAMES: readonly string[] = ['constructor', 'prototype', '__proto__', 'caller', 'callee', 'arguments', 'call', 'apply', 'bind'];
+
+function forbidden(name: string): boolean {
+  return name.startsWith('__') || FORBIDDEN_MEMBER_NAMES.includes(name);
+}
+
+/** A function that every object inherits (`toString`, `call`, …): never a runtime API. */
+function inheritedFromBuiltins(member: unknown, name: string): boolean {
+  return (
+    typeof member === 'function' &&
+    (member === (Object.prototype as unknown as Record<string, unknown>)[name] || member === (Function.prototype as unknown as Record<string, unknown>)[name])
+  );
+}
+
 /** Characters `String::trim()` and `atoi()` treat as whitespace (C `isspace`). */
 const WHITESPACE = new Set([32, 9, 10, 11, 12, 13]);
 
@@ -167,6 +187,7 @@ export function __charAt(s: unknown, i: unknown): number {
  * `SketchError` the student can read.
  */
 export function __m(obj: unknown, name: string, args: unknown[] = []): unknown {
+  if (forbidden(name)) throw new SketchError(`'${name}' is not available in the simulator`);
   if (typeof obj === 'string') return stringMethod(obj, name, args);
   if (Array.isArray(obj)) {
     if (name === 'length') return obj.length;
@@ -174,6 +195,7 @@ export function __m(obj: unknown, name: string, args: unknown[] = []): unknown {
   }
   if (obj !== null && (typeof obj === 'object' || typeof obj === 'function') && !(obj instanceof FloatBox)) {
     const member = (obj as Record<string, unknown>)[name];
+    if (inheritedFromBuiltins(member, name)) throw new SketchError(`'${name}' is not available in the simulator`);
     if (typeof member === 'function') return (member as (...a: unknown[]) => unknown).apply(obj, args);
   }
   throw new SketchError(`'${name}' is not a member of this object`);
@@ -185,6 +207,7 @@ export function __m(obj: unknown, name: string, args: unknown[] = []): unknown {
  * the new value, which the generated code assigns back to the variable.
  */
 export function __mut(s: unknown, name: string, args: unknown[] = []): string {
+  if (forbidden(name)) throw new SketchError(`'${name}' is not available in the simulator`);
   const text = typeof s === 'string' ? s : cstr(s);
   switch (name) {
     case 'toUpperCase':
