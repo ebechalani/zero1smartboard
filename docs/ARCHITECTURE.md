@@ -883,3 +883,50 @@ Module tests live next to their module name: `tests/parser.test.ts`,
 ## 11. Block programming
 
 See docs/BLOCKS.md (block set, Arduino generator rules, UI behaviour, tests, examples).
+
+---
+
+## 12. Classes: data layer (`src/classroom`, `src/firebase-config.ts`, `src/share-link.ts`) — owner: A
+
+The class platform (docs/CLASSROOM.md) has no server: Firebase Authentication and
+Cloud Firestore, guarded by `firestore.rules`, and client code. The data layer is
+the part between the UI (Hand in dialog, teacher dashboard) and Firebase.
+
+```
+src/firebase-config.ts        public web config, APP_CHECK_SITE_KEY, CLASSROOM_DEFAULTS
+src/share-link.ts             #code= / #blocks= / #class= links, review payload (pure)
+src/classroom/
+  model.ts                    types, LIMITS, class codes, usernames, rosters, tasks, joinStatus,
+                              cleanLine/cleanMultiline, deviceLabel, document readers (pure)
+  codec.ts                    encodeContent / decodeContent: gzip bytes or plain strings, capped inflate (pure)
+  errors.ts                   ClassroomError, toClassroomError, withTimeout, the text tables, quotaResetText (pure)
+  session-store.ts            z1.classroom in localStorage, the last code, the per-tab confirm flag (pure)
+  firebase.ts                 isClassroomConfigured(), lazy loaders of the two named apps, App Check, emulators
+  student-sdk.ts              the ONLY import of firebase/app, auth, firestore/lite, app-check (loaded with import())
+  teacher-sdk.ts              the ONLY import of firebase/app, auth, firestore, app-check (loaded with import())
+  student.ts                  createStudentApi(): restore, findClass, join, handIn (idempotent retry), myHandins, leave
+  teacher.ts                  createTeacherApi(): sign-in, classes, roster, tasks, members, hand-ins, retention, deletion
+```
+
+- **Bundle boundary.** Nothing reachable by static imports from a page entry imports
+  `firebase/*` except with `import type`; `firebase.ts` loads the two barrels with
+  `import()`. `tests/bundle-boundary.test.ts` scans the sources; `scripts/check-bundle.mjs`
+  (run by `npm run build`) checks the emitted chunks and the gzip sizes.
+- **Two named apps.** `z1-student` (Firestore Lite, anonymous auth persisted in IndexedDB)
+  and `z1-teacher` (full SDK with the memory cache, session-only auth persistence). A
+  teacher session and a student session never replace each other.
+- **Hand-in batch.** One document per hand-in plus the member counter tick, in one batch
+  whose id the dialog makes before sending (`newHandinId()`) and reuses on retry; the rules
+  tie the two writes together and refuse a second commit with the same id. After a timeout
+  the API reads the member doc: `lastHandinId === id` means it arrived.
+- **Errors.** Every method rejects with a `ClassroomError` whose `message` is the text of
+  the §1.5 table for its side (student or teacher); listeners report through `onError`.
+- **Configuration.** `src/firebase-config.ts` holds the public web config; while its four
+  keys are empty the platform is "not configured" and never downloads Firebase.
+  `vite --mode emulator` (`.env.emulator`) points both apps at the local emulators.
+- **Tests.** `tests/classroom-*.test.ts`, `tests/share-link.test.ts` and
+  `tests/bundle-boundary.test.ts` run with `npm test` (fakes only). `tests-emulator/`
+  holds the security-rules suite (78 cases), the API integration tests and the end-to-end
+  flow; they need the Firebase emulators: `npm run test:emulator` (Java 21), or
+  `npm run test:rules` for the rules alone. `tests-emulator/mutations.sh` checks that each
+  weakened copy of the rules in `tests-emulator/mutations/` makes a test fail.

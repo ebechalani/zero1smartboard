@@ -1,0 +1,159 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "handins",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "uid",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "createdAt",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "handins",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "studentId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "createdAt",
+          "order": "DESCENDING"
+        }
+      ]
+    }
+  ],
+  "fieldOverrides": [
+    {
+      "collectionGroup": "handins",
+      "fieldPath": "uid",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "handins",
+      "fieldPath": "studentId",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "handins",
+      "fieldPath": "username",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "handins",
+      "fieldPath": "ownerUid",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "handins",
+      "fieldPath": "kind",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "handins",
+      "fieldPath": "taskId",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "handins",
+      "fieldPath": "title",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "handins",
+      "fieldPath": "note",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "handins",
+      "fieldPath": "enc",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "handins",
+      "fieldPath": "code",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "handins",
+      "fieldPath": "workspace",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "members",
+      "fieldPath": "username",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "members",
+      "fieldPath": "ownerUid",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "members",
+      "fieldPath": "device",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "members",
+      "fieldPath": "handinCount",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "members",
+      "fieldPath": "lastHandinId",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "classes",
+      "fieldPath": "name",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "classes",
+      "fieldPath": "teacherName",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "classes",
+      "fieldPath": "roster",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "classes",
+      "fieldPath": "rejoin",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "classes",
+      "fieldPath": "tasks",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "classes",
+      "fieldPath": "currentTaskId",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "classes",
+      "fieldPath": "joinWindowAt",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "classes",
+      "fieldPath": "keepWeeks",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "classes",
+      "fieldPath": "schema",
+      "indexes": []
+    }
+  ]
+}
