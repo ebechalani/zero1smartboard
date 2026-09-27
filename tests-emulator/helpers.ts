@@ -15,16 +15,10 @@ export { memoryStorage } from '../tests/classroom-fakes';
 export const PROJECT_ID = 'demo-zero1';
 export const AUTH_EMULATOR = 'http://127.0.0.1:9099';
 
-export const CLASS_INPUT: NewClassInput = {
-  name: '8B Robotics',
-  teacherName: 'Mr. B',
-  students: [
-    { studentId: 'aaaaaaa1', username: 'ali.k' },
-    { studentId: 'bbbbbbb2', username: 'sara.m' },
-  ],
-  tasks: ['Traffic light'],
-  joinOpen: true,
-};
+export const CLASS_INPUT: NewClassInput = { name: '8B Robotics' };
+
+export const ALI = { firstName: 'Ali', lastName: 'Khoury' };
+export const SARA = { firstName: 'Sara', lastName: 'Mansour' };
 
 export const CHROME_LINUX = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36';
 
@@ -87,11 +81,32 @@ export async function waitFor(condition: () => boolean, timeoutMs = 10_000, what
   }
 }
 
-let handinCounter = 0;
-/** A stored hand-in document, for seeding. */
-export function storedHandin(uid: string, studentId: string, username: string, over: Record<string, unknown> = {}): { path: string; data: Record<string, unknown> } {
+/** A stored member document, for seeding. */
+export function storedMember(name: { firstName: string; lastName: string }, ownerUid: string, over: Record<string, unknown> = {}): Record<string, unknown> {
   return {
-    path: '',
-    data: { uid, studentId, username, ownerUid: '', kind: 'code', taskId: '', title: `t${++handinCounter}`, note: '', enc: 'plain', code: 'void setup() {}', workspace: '', ...over },
+    ...name,
+    nameKey: `${name.firstName} ${name.lastName}`.toLowerCase(),
+    ownerUid,
+    joinedAt: new Date(),
+    device: 'Chrome · Windows',
+    handinCount: 0,
+    lastHandinAt: null,
+    lastHandinId: '',
+    ...over,
+  };
+}
+
+/** A stored hand-in document, for seeding. */
+export function storedHandin(uid: string, name: { firstName: string; lastName: string }, over: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    uid,
+    ...name,
+    nameKey: `${name.firstName} ${name.lastName}`.toLowerCase(),
+    ownerUid: '',
+    kind: 'code',
+    enc: 'plain',
+    code: 'void setup() {}',
+    workspace: '',
+    ...over,
   };
 }

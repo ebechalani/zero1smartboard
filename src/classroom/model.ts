@@ -11,20 +11,14 @@ export const CLASS_CODE_ALPHABET = 'BCDFGHJKLMNPQRSTVWXZ3479';
 export const CLASS_CODE_LENGTH = 6;
 /** Digits that look like letters of the alphabet on a projector, read as those letters. */
 export const CODE_LOOKALIKES: Readonly<Record<string, string>> = { '2': 'Z', '5': 'S', '6': 'G', '8': 'B' };
-export const STUDENT_ID_LENGTH = 8; // [a-z0-9]
-export const TASK_ID_LENGTH = 6; // [a-z0-9]
 export const HANDIN_ID_LENGTH = 20; // [A-Za-z0-9]
+/** The current shape of a class document (docs/CLASSROOM.md §2.3). */
+export const CLASS_SCHEMA = 2;
 
 export const LIMITS = {
   classNameMax: 60,
-  teacherNameMax: 60,
-  rosterMax: 100,
-  tasksMax: 30,
-  taskTitleMax: 60,
-  usernameMin: 2,
-  usernameMax: 24,
-  titleMax: 80,
-  noteMax: 500,
+  /** First name and last name: 1-30 characters each after cleanName(). */
+  nameMax: 30,
   deviceMax: 40,
   codeMaxBytes: 50_000,
   workspaceMaxBytes: 100_000,
@@ -33,10 +27,7 @@ export const LIMITS = {
   workspaceDecodeCap: 200_000,
   handinsPerDevice: 300,
   handinCooldownMs: 10_000,
-  joinWindowMs: 15 * 60_000,
   clockSkewMs: 60_000,
-  /** Ask "Hand in as <name>?" when a saved session was last used longer ago (or in a new tab). */
-  confirmAfterMs: 20 * 60_000,
   keepWeeksMin: 1,
   keepWeeksMax: 52,
   requestTimeoutMs: 20_000,
@@ -46,30 +37,22 @@ export const LIMITS = {
   todayLimit: 300,
   periodPage: 100,
   studentPage: 10,
-  myHandinsPage: 20,
   membersWatchLimit: 150,
   reviewHashMax: 60_000,
 } as const;
 
-export const USERNAME_PATTERN = /^[a-z0-9][a-z0-9._-]{1,23}$/;
+/**
+ * A first or last name: letters of any alphabet (accents kept), then letters, spaces,
+ * apostrophes, dots and hyphens; 1-30 characters. The same regex is in firestore.rules
+ * (RE2 syntax, `\p{L}` = any letter).
+ */
+export const NAME_PATTERN = /^\p{L}[\p{L} '.-]{0,29}$/u;
 const CLASS_CODE_PATTERN = /^[BCDFGHJKLMNPQRSTVWXZ3479]{6}$/;
-const STUDENT_ID_PATTERN = /^[a-z0-9]{8}$/;
-const TASK_ID_PATTERN = /^[a-z0-9]{6}$/;
 const HANDIN_ID_PATTERN = /^[A-Za-z0-9]{20}$/;
 
-const LOWER_ALNUM = 'abcdefghijklmnopqrstuvwxyz0123456789';
 const ALNUM = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
 
 export type HandinKind = 'code' | 'blocks';
-export type Roster = Readonly<Record<string, string>>;
-export interface RosterEntry {
-  studentId: string;
-  username: string;
-}
-export interface TaskEntry {
-  taskId: string;
-  title: string;
-}
 
 /** A source of `n` random bytes; the default is `crypto.getRandomValues`. */
 export type RandomBytes = (n: number) => Uint8Array;
@@ -142,213 +125,50 @@ export function generateClassCode(randomBytes: RandomBytes = defaultRandomBytes)
   return randomSymbols(CLASS_CODE_ALPHABET, CLASS_CODE_LENGTH, randomBytes);
 }
 
-/** A fresh 8-character studentId that is not a key of `existing`. */
-export function newStudentId(existing: Roster, randomBytes: RandomBytes = defaultRandomBytes): string {
-  for (;;) {
-    const id = randomSymbols(LOWER_ALNUM, STUDENT_ID_LENGTH, randomBytes);
-    if (!(id in existing)) return id;
-  }
-}
-
-/** A fresh 6-character taskId that is not a key of `existing`. */
-export function newTaskId(existing: Readonly<Record<string, string>>, randomBytes: RandomBytes = defaultRandomBytes): string {
-  for (;;) {
-    const id = randomSymbols(LOWER_ALNUM, TASK_ID_LENGTH, randomBytes);
-    if (!(id in existing)) return id;
-  }
-}
-
 /** A hand-in id, 20 × [A-Za-z0-9], made by the client before the batch (docs/CLASSROOM.md §2.9). */
 export function newHandinId(randomBytes: RandomBytes = defaultRandomBytes): string {
   return randomSymbols(ALNUM, HANDIN_ID_LENGTH, randomBytes);
 }
 
-export function isStudentId(id: string): boolean {
-  return STUDENT_ID_PATTERN.test(id);
-}
-export function isTaskId(id: string): boolean {
-  return TASK_ID_PATTERN.test(id);
-}
 export function isHandinId(id: string): boolean {
   return HANDIN_ID_PATTERN.test(id);
 }
 
 // ---------------------------------------------------------------------------
-// Usernames, rosters, tasks
+// Student names
 // ---------------------------------------------------------------------------
 
-/**
- * A typed name as a username (docs/CLASSROOM.md §2.4): accents stripped, lower case,
- * optionally "First L." style (`Ali Khalil` → `ali.k`), spaces → `.`, other characters dropped.
- */
-export function normalizeUsername(input: string, options: { shortenLastName?: boolean } = {}): string {
-  let name = input
-    .normalize('NFD')
-    .replace(/\p{M}/gu, '')
-    .toLowerCase()
-    .trim();
-  if (options.shortenLastName) {
-    const words = name.split(/\s+/).filter((w) => w !== '');
-    if (words.length >= 2) name = `${words[0]}.${words[words.length - 1].charAt(0)}`;
-  }
-  name = name
-    .replace(/\s+/g, '.')
-    .replace(/[^a-z0-9._-]/g, '')
-    .replace(/([._-])[._-]+/g, '$1')
-    .replace(/^[._-]+|[._-]+$/g, '')
-    .slice(0, LIMITS.usernameMax)
-    .replace(/[._-]+$/g, '');
-  return name;
+/** A typed first or last name as stored: NFC, one line, single spaces, at most 30 characters. */
+export function cleanName(input: string): string {
+  return cleanLine(input.normalize('NFC'), LIMITS.nameMax);
 }
 
-export type UsernameProblem = 'empty' | 'too_short' | 'too_long' | 'invalid';
+export type NameProblem = 'empty' | 'too_long' | 'invalid';
 
-export function usernameProblem(name: string): UsernameProblem | null {
+/** Why a cleaned name is not acceptable; null when it is. */
+export function nameProblem(name: string): NameProblem | null {
   if (name === '') return 'empty';
-  if (name.length < LIMITS.usernameMin) return 'too_short';
-  if (name.length > LIMITS.usernameMax) return 'too_long';
-  return USERNAME_PATTERN.test(name) ? null : 'invalid';
-}
-
-/** Whether two strings are at Levenshtein distance exactly 1. */
-function differByOne(a: string, b: string): boolean {
-  if (a === b) return false;
-  if (a.length === b.length) {
-    let diffs = 0;
-    for (let i = 0; i < a.length; i++) if (a[i] !== b[i] && ++diffs > 1) return false;
-    return diffs === 1;
-  }
-  const [short, long] = a.length < b.length ? [a, b] : [b, a];
-  if (long.length - short.length !== 1) return false;
-  let i = 0;
-  while (i < short.length && short[i] === long[i]) i++;
-  return short.slice(i) === long.slice(i + 1);
-}
-
-/** Pairs of names that differ by one character, for the "students may pick the wrong one" warning. */
-export function nearDuplicates(names: readonly string[]): [string, string][] {
-  const pairs: [string, string][] = [];
-  for (let i = 0; i < names.length; i++) {
-    for (let j = i + 1; j < names.length; j++) {
-      if (differByOne(names[i], names[j])) pairs.push([names[i], names[j]]);
-    }
-  }
-  return pairs;
-}
-
-/** Plain code-unit order: the same on every device and in the rules-checked ASCII alphabet. */
-function compareText(a: string, b: string): number {
-  return a < b ? -1 : a > b ? 1 : 0;
-}
-
-/** The roster as a list sorted by username (locale-independent). Values are read with String(). */
-export function sortedRoster(roster: Roster): RosterEntry[] {
-  return Object.entries(roster)
-    .map(([studentId, username]) => ({ studentId, username: String(username) }))
-    .sort((a, b) => compareText(a.username, b.username) || compareText(a.studentId, b.studentId));
-}
-
-/** The tasks as a list sorted by title. */
-export function sortedTasks(tasks: Readonly<Record<string, string>>): TaskEntry[] {
-  return Object.entries(tasks)
-    .map(([taskId, title]) => ({ taskId, title: String(title) }))
-    .sort((a, b) => compareText(a.title, b.title) || compareText(a.taskId, b.taskId));
-}
-
-export type RosterProblemReason = UsernameProblem | 'duplicate' | 'already_in_class' | 'too_many';
-export interface RosterPlan {
-  /** New entries with fresh studentIds, in input order. */
-  add: RosterEntry[];
-  problems: { line: number; input: string; normalized: string; reason: RosterProblemReason }[];
-  warnings: { names: [string, string]; reason: 'near_duplicate' }[];
+  if (name.length > LIMITS.nameMax) return 'too_long';
+  return NAME_PATTERN.test(name) ? null : 'invalid';
 }
 
 /**
- * What "Add students" would do with the typed list: one name per line (commas and semicolons
- * also split), normalised, checked against the current roster and the limits.
+ * The grouping key of a student: lower-case "first last". The dashboard groups hand-ins by it; the
+ * rules only check that it is short and lower-case (their lower() is ASCII-only), and that a
+ * hand-in carries the member doc's key.
  */
-export function planRosterAdd(
-  existing: Roster,
-  text: string,
-  options: { shortenLastName?: boolean; randomBytes?: RandomBytes } = {},
-): RosterPlan {
-  const plan: RosterPlan = { add: [], problems: [], warnings: [] };
-  const taken = new Set(Object.values(existing).map(String));
-  const roster: Record<string, string> = { ...existing };
-  text.split(/[\n,;]/).forEach((raw, index) => {
-    const input = raw.trim();
-    if (input === '') return;
-    const line = index + 1;
-    const normalized = normalizeUsername(input, { shortenLastName: options.shortenLastName });
-    const problem = usernameProblem(normalized);
-    let reason: RosterProblemReason | null = problem;
-    if (reason === null && taken.has(normalized)) reason = 'already_in_class';
-    if (reason === null && plan.add.some((e) => e.username === normalized)) reason = 'duplicate';
-    if (reason === null && Object.keys(roster).length >= LIMITS.rosterMax) reason = 'too_many';
-    if (reason !== null) {
-      plan.problems.push({ line, input, normalized, reason });
-      return;
-    }
-    const studentId = newStudentId(roster, options.randomBytes);
-    roster[studentId] = normalized;
-    plan.add.push({ studentId, username: normalized });
-  });
-  const added = new Set(plan.add.map((e) => e.username));
-  for (const pair of nearDuplicates([...taken, ...added])) {
-    if (added.has(pair[0]) || added.has(pair[1])) plan.warnings.push({ names: pair, reason: 'near_duplicate' });
-  }
-  return plan;
+export function nameKeyOf(firstName: string, lastName: string): string {
+  return `${firstName} ${lastName}`.toLowerCase();
 }
 
-/** What "Add tasks" would do with the typed list: one title per line, cleaned, at most 30 in all. */
-export function planTasksAdd(
-  existing: Readonly<Record<string, string>>,
-  text: string,
-  randomBytes?: RandomBytes,
-): { add: TaskEntry[]; problems: { line: number; reason: 'too_long' | 'too_many' | 'duplicate' }[] } {
-  const add: TaskEntry[] = [];
-  const problems: { line: number; reason: 'too_long' | 'too_many' | 'duplicate' }[] = [];
-  const taken = new Set(Object.values(existing).map(String));
-  const tasks: Record<string, string> = { ...existing };
-  text.split('\n').forEach((raw, index) => {
-    const title = cleanLine(raw, Number.MAX_SAFE_INTEGER);
-    if (title === '') return;
-    const line = index + 1;
-    if (title.length > LIMITS.taskTitleMax) return void problems.push({ line, reason: 'too_long' });
-    if (taken.has(title) || add.some((t) => t.title === title)) return void problems.push({ line, reason: 'duplicate' });
-    if (Object.keys(tasks).length >= LIMITS.tasksMax) return void problems.push({ line, reason: 'too_many' });
-    const taskId = newTaskId(tasks, randomBytes);
-    tasks[taskId] = title;
-    add.push({ taskId, title });
-  });
-  return { add, problems };
+/** "Ali Khoury". */
+export function fullName(firstName: string, lastName: string): string {
+  return `${firstName} ${lastName}`.trim();
 }
 
-// ---------------------------------------------------------------------------
-// Joining
-// ---------------------------------------------------------------------------
-
-export interface JoinState {
-  joinOpen: boolean;
-  joinWindowAt: Date | null;
-  rejoin: Readonly<Record<string, Date>>;
-}
-
-/**
- * The rules' joinAllowed() on the client, with LIMITS.clockSkewMs of tolerance ('open' when
- * unsure, so a student is never refused locally for a window the server still accepts).
- */
-export function joinStatus(cls: JoinState, studentId: string | null, nowMs: number): { open: boolean; until: Date | null } {
-  if (cls.joinOpen) return { open: true, until: null };
-  const windows: Date[] = [];
-  if (cls.joinWindowAt) windows.push(cls.joinWindowAt);
-  if (studentId !== null && cls.rejoin[studentId]) windows.push(cls.rejoin[studentId]);
-  let best: Date | null = null;
-  for (const start of windows) {
-    const until = new Date(start.getTime() + LIMITS.joinWindowMs);
-    if (nowMs < until.getTime() + LIMITS.clockSkewMs && (best === null || until > best)) best = until;
-  }
-  return best ? { open: true, until: best } : { open: false, until: null };
+/** "Khoury, Ali" (lists on the dashboard). */
+export function listName(firstName: string, lastName: string): string {
+  return lastName ? `${lastName}, ${firstName}` : firstName;
 }
 
 // ---------------------------------------------------------------------------
@@ -357,7 +177,6 @@ export function joinStatus(cls: JoinState, studentId: string | null, nowMs: numb
 
 /** Invisible characters: controls, format characters (zero-width, bidi overrides) and lone surrogates. */
 const INVISIBLE = /[\p{Cc}\p{Cf}\p{Cs}]/gu;
-const INVISIBLE_EXCEPT_NEWLINE = /(?!\n)[\p{Cc}\p{Cf}\p{Cs}]/gu;
 
 /** The first `max` UTF-16 units of `text`, without half an emoji at the end. */
 function cutAt(text: string, max: number): string {
@@ -368,20 +187,6 @@ function cutAt(text: string, max: number): string {
 export function cleanLine(text: string, max: number): string {
   const line = text.replace(/\s/g, ' ').replace(INVISIBLE, '').replace(/ {2,}/g, ' ').trim();
   return cutAt(line, max).trim();
-}
-
-/** Several lines: CRLF → LF, at most one empty line in a row, trimmed, at most `max` characters. */
-export function cleanMultiline(text: string, max: number): string {
-  const lines = text
-    .replace(/\r\n?/g, '\n')
-    .replace(/[^\S\n]/g, ' ')
-    .replace(INVISIBLE_EXCEPT_NEWLINE, '')
-    .split('\n')
-    .map((line) => line.trimEnd()) // not / +\n/: that regex takes quadratic time on a long run of spaces
-    .join('\n')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
-  return cutAt(lines, max).trim();
 }
 
 /** The size of `text` in UTF-8 bytes (the unit of the content limits, as in the rules). */
@@ -433,10 +238,6 @@ export interface HandinDraft {
   code: string;
   /** '' in Code mode. */
   workspaceJson: string;
-  /** '' = no task. */
-  taskId: string;
-  title: string;
-  note: string;
 }
 export interface HandinContent {
   kind: HandinKind;
@@ -447,12 +248,10 @@ export interface HandinRecord {
   id: string;
   classCode: string;
   uid: string;
-  studentId: string;
-  username: string;
+  firstName: string;
+  lastName: string;
+  nameKey: string;
   kind: HandinKind;
-  taskId: string;
-  title: string;
-  note: string;
   /** Server time; for a hand-in this device just made: local time. */
   createdAt: Date | null;
   /** Still encoded (codec.ts). */
@@ -471,22 +270,19 @@ export function draftProblem(draft: HandinDraft): 'empty_sketch' | 'too_large' |
 // Reading Firestore documents (duck-typed: works with the Lite and the full SDK)
 // ---------------------------------------------------------------------------
 
-export interface ClassDoc extends JoinState {
+export interface ClassDoc {
   ownerUid: string;
   name: string;
-  teacherName: string;
-  roster: Roster;
   handinsOpen: boolean;
-  tasks: Readonly<Record<string, string>>;
-  currentTaskId: string;
   keepWeeks: number;
   deleting: boolean;
   createdAt: Date | null;
   updatedAt: Date | null;
 }
 export interface MemberDoc {
-  studentId: string;
-  username: string;
+  firstName: string;
+  lastName: string;
+  nameKey: string;
   device: string;
   joinedAt: Date | null;
   handinCount: number;
@@ -503,38 +299,16 @@ export function toDate(value: unknown): Date | null {
   return null;
 }
 
-function stringMap(value: unknown): Readonly<Record<string, string>> {
-  const out: Record<string, string> = {};
-  if (value && typeof value === 'object' && !Array.isArray(value)) {
-    for (const [k, v] of Object.entries(value as Data)) out[k] = String(v);
-  }
-  return out;
-}
-
 function text(value: unknown): string {
   return typeof value === 'string' ? value : value == null ? '' : String(value);
 }
 
-/** The fields of a class document, with tolerant types (docs/CLASSROOM.md §2.3-2.4). */
+/** The fields of a class document, with tolerant types (docs/CLASSROOM.md §2.3). */
 export function readClassDoc(data: Data): ClassDoc {
-  const rejoin: Record<string, Date> = {};
-  if (data.rejoin && typeof data.rejoin === 'object') {
-    for (const [k, v] of Object.entries(data.rejoin as Data)) {
-      const at = toDate(v);
-      if (at) rejoin[k] = at;
-    }
-  }
   return {
     ownerUid: text(data.ownerUid),
     name: text(data.name),
-    teacherName: text(data.teacherName),
-    roster: stringMap(data.roster),
-    joinOpen: data.joinOpen === true,
-    joinWindowAt: toDate(data.joinWindowAt),
-    rejoin,
     handinsOpen: data.handinsOpen === true,
-    tasks: stringMap(data.tasks),
-    currentTaskId: text(data.currentTaskId),
     keepWeeks: typeof data.keepWeeks === 'number' ? data.keepWeeks : LIMITS.keepWeeksMin,
     deleting: data.deleting === true,
     createdAt: toDate(data.createdAt),
@@ -544,8 +318,9 @@ export function readClassDoc(data: Data): ClassDoc {
 
 export function readMemberDoc(data: Data): MemberDoc {
   return {
-    studentId: text(data.studentId),
-    username: text(data.username),
+    firstName: text(data.firstName),
+    lastName: text(data.lastName),
+    nameKey: text(data.nameKey),
     device: text(data.device),
     joinedAt: toDate(data.joinedAt),
     handinCount: typeof data.handinCount === 'number' ? data.handinCount : 0,
@@ -570,12 +345,10 @@ export function readHandinDoc(id: string, classCode: string, data: Data): Handin
     id,
     classCode,
     uid: text(data.uid),
-    studentId: text(data.studentId),
-    username: text(data.username),
+    firstName: text(data.firstName),
+    lastName: text(data.lastName),
+    nameKey: text(data.nameKey),
     kind: data.kind === 'blocks' ? 'blocks' : 'code',
-    taskId: text(data.taskId),
-    title: text(data.title),
-    note: text(data.note),
     createdAt: toDate(data.createdAt),
     content: { enc, code: contentField(data.code), workspace: contentField(data.workspace) },
   };

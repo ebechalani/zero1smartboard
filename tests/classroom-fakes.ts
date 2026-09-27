@@ -44,6 +44,8 @@ export interface FakeStudentOptions {
   commit?: (ops: FakeOp[], attempt: number) => Promise<void>;
   /** Runs before a setDoc is applied; throw to fail it. */
   setDoc?: (path: string, data: Data) => Promise<void>;
+  /** Runs before an updateDoc is applied; throw to fail it. */
+  updateDoc?: (path: string, data: Data) => Promise<void>;
   /** The result of getDocs (or throw). */
   getDocs?: (query: FakeQuery) => Promise<{ docs: { id: string; data(): Data }[] }>;
 }
@@ -94,6 +96,12 @@ export function fakeStudentFirebase(options: FakeStudentOptions = {}) {
       sets.push({ type: 'set', path: r.path, data }); // every attempt, also a denied one
       if (options.setDoc) await options.setDoc(r.path, data);
       docs[r.path] = materialize(data);
+    },
+    updateDoc: async (r: { path: string }, data: Data) => {
+      sets.push({ type: 'update', path: r.path, data });
+      if (options.updateDoc) await options.updateDoc(r.path, data);
+      if (docs[r.path] == null) throw { code: 'not-found', name: 'FirebaseError', message: 'missing' };
+      applyUpdate(r.path, data);
     },
     writeBatch: () => {
       const batchOps: FakeOp[] = [];

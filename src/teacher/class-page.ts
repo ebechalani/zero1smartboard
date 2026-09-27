@@ -1,28 +1,26 @@
 /**
- * The class page (docs/CLASSROOM.md §1.3 T4-T10): the header with the code, the joining control
- * and the hand-ins switch, the current-task select, the Show-to-the-class overlay, the four tabs
- * and the background retention check (§2.11). It renders from a ClassSession that may outlive it.
+ * The class page (docs/CLASSROOM.md §1.3 T4-T10): the header with the code and the hand-ins
+ * switch, the Show-to-the-class overlay, the three tabs and the background retention check
+ * (§2.11). It renders from a ClassSession that may outlive it.
  */
-import { classLink, formatClassCode, joinStatus, type RandomBytes } from '../classroom/model';
+import { classLink, formatClassCode } from '../classroom/model';
 import type { DashboardContext } from './context';
 import { createFeed } from './feed';
-import { button, countdownText, el, minutesLeftText, plural, prunedKey, readItem, writeItem } from './format';
-import { zipOf } from './handins';
+import { button, el, plural, prunedKey, readItem, writeItem } from './format';
+import { overviewRows, zipOf } from './handins';
 import { createOverview } from './overview';
-import type { ClassSession } from './session';
-import { createSettings } from './settings';
-import { createStudents } from './students';
+import { PERIODS, type ClassSession } from './session';
+import { HANDINS_OFF_TEXT, createSettings } from './settings';
 
-export type TabName = 'overview' | 'handins' | 'students' | 'settings';
+export type TabName = 'overview' | 'handins' | 'settings';
 const TABS: { name: TabName; label: string }[] = [
   { name: 'overview', label: 'Overview' },
   { name: 'handins', label: 'All hand-ins' },
-  { name: 'students', label: 'Students' },
   { name: 'settings', label: 'Settings' },
 ];
 
-export const JOIN_TIP = 'On lab computers that forget sign-ins, open joining at the start of each lesson.';
-export const HANDINS_OFF_TEXT = 'This class no longer accepts hand-ins (use it for last year\'s classes).';
+export { HANDINS_OFF_TEXT };
+export const OVERLAY_HELP_TEXT = 'Press Hand in, type the code and your name.';
 
 export interface ClassPage {
   readonly element: HTMLElement;
@@ -34,7 +32,6 @@ export interface ClassPage {
 
 export interface ClassPageCallbacks {
   onDeleted(): void;
-  randomBytes?: RandomBytes;
 }
 
 interface Tab {
@@ -57,11 +54,9 @@ export function createClassPage(ctx: DashboardContext, session: ClassSession, ca
   const tabs: Record<TabName, Tab> = {
     overview: createOverview(ctx, session),
     handins: createFeed(ctx, session),
-    students: createStudents(ctx, session, { randomBytes: callbacks.randomBytes }),
     settings: createSettings(ctx, session, {
       onDeleted: () => callbacks.onDeleted(),
       onDeletionUnfinished: () => render(),
-      randomBytes: callbacks.randomBytes,
     }),
   };
   let current: TabName = 'overview';
@@ -90,9 +85,7 @@ export function createClassPage(ctx: DashboardContext, session: ClassSession, ca
   }
 
   // ------------------------------------------------------------- header
-  let countdownTimer: ReturnType<typeof setInterval> | null = null;
   let overlayOpen = false;
-  let releaseOverlayMembers: (() => void) | null = null;
 
   function renderHeader(): void {
     header.replaceChildren();
@@ -123,70 +116,16 @@ export function createClassPage(ctx: DashboardContext, session: ClassSession, ca
       return;
     }
 
-    // Joining control.
-    const joining = el('div', { className: 'z1t-joining' });
-    const joinStatusEl = el('span', { className: 'z1t-status', attrs: { role: 'status' } });
-    const status = joinStatus(detail, null, ctx.now().getTime());
-    const switchLabel = el('label', { className: 'z1t-switch' });
-    const switchInput = el('input', { attrs: { type: 'checkbox', role: 'switch', 'aria-label': 'Joining always open' } });
-    switchInput.checked = detail.joinOpen;
-    switchInput.addEventListener('change', () => {
-      const promise = switchInput.checked ? ctx.api.updateClass(detail.code, { joinOpen: true }) : ctx.api.closeJoining(detail.code);
-      void ctx.save(promise, joinStatusEl);
-    });
-    switchLabel.append(switchInput, el('span', { text: 'Joining always open' }));
-    joining.append(switchLabel);
-    if (detail.joinOpen) {
-      joining.append(el('p', { className: 'z1t-join-text', text: 'Anyone with the code can join and pick a name.' }));
-    } else if (status.open && status.until) {
-      const countdown = el('strong', { className: 'z1t-countdown', text: `Joining open · ${countdownText(status.until, ctx.now())}` });
-      joining.append(
-        el('p', { className: 'z1t-join-text' }, [countdown]),
-        el('div', { className: 'z1t-row' }, [
-          button('+15 min', () => void ctx.save(ctx.api.openJoinWindow(detail.code), joinStatusEl)),
-          button('Close now', () => void ctx.save(ctx.api.closeJoining(detail.code), joinStatusEl)),
-        ]),
-      );
-      if (countdownTimer === null) {
-        countdownTimer = ctx.setInterval(() => {
-          const s = joinStatus(detail, null, ctx.now().getTime());
-          if (!s.open || !s.until) {
-            ctx.clearInterval(countdownTimer!);
-            countdownTimer = null;
-            renderHeader();
-            return;
-          }
-          countdown.textContent = `Joining open · ${countdownText(s.until, ctx.now())}`;
-        }, 1000);
-      }
-    } else {
-      joining.append(
-        el('p', { className: 'z1t-join-text' }, [el('strong', { text: 'Joining closed. ' }), 'Students who already joined can still hand in.']),
-        el('div', { className: 'z1t-row' }, [button('Open for 15 minutes', () => void ctx.save(ctx.api.openJoinWindow(detail.code), joinStatusEl))]),
-      );
-    }
-    joining.append(el('p', { className: 'z1-setting-help', text: JOIN_TIP }), joinStatusEl);
-
-    // Hand-ins switch and current task.
+    // Hand-ins switch.
     const controls = el('div', { className: 'z1t-class-controls' });
     const handinsStatus = el('span', { className: 'z1t-status', attrs: { role: 'status' } });
     const handinsSwitch = el('input', { attrs: { type: 'checkbox', role: 'switch', 'aria-label': 'Accepting hand-ins' } });
     handinsSwitch.checked = detail.handinsOpen;
     handinsSwitch.addEventListener('change', () => void ctx.save(ctx.api.updateClass(detail.code, { handinsOpen: handinsSwitch.checked }), handinsStatus));
     controls.append(el('label', { className: 'z1t-switch' }, [handinsSwitch, el('span', { text: 'Accepting hand-ins' })]), handinsStatus);
-    if (!detail.handinsOpen) controls.append(el('p', { className: 'z1t-warn-text', text: HANDINS_OFF_TEXT }));
-    const taskSelect = el('select', { attrs: { 'aria-label': 'Current task', id: 'z1t-current-task' } });
-    taskSelect.append(el('option', { text: '(no task)', attrs: { value: '' } }));
-    for (const t of detail.tasks) taskSelect.append(el('option', { text: t.title, attrs: { value: t.taskId } }));
-    taskSelect.value = detail.tasks.some((t) => t.taskId === detail.currentTaskId) ? detail.currentTaskId : '';
-    const taskStatus = el('span', { className: 'z1t-status', attrs: { role: 'status' } });
-    taskSelect.addEventListener('change', () => void ctx.save(ctx.api.updateClass(detail.code, { currentTaskId: taskSelect.value }), taskStatus));
-    controls.append(
-      el('label', { className: 'z1t-toolbar-item' }, [el('span', { text: 'Current task' }), taskSelect]),
-      button('Manage tasks', () => setTab('settings'), 'z1-btn z1-btn-small'),
-      taskStatus,
-    );
-    header.append(title, codeRow, el('div', { className: 'z1t-class-bars' }, [joining, controls]));
+    if (detail.handinsOpen) controls.append(el('p', { className: 'z1t-join-text', text: 'Anyone with the code can hand in under their name.' }));
+    else controls.append(el('p', { className: 'z1t-warn-text', text: HANDINS_OFF_TEXT }));
+    header.append(title, codeRow, el('div', { className: 'z1t-class-bars' }, [controls]));
   }
 
   // ------------------------------------------------------------ overlay
@@ -195,7 +134,6 @@ export function createClassPage(ctx: DashboardContext, session: ClassSession, ca
   }
   function openOverlay(): void {
     overlayOpen = true;
-    releaseOverlayMembers ??= session.useMembers();
     overlay.hidden = false;
     document.addEventListener('keydown', onOverlayKey);
     renderOverlay();
@@ -205,8 +143,6 @@ export function createClassPage(ctx: DashboardContext, session: ClassSession, ca
     overlayOpen = false;
     overlay.hidden = true;
     document.removeEventListener('keydown', onOverlayKey);
-    releaseOverlayMembers?.();
-    releaseOverlayMembers = null;
   }
   function renderOverlay(): void {
     if (!overlayOpen) return;
@@ -215,16 +151,15 @@ export function createClassPage(ctx: DashboardContext, session: ClassSession, ca
     if (!detail) return;
     const code = formatClassCode(detail.code);
     const link = classLink(detail.code).replace(/^https?:\/\//, '');
-    const status = joinStatus(detail, null, ctx.now().getTime());
-    const joinText = detail.joinOpen ? 'Joining open' : status.open && status.until ? `Joining open · ${minutesLeftText(status.until, ctx.now())}` : 'Joining closed';
-    const joinedIds = new Set((session.members ?? []).map((m) => m.studentId).filter((id) => id in detail.roster));
+    const students = overviewRows(session.items, session.seen).length;
+    const periodText = PERIODS.find((p) => p.value === session.period)?.header ?? 'today';
     overlay.append(
       button('Close', () => closeOverlay(), 'z1-btn z1t-overlay-close'),
       el('p', { className: 'z1t-overlay-name', text: detail.name }),
       el('p', { className: 'z1t-overlay-code', text: code, attrs: { 'aria-label': detail.code.split('').join(' ') } }),
       el('p', { className: 'z1t-overlay-link', text: link }),
-      el('p', { className: 'z1t-overlay-help' }, ['Open the link, or press ', el('strong', { text: 'Hand in' }), ', type the code and pick your name.']),
-      el('p', { className: 'z1t-overlay-status', text: `${joinText} · ${session.members === null ? '…' : joinedIds.size} of ${detail.students.length} joined` }),
+      el('p', { className: 'z1t-overlay-help' }, ['Open the link, or press ', el('strong', { text: 'Hand in' }), ', type the code and your name.']),
+      el('p', { className: 'z1t-overlay-status', text: `${detail.handinsOpen ? 'Hand-ins open' : 'Hand-ins stopped'} · ${plural(students, 'student')} handed in ${periodText}` }),
     );
   }
 
@@ -245,11 +180,14 @@ export function createClassPage(ctx: DashboardContext, session: ClassSession, ca
       const count = await ctx.api.countHandinsBefore(detail.code, new Date(cutoff.getTime() + week));
       if (count > 0) {
         const notice = el('div', { className: 'z1t-notice', attrs: { role: 'status' } });
+        const downloadStatus = el('span', { className: 'z1t-status', attrs: { role: 'status' } });
         notice.append(
           el('span', { text: `${plural(count, 'hand-in')} ${count === 1 ? 'is' : 'are'} older than ${detail.keepWeeks - 1} weeks and will be deleted within a week. ` }),
-          button('Download them (.zip)', () => downloadOld(new Date(cutoff.getTime() + week)), 'z1t-linkish'),
+          button('Download them (.zip)', () => void downloadOld(new Date(cutoff.getTime() + week), downloadStatus), 'z1t-linkish'),
           ' · ',
           button('Change in Settings', () => setTab('settings'), 'z1t-linkish'),
+          ' ',
+          downloadStatus,
         );
         retentionNotice().append(notice);
       }
@@ -259,23 +197,16 @@ export function createClassPage(ctx: DashboardContext, session: ClassSession, ca
       ctx.showError(err);
     }
   }
-  async function downloadOld(before: Date): Promise<void> {
-    // The old hand-ins are outside every period view: load them page by page (100 per read batch).
+  /** Every hand-in older than `before`, page by page (no cap: the zip is complete or fails). */
+  async function downloadOld(before: Date, status: HTMLElement): Promise<void> {
     try {
-      const since = new Date(0);
-      const items = [];
-      let page = await ctx.api.loadHandins(session.code, since);
-      items.push(...page.items);
-      while (page.hasMore && items.length < 2000) {
-        const last = items[items.length - 1];
-        if (!last.createdAt) break;
-        page = await ctx.api.loadHandins(session.code, since, { before: last.createdAt });
-        items.push(...page.items);
-      }
+      status.textContent = 'Loading…';
+      const items = await session.loadAll((n) => (status.textContent = `Loading… ${n}`));
       const old = items.filter((r) => r.createdAt && r.createdAt < before);
-      await session.cache.decodeAll(old);
       ctx.download(`${session.detail?.name ?? 'class'}-old-handins.zip`.replace(/[^\w.-]+/g, '_'), zipOf(old, session.cache, ctx.now()));
+      status.textContent = `${plural(old.length, 'hand-in')} in the zip`;
     } catch (err) {
+      status.textContent = '';
       ctx.showError(err);
     }
   }
@@ -312,7 +243,6 @@ export function createClassPage(ctx: DashboardContext, session: ClassSession, ca
     destroy() {
       unsubscribe();
       closeOverlay();
-      if (countdownTimer !== null) ctx.clearInterval(countdownTimer);
       for (const tab of Object.values(tabs)) tab.destroy();
       element.remove();
     },

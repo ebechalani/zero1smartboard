@@ -6,7 +6,7 @@
  * no GitHub link, Share opens the share dialog with the `#code=` /
  * `#blocks=` link, Arduino IDE opens its dialog with the sketch, Hand in
  * exists only when the class platform is configured and opens its dialog with
- * the work (docs/CLASSROOM.md §7.3), `#class=` links open it in join mode, the
+ * the work (docs/CLASSROOM.md §7.3), `#class=` links open it with the code prefilled, the
  * run status stays short, and the global keys leave a sketch alone while a
  * dialog is open.
  *
@@ -130,13 +130,9 @@ vi.mock('../src/ui/handin-dialog', async (importOriginal) => {
   const api = {
     restore: async () => null,
     findClass: offline,
-    refreshClass: offline,
     join: offline,
-    continueAs: offline,
-    confirm: () => undefined,
     handIn: offline,
-    myHandins: offline,
-    leave: async () => undefined,
+    forget: () => undefined,
   } as unknown as import('../src/classroom/student').StudentApi;
   return {
     ...original,
@@ -302,7 +298,10 @@ describe('header toolbar', () => {
       'handin',
       'share',
       'ide',
+      'upload',
     ]);
+    // "Upload to board" only shows itself in browsers with Web Serial and a deployed toolchain.
+    expect((toolbar.lastElementChild as HTMLElement).hidden).toBe(true);
     const handin = button(root, 'handin');
     expect(handin.textContent!.replace(/\s+/g, ' ').trim()).toBe('📥 Hand in');
     expect(handin.getAttribute('aria-label')).toBe('Hand in your work to your teacher');
@@ -334,16 +333,17 @@ describe('header toolbar', () => {
       'settings',
       'share',
       'ide',
+      'upload',
     ]);
   });
 
-  it('reads "Hand in · ali.k" from the saved class session', () => {
-    saveSession({ v: 1, code: 'BKT4M9', className: '8B Robotics', teacherName: 'Mr. B', studentId: 'ali00001', username: 'ali.k', uid: 'u1', lastUsedAt: 0, lastHandinAt: 0, lastHandinTitle: '' });
+  it('reads "Hand in · Ali Khoury" from the saved class session', () => {
+    saveSession({ v: 2, code: 'BKT4M9', className: '8B Robotics', firstName: 'Ali', lastName: 'Khoury', uid: 'u1', lastUsedAt: 0, lastHandinAt: 0 });
     const root = start();
     const handin = button(root, 'handin');
-    expect(handin.querySelector('.z1-handin-name')!.textContent).toBe(' · ali.k');
-    expect(handin.textContent!.replace(/\s+/g, ' ').trim()).toBe('📥 Hand in · ali.k');
-    expect(handin.getAttribute('aria-label')).toBe('Hand in as ali.k to your class');
+    expect(handin.querySelector('.z1-handin-name')!.textContent).toBe(' · Ali Khoury');
+    expect(handin.textContent!.replace(/\s+/g, ' ').trim()).toBe('📥 Hand in · Ali Khoury');
+    expect(handin.getAttribute('aria-label')).toBe('Hand in as Ali Khoury to your class');
   });
 
   it('is exactly the Arduino IDE blank sketch', () => {
@@ -455,7 +455,7 @@ describe('Hand in', () => {
     expect(fake.handinOpens[3].work.errorCount).toBeGreaterThan(0);
   });
 
-  it('a #class= link opens the dialog in join mode with the code, and is dropped from the address bar', async () => {
+  it('a #class= link opens the dialog with the code prefilled, and is dropped from the address bar', async () => {
     location.hash = '#class=bkt-4m9';
     const root = start(MY_SKETCH);
     await settle();

@@ -5,7 +5,7 @@
  * test can check that sign-out leaves none active.
  */
 import { ClassroomError, TEACHER_ERROR_TEXT, errorText, type ClassroomErrorCode } from '../../src/classroom/errors';
-import { LIMITS, newStudentId, newTaskId, sortedRoster, sortedTasks, type HandinRecord, type RosterEntry } from '../../src/classroom/model';
+import { LIMITS, nameKeyOf, type HandinRecord } from '../../src/classroom/model';
 import type { ClassDetail, ClassSummary, HandinsUpdate, Member, NewClassInput, TeacherApi, TeacherUser, Unsubscribe } from '../../src/classroom/teacher';
 
 export interface Deferred<T> {
@@ -29,51 +29,25 @@ export function fakeError(code: ClassroomErrorCode, vars?: Record<string, string
   return new ClassroomError(code, errorText(TEACHER_ERROR_TEXT, code, vars));
 }
 
-let counter = 0;
-const randomBytes = (n: number): Uint8Array => {
-  const out = new Uint8Array(n);
-  for (let i = 0; i < n; i++) out[i] = (counter++ * 7 + i * 13) % 256;
-  return out;
-};
-
 export interface FakeClassOptions {
   code?: string;
   name?: string;
-  teacherName?: string;
-  students?: string[];
-  tasks?: string[];
-  joinOpen?: boolean;
-  joinWindowAt?: Date | null;
   handinsOpen?: boolean;
   keepWeeks?: number;
   deleting?: boolean;
   createdAt?: Date;
 }
 
-/** A ClassDetail with sequential studentIds (s0000001, …) and taskIds (t00001, …). */
 export function makeClass(options: FakeClassOptions = {}): ClassDetail {
-  const roster: Record<string, string> = {};
-  (options.students ?? ['ali.k', 'sara.m']).forEach((name, i) => (roster[`s${String(i + 1).padStart(7, '0')}`] = name));
-  const tasks: Record<string, string> = {};
-  (options.tasks ?? []).forEach((title, i) => (tasks[`t${String(i + 1).padStart(5, '0')}`] = title));
   const createdAt = options.createdAt ?? new Date(2026, 8, 1, 9, 0);
   return {
     code: options.code ?? 'BKT4M9',
     name: options.name ?? '8B Robotics',
-    teacherName: options.teacherName ?? 'Mr. B',
-    joinOpen: options.joinOpen ?? true,
-    joinWindowAt: options.joinWindowAt ?? null,
-    rejoin: {},
     handinsOpen: options.handinsOpen ?? true,
     deleting: options.deleting ?? false,
-    studentCount: Object.keys(roster).length,
     createdAt,
     updatedAt: createdAt,
     ownerUid: TEACHER.uid,
-    roster,
-    students: sortedRoster(roster),
-    tasks: sortedTasks(tasks),
-    currentTaskId: '',
     keepWeeks: options.keepWeeks ?? 10,
   };
 }
@@ -82,40 +56,41 @@ export interface FakeHandinOptions {
   id?: string;
   classCode?: string;
   uid?: string;
-  studentId?: string;
-  username?: string;
+  firstName?: string;
+  lastName?: string;
   kind?: 'code' | 'blocks';
-  taskId?: string;
-  title?: string;
-  note?: string;
   createdAt?: Date | null;
   code?: string;
   workspaceJson?: string;
 }
 
 let handinCounter = 0;
+/** A hand-in of Ali Khoury from device-aaaa at 10:42 unless told otherwise. */
 export function makeHandin(options: FakeHandinOptions = {}): HandinRecord {
   handinCounter++;
+  const firstName = options.firstName ?? 'Ali';
+  const lastName = options.lastName ?? 'Khoury';
   return {
     id: options.id ?? `h${String(handinCounter).padStart(19, '0')}`,
     classCode: options.classCode ?? 'BKT4M9',
     uid: options.uid ?? 'device-aaaa',
-    studentId: options.studentId ?? 's0000001',
-    username: options.username ?? 'ali.k',
+    firstName,
+    lastName,
+    nameKey: nameKeyOf(firstName, lastName),
     kind: options.kind ?? 'code',
-    taskId: options.taskId ?? '',
-    title: options.title ?? '',
-    note: options.note ?? '',
     createdAt: options.createdAt === undefined ? new Date(2026, 8, 26, 10, 42) : options.createdAt,
     content: { enc: 'plain', code: options.code ?? 'void setup() {}\nvoid loop() {}\n', workspace: options.workspaceJson ?? '' },
   };
 }
 
 export function makeMember(options: Partial<Member> = {}): Member {
+  const firstName = options.firstName ?? 'Ali';
+  const lastName = options.lastName ?? 'Khoury';
   return {
     uid: options.uid ?? 'device-aaaa',
-    studentId: options.studentId ?? 's0000001',
-    username: options.username ?? 'ali.k',
+    firstName,
+    lastName,
+    nameKey: options.nameKey ?? nameKeyOf(firstName, lastName),
     device: options.device ?? 'Chrome · Windows',
     joinedAt: options.joinedAt === undefined ? new Date(2026, 8, 26, 10, 0) : options.joinedAt,
     handinCount: options.handinCount ?? 0,
@@ -195,24 +170,17 @@ export function createFakeTeacherApi(options: { now?: () => number; classes?: Cl
     set.add(listener);
     return () => void set!.delete(listener);
   }
-  const summaries = (): ClassSummary[] =>
-    [...classes.values()]
-      .map((c) => ({ ...c, studentCount: Object.keys(c.roster).length }))
-      .sort((a, b) => (b.createdAt?.getTime() ?? 0) - (a.createdAt?.getTime() ?? 0));
+  const summaries = (): ClassSummary[] => [...classes.values()].sort((a, b) => (b.createdAt?.getTime() ?? 0) - (a.createdAt?.getTime() ?? 0));
   const cls = (code: string): ClassDetail => {
     const c = classes.get(code);
     if (!c) throw fakeError('class_not_found');
     return c;
   };
   const update = (code: string, patch: Partial<ClassDetail>): void => {
-    const c = cls(code);
-    const roster = patch.roster ?? c.roster;
-    const tasks = patch.tasks ?? c.tasks;
-    classes.set(code, { ...c, ...patch, roster, students: sortedRoster(roster), tasks, studentCount: Object.keys(roster).length, updatedAt: new Date(now()) });
+    classes.set(code, { ...cls(code), ...patch, updatedAt: new Date(now()) });
     api.emitClass(code);
     api.emitClasses();
   };
-  const tasksMap = (c: ClassDetail): Record<string, string> => Object.fromEntries(c.tasks.map((t) => [t.taskId, t.title]));
   const page = (list: HandinRecord[], size: number, before?: Date) => {
     const sorted = [...list].sort((a, b) => (b.createdAt?.getTime() ?? 0) - (a.createdAt?.getTime() ?? 0));
     const from = before ? sorted.filter((r) => (r.createdAt?.getTime() ?? 0) < before.getTime()) : sorted;
@@ -267,15 +235,10 @@ export function createFakeTeacherApi(options: { now?: () => number; classes?: Cl
     createClass: (input: NewClassInput) =>
       call('createClass', [input], () => {
         const code = `NEW${String(classes.size + 1).padStart(3, '0')}`.replace(/[^BCDFGHJKLMNPQRSTVWXZ3479]/g, 'B');
-        const roster: Record<string, string> = {};
-        for (const e of input.students) roster[e.studentId] = e.username;
-        const tasks: Record<string, string> = {};
-        for (const title of input.tasks) tasks[newTaskId(tasks, randomBytes)] = title;
-        const detail = makeClass({ code, name: input.name, teacherName: input.teacherName, joinOpen: input.joinOpen, createdAt: new Date(now()), keepWeeks: input.keepWeeks });
-        const full: ClassDetail = { ...detail, roster, students: sortedRoster(roster), tasks: sortedTasks(tasks), studentCount: input.students.length };
-        classes.set(code, full);
+        const detail = makeClass({ code, name: input.name, createdAt: new Date(now()), keepWeeks: input.keepWeeks });
+        classes.set(code, detail);
         api.emitClasses();
-        return full;
+        return detail;
       }),
     watchClass(code, onChange, onError) {
       record('watchClass', [code]);
@@ -283,48 +246,7 @@ export function createFakeTeacherApi(options: { now?: () => number; classes?: Cl
       queueMicrotask(() => onChange(classes.get(code) ?? null));
       return unsub;
     },
-    updateClass: (code, patch) =>
-      call('updateClass', [code, patch], () => {
-        const fields: Partial<ClassDetail> = { ...patch };
-        if (patch.joinOpen !== undefined) fields.joinWindowAt = null;
-        update(code, fields);
-      }),
-    openJoinWindow: (code) => call('openJoinWindow', [code], () => update(code, { joinWindowAt: new Date(now()) })),
-    closeJoining: (code) => call('closeJoining', [code], () => update(code, { joinOpen: false, joinWindowAt: null })),
-    letRejoin: (code, studentId) => call('letRejoin', [code, studentId], () => update(code, { rejoin: { ...cls(code).rejoin, [studentId]: new Date(now()) } })),
-
-    addStudents: (code, entries: RosterEntry[]) =>
-      call('addStudents', [code, entries], () => {
-        const roster = { ...cls(code).roster };
-        for (const e of entries) roster[e.studentId] = e.username;
-        update(code, { roster });
-      }),
-    renameStudent: (code, studentId, username) =>
-      call('renameStudent', [code, studentId, username], () => update(code, { roster: { ...cls(code).roster, [studentId]: username } })),
-    removeStudent: (code, studentId) =>
-      call('removeStudent', [code, studentId], () => {
-        const roster = { ...cls(code).roster };
-        delete roster[studentId];
-        const rejoin = { ...cls(code).rejoin };
-        delete rejoin[studentId];
-        members.set(code, (members.get(code) ?? []).filter((m) => m.studentId !== studentId));
-        update(code, { roster, rejoin });
-        api.emitMembers(code);
-      }),
-    addTasks: (code, entries) =>
-      call('addTasks', [code, entries], () => {
-        const tasks = tasksMap(cls(code));
-        for (const t of entries) tasks[t.taskId] = t.title;
-        update(code, { tasks: sortedTasks(tasks) });
-      }),
-    renameTask: (code, taskId, title) =>
-      call('renameTask', [code, taskId, title], () => update(code, { tasks: sortedTasks({ ...tasksMap(cls(code)), [taskId]: title }) })),
-    deleteTask: (code, taskId) =>
-      call('deleteTask', [code, taskId], () => {
-        const tasks = tasksMap(cls(code));
-        delete tasks[taskId];
-        update(code, { tasks: sortedTasks(tasks), currentTaskId: cls(code).currentTaskId === taskId ? '' : cls(code).currentTaskId });
-      }),
+    updateClass: (code, patch) => call('updateClass', [code, patch], () => update(code, { ...patch })),
 
     watchMembers(code, onChange, onError) {
       record('watchMembers', [code]);
@@ -364,32 +286,14 @@ export function createFakeTeacherApi(options: { now?: () => number; classes?: Cl
           pageArg?.before,
         ),
       ),
-    studentHandins: (code, studentId, pageArg) =>
-      call('studentHandins', [code, studentId, pageArg], () =>
+    studentHandins: (code, nameKey, pageArg) =>
+      call('studentHandins', [code, nameKey, pageArg], () =>
         page(
-          (handins.get(code) ?? []).filter((r) => r.studentId === studentId),
+          (handins.get(code) ?? []).filter((r) => r.nameKey === nameKey),
           LIMITS.studentPage,
           pageArg?.before,
         ),
       ),
-    refileHandin: (code, id, patch) =>
-      call('refileHandin', [code, id, patch], () => {
-        const list = handins.get(code) ?? [];
-        const c = cls(code);
-        handins.set(
-          code,
-          list.map((r) =>
-            r.id === id
-              ? {
-                  ...r,
-                  ...(patch.studentId !== undefined ? { studentId: patch.studentId, username: c.roster[patch.studentId] ?? r.username } : {}),
-                  ...(patch.taskId !== undefined ? { taskId: patch.taskId } : {}),
-                }
-              : r,
-          ),
-        );
-        api.emitToday(code, { modified: [id] });
-      }),
     deleteHandin: (code, id) =>
       call('deleteHandin', [code, id], () => {
         handins.set(code, (handins.get(code) ?? []).filter((r) => r.id !== id));
@@ -403,7 +307,7 @@ export function createFakeTeacherApi(options: { now?: () => number; classes?: Cl
         onProgress?.(0, 340);
         onProgress?.(120, 340);
         if (api.deleteClassResult === 'more') {
-          update(code, { deleting: true, joinOpen: false, joinWindowAt: null });
+          update(code, { deleting: true, handinsOpen: false });
           return 'more' as const;
         }
         classes.delete(code);
@@ -479,5 +383,3 @@ export function createFakeTeacherApi(options: { now?: () => number; classes?: Cl
   };
   return api;
 }
-
-export { newStudentId };

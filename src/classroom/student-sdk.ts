@@ -22,6 +22,7 @@ export {
   getDoc,
   getDocs,
   setDoc,
+  updateDoc,
   writeBatch,
   query,
   where,

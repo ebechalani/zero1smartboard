@@ -694,7 +694,7 @@ WCAG AA on its background). Responsive grid:
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
 │ header: ZERO1 Simulator · [Code|Blocks] · [＋ New] [Examples ▾] [▶ Run] │
-│   [■ Stop] [↺ Reset] [⚙ Settings] [📥 Hand in · ali.k] [🔗 Share]     │
+│   [■ Stop] [↺ Reset] [⚙ Settings] [📥 Hand in · Ali K…] [🔗 Share]    │
 │   [∞ Arduino IDE] · run status                                        │
 ├───────────────────────────────┬─────────────────────────────────────┤
 │ board SVG (scales to fit)     │ tabs: Code | Serial Monitor |       │
@@ -714,8 +714,9 @@ move to rows of their own under the brand, the mode switch and the status.
 Below 1536 px the brand reads "ZERO1 Simulator" (`.z1-title-short`); the full
 name stays in `<title>` and in visually hidden text. **Hand in** exists only
 when the class platform is configured (`isClassroomConfigured()`,
-docs/CLASSROOM.md §1.1); while joined it reads "Hand in · ali.k" (the name
-part is cut at 9ch with an ellipsis, the `aria-label` has it whole).
+docs/CLASSROOM.md §1.1); while a name is remembered it reads "Hand in · Ali
+Khoury" (the name part is cut at 14ch with an ellipsis, the `aria-label` has
+it whole).
 
 ### 8.2 Board view (`board-view.ts`, `board-svg.ts`) — owner: board-svg
 
@@ -764,8 +765,8 @@ export function createBoardView(container: HTMLElement, board: Zero1Board): Boar
   running sketch. URL hash `#code=<base64url>` loads shared code.
 - Share dialog (`share-dialog.ts`, opened by the "Share" button): the
   `#code=` / `#blocks=` link with **Copy link**, and **Download .ino**, which
-  saves `sketchFileName()` (`sketch-file.ts`) named after the joined class
-  username (`currentUsername()`, `src/classroom/session-store.ts`). When the
+  saves `sketchFileName()` (`sketch-file.ts`) named after the student's
+  remembered name (`currentStudentName()`, `src/classroom/session-store.ts`). When the
   class platform is configured one line points to Hand in; a small line
   always tells teachers about the class dashboard (`teacher.html`). The
   former email sending (a Google Apps Script relay) is gone; `main.ts`
@@ -777,24 +778,22 @@ export function createBoardView(container: HTMLElement, board: Zero1Board): Boar
   untouched example with its title) and `errorCount` from a synchronous
   `transpile()`. The dialog loads `src/classroom/student.ts` with `import()`
   on first open and calls `restore()`; nothing is downloaded while no session
-  is saved. Views: Loading → Code (class code, checked locally with
-  `normalizeClassCode` / `codeProblem`) → Pick your name (radio list, filter
-  above 12 names, Refresh the list, local `joinStatus` check) or Already
-  joined; Confirm ("Hand in to 8B Robotics as ali.k?", shown in a new tab or
-  after 20 minutes); Ready (task select, title, note, the example / blank
-  warning that needs a second click, the error-count note, "Hand in as
-  ali.k"); Success (title and task kept for the next hand-in, note cleared);
-  My hand-ins (lazy, 20 per page, Open → `location.hash = handinHash(...)`
-  so the existing `hashchange` handler asks before replacing work); Sign out
-  (`leave()`, then the Code view). A hand-in keeps one `newHandinId()` per
-  draft so Try again after a timeout reuses it; after the request timeout the
-  status reads "Checking whether it arrived…". Every error shows its §1.5
-  text; `not_on_roster`, `device_removed`, `class_deleted`, `handins_closed`
-  and `lost_identity` get their own button. `onSessionChange` updates the
-  header label. A `#class=<code>` link (`takeHashPayload`, also on
-  `hashchange`) opens the dialog in join mode with the code, or shows the
-  "Classes are not set up on this site." toast when not configured. All
-  class strings are rendered with `textContent`.
+  is saved. One short flow (simplified by teacher decision, 2026-09-27):
+  Loading → Code (class code, checked locally with `normalizeClassCode` /
+  `codeProblem`) → Name (first name + last name, prefilled with the name this
+  device gave before; Hand in = `join()` then the send) → Success ("✓ Handed
+  in · 14:32 · Your teacher can see it now."). A device that remembers a
+  name opens on Ready ("Hand in as **Ali Khoury** to class **BKT-4M9**" with
+  Hand in and a small Change link, which is also the shared-computer check).
+  The untouched example / blank sketch is one confirm dialog; the error-count
+  note is shown. A hand-in keeps one `newHandinId()` per draft so Try again
+  after a timeout reuses it; after the request timeout the status reads
+  "Checking whether it arrived…". Every error shows its §1.5 text;
+  `device_removed`, `class_deleted` and `handins_closed` get their own button.
+  `onSessionChange` updates the header label. A `#class=<code>` link
+  (`takeHashPayload`, also on `hashchange`) opens the dialog with the code
+  prefilled, or shows the "Classes are not set up on this site." toast when
+  not configured. All class strings are rendered with `textContent`.
 - Arduino IDE dialog (`arduino-ide-dialog.ts`, opened by the "Arduino IDE"
   button with the editor text, or in Blocks mode the sketch generated from
   the blocks — the same `exportSketch()` as Share). A web page cannot start
@@ -913,6 +912,44 @@ teacher would show a beginner: comments, constants for pins, small functions):
    `33_dimmer.ino` (potentiometer → servo angle + RGB brightness + 7-seg level 0-9);
    `34_i2c_scanner.ino` (Wire scanner printing found addresses — expected 0x27).
 
+Part-by-part groups (listed after the four lesson groups, one short beginner
+sketch per bullet of the teacher's list; "Button A" / "Button B" are Button 1
+on D6 / Button 2 on D7):
+
+5. **LED** — `40_led_blink_red.ino` (1 s on / 1 s off); `41_led_red_green.ino`
+   (red and green alternate every 500 ms, never both on);
+   `42_led_blink_10_times.ino` (for loop in setup() blinks 10 times, prints `Done`).
+6. **Buzzer** — `43_buzzer_short_beeps.ino` (100 ms beep every 600 ms, active
+   buzzer via digitalWrite); `44_buzzer_beep_10_times.ino` (exactly 10 beeps);
+   `45_buzzer_led_10_times.ino` (buzzer + red LED together, 10 times).
+7. **Push Button** — `46_button_a_red_led.ino` / `47_button_b_red_led.ino`
+   (red LED while the button is held); `48_button_a_short_beep.ino` (100 ms
+   beep) / `49_button_b_long_beep.ino` (1 s beep).
+8. **RGB LED** — `50_rgb_red_green_blue.ino` (red → green → blue, 500 ms each);
+   `51_rgb_buttons.ino` (Button A red, Button B green, else off).
+9. **LDR** — `52_ldr_serial.ino` (prints `LDR: <adc>` every 200 ms);
+   `53_ldr_red_green.ino` (red below 500, green at 500 or above); both tell the
+   student to flip the POT / LDR switch to LDR.
+10. **Seven-Segment** — `54_seg_button_a_1_to_4.ino` (Button A → 1, 2, 3, 4, one
+    per second, then blank); `55_seg_button_b_7_to_1.ino` (Button B → 7 … 1);
+    same `DIGITS[]` table and `shiftOut()` as `05`.
+11. **Ultrasonic** — `56_ultrasonic_serial.ino` (distance every 300 ms);
+    `57_ultrasonic_red_near.ino` (red < 10 cm); `58_ultrasonic_green_far.ino`
+    (green > 10 cm); `59_ultrasonic_beep_rate.ino` (50 ms beeps, pause =
+    `map(constrain(cm, 5, 100), 5, 100, 50, 1000)` ms).
+12. **Servo Motor** — `60_servo_button_a_0.ino` (starts at 90°, Button A → 0°);
+    `61_servo_button_b_90.ino` (starts at 0°, Button B → 90°);
+    `62_servo_ultrasonic_10_times.ino` (10 checks every 500 ms: < 10 cm → 180°
+    else 0°, then `Done`).
+13. **DHT Sensor** — `63_dht_serial.ino` (temperature and humidity on two lines
+    every 2 s); `64_dht_servo_slow.ino` (> 28 °C → servo 0° → 180° one degree
+    every 20 ms, else 0°).
+14. **DC Motor** — `65_motor_button_a_5_times.ino` (Button A → 5 runs of 500 ms
+    with 500 ms stops); `66_motor_button_b_5_times_slow.ino` (Button B → 5 runs
+    of 1 s with 1 s stops). The board wires only IN1 of the motor driver (A0),
+    so the motor cannot run backward: the second sketch changes the rhythm
+    instead of the direction and its header explains why.
+
 Every sketch must transpile and run in the simulator; the examples agent
 cannot run them yet, so keep to the subset in §4.2 and the APIs in §5–6, and
 describe in the header comment the exact expected observable behaviour (used
@@ -950,16 +987,16 @@ the part between the UI (Hand in dialog, teacher dashboard) and Firebase.
 src/firebase-config.ts        public web config, APP_CHECK_SITE_KEY, CLASSROOM_DEFAULTS
 src/share-link.ts             #code= / #blocks= / #class= links, review payload (pure)
 src/classroom/
-  model.ts                    types, LIMITS, class codes, usernames, rosters, tasks, joinStatus,
-                              cleanLine/cleanMultiline, deviceLabel, document readers (pure)
+  model.ts                    types, LIMITS, class codes, student names (cleanName, nameProblem, nameKeyOf),
+                              cleanLine, deviceLabel, document readers (pure)
   codec.ts                    encodeContent / decodeContent: gzip bytes or plain strings, capped inflate (pure)
   errors.ts                   ClassroomError, toClassroomError, withTimeout, the text tables, quotaResetText (pure)
-  session-store.ts            z1.classroom in localStorage, the last code, the per-tab confirm flag (pure)
+  session-store.ts            z1.classroom (v2: code + first/last name) in localStorage, the last code (pure)
   firebase.ts                 isClassroomConfigured(), lazy loaders of the two named apps, App Check, emulators
   student-sdk.ts              the ONLY import of firebase/app, auth, firestore/lite, app-check (loaded with import())
   teacher-sdk.ts              the ONLY import of firebase/app, auth, firestore, app-check (loaded with import())
-  student.ts                  createStudentApi(): restore, findClass, join, handIn (idempotent retry), myHandins, leave
-  teacher.ts                  createTeacherApi(): sign-in, classes, roster, tasks, members, hand-ins, retention, deletion
+  student.ts                  createStudentApi(): restore, findClass, join (create or rename the member doc), handIn (idempotent retry), forget
+  teacher.ts                  createTeacherApi(): sign-in, classes, members, hand-ins (by nameKey), retention, deletion
 ```
 
 - **Bundle boundary.** Nothing reachable by static imports from a page entry imports
@@ -969,6 +1006,10 @@ src/classroom/
 - **Two named apps.** `z1-student` (Firestore Lite, anonymous auth persisted in IndexedDB)
   and `z1-teacher` (full SDK with the memory cache, session-only auth persistence). A
   teacher session and a student session never replace each other.
+- **Names, not a roster.** A student's `firstName` / `lastName` / `nameKey` live on the
+  member doc (`members/{uid}`, created by the student, renamed in place on "Change") and
+  are copied onto every hand-in; the rules require the copy to match the member doc.
+  Anyone with the code can hand in under any name (CLASSROOM §3.5).
 - **Hand-in batch.** One document per hand-in plus the member counter tick, in one batch
   whose id the dialog makes before sending (`newHandinId()`) and reuses on retry; the rules
   tie the two writes together and refuse a second commit with the same id. After a timeout
@@ -980,7 +1021,7 @@ src/classroom/
   `vite --mode emulator` (`.env.emulator`) points both apps at the local emulators.
 - **Tests.** `tests/classroom-*.test.ts`, `tests/share-link.test.ts` and
   `tests/bundle-boundary.test.ts` run with `npm test` (fakes only). `tests-emulator/`
-  holds the security-rules suite (78 cases), the API integration tests and the end-to-end
+  holds the security-rules suite (62 cases), the API integration tests and the end-to-end
   flow; they need the Firebase emulators: `npm run test:emulator` (Java 21), or
   `npm run test:rules` for the rules alone. `tests-emulator/mutations.sh` checks that each
   weakened copy of the rules in `tests-emulator/mutations/` makes a test fail.
@@ -1004,17 +1045,18 @@ src/teacher/
   context.ts      DashboardContext: API, clock, storages, download / copy / confirm hooks, banner,
                   toast, save() ("Saving…", the 10 s waiting text, SAVE_FAILED), tracked timers
   session.ts      ClassSession: watchClass + watchTodayHandins (or the one-off period view), the
-                  members listener while a view needs it, the decode cache, the New/Seen marks
-  class-page.ts   the class header (code, joining control with the server-time countdown, hand-ins
-                  switch, current task), Show to the class overlay, the tabs, the retention check
-  overview.ts     T5: period/task/sort, "n of m handed in", one row per student, Open / .ino, zips
-  detail.ts       T6: versions, Load older (studentHandins), Open / .ino / Copy, Move to…, Delete;
-                  openLink() and inoButton() shared with the Overview
-  feed.ts         T7: All hand-ins, "(removed) name", filters
-  students.ts     T8: roster table, computers, Rename / Let join again / Remove, Add students
-  settings.ts     T9: names, keepWeeks, tasks, Delete class (code confirm, progress, Finish deleting)
-  roster-form.ts  the student-list textarea + "Shorten last names" + planRosterAdd preview; tasks form
-  handins.ts      DecodeCache, overviewRows(), review payload / link, .ino names, zip entries
+                  members listener while a view needs it, the decode cache, the New/Seen marks (by
+                  nameKey), the memoised review links (one #rid= handoff per hand-in), loadAll()
+  class-page.ts   the class header (code, hand-ins switch), Show to the class overlay, the three
+                  tabs, the retention check (its download pages through every old hand-in)
+  overview.ts     T5: period/sort, "n students handed in", one row per name ("Last, First", grouped
+                  by nameKey), Open / .ino, zips
+  detail.ts       T6: versions, Load older (studentHandins by nameKey), Open / .ino / Copy, Remove
+                  computer, Delete; openLink() and inoButton() shared with the Overview
+  feed.ts         T7: All hand-ins, filter by student
+  settings.ts     T9: class name, hand-ins switch, keepWeeks, Delete class ("Download everything
+                  first" pages through every hand-in; code confirm, progress, Finish deleting)
+  handins.ts      DecodeCache, overviewRows() by nameKey, review payload / link, .ino names, zip entries
   zip.ts          makeZip(): store-only zip, CRC-32, UTF-8 names; uniqueName()
   format.ts       time texts, storage keys (z1.teacher.*), storage access that never throws, el()
 review.html, src/review/main.ts, page.ts, review.css
@@ -1026,14 +1068,15 @@ review.html, src/review/main.ts, page.ts, review.css
 
 - **No await between a click and its effect.** Every record is decoded once when it
   arrives (`DecodeCache`); Open is a real `<a target="_blank" rel="noopener noreferrer">`
-  whose `href` is computed at render time (large payloads write their `z1.review.<rid>`
-  handoff at render time too), `.ino` and Copy are enabled only once decoded, and
+  whose `href` is computed at render time (a large payload writes its `z1.review.<rid>`
+  handoff once, memoised per hand-in on the session), `.ino` and Copy are enabled only once decoded, and
   `signIn()` / `deleteAccount()` are the first statement of their click handlers.
 - **Listeners.** One `watchClasses` while signed in; the open class has `watchClass` and,
-  in the Today view, `watchTodayHandins`; `watchMembers` runs only while the Students tab or
-  the overlay is visible. Switching class keeps the previous session for 10 minutes (one at
+  in the Today view, `watchTodayHandins`; `watchMembers` runs only while a detail panel is
+  shown (device labels). Switching class keeps the previous session for 10 minutes (one at
   most). Sign out stops everything and clears the review handoffs.
-- **Storage.** `z1.teacher.lastClass`, `z1.teacher.period.<code>`, `z1.teacher.seen.<code>`
+- **Storage.** `z1.teacher.lastClass` (re-opened only when it is one of the signed-in
+  teacher's classes), `z1.teacher.period.<code>`, `z1.teacher.seen.<code>`
   in localStorage, `z1.teacher.pruned.<code>` in sessionStorage; all reads and writes are
   wrapped, so a blocked storage only loses the conveniences.
 - **Tests.** `tests/teacher-dashboard.test.ts` (happy-dom, with `tests/fakes/fake-teacher-api.ts`:

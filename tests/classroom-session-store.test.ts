@@ -1,18 +1,15 @@
 /**
  * src/classroom/session-store.ts (docs/CLASSROOM.md §2.13, §7.2): the saved session, the last
- * code, the tab flag, and storages that throw.
+ * code, and storages that throw.
  */
 import { describe, expect, it } from 'vitest';
 import {
   CLASSROOM_STORAGE_KEY,
-  CONFIRMED_SESSION_KEY,
   LAST_CODE_STORAGE_KEY,
   clearSession,
-  currentUsername,
-  isConfirmedInTab,
+  currentStudentName,
   loadLastCode,
   loadSavedSession,
-  markConfirmedInTab,
   saveLastCode,
   saveSession,
   type SavedSession,
@@ -20,16 +17,14 @@ import {
 import { memoryStorage, throwingStorage } from './classroom-fakes';
 
 const SESSION: SavedSession = {
-  v: 1,
+  v: 2,
   code: 'BKT4M9',
   className: '8B Robotics',
-  teacherName: 'Mr. B',
-  studentId: 'aaaaaaa1',
-  username: 'ali.k',
+  firstName: 'Ali',
+  lastName: 'Khoury',
   uid: 'anon-1',
   lastUsedAt: 1_700_000_000_000,
   lastHandinAt: 0,
-  lastHandinTitle: '',
 };
 
 describe('saved session', () => {
@@ -38,15 +33,16 @@ describe('saved session', () => {
     saveSession(SESSION, storage);
     expect(JSON.parse(storage.getItem(CLASSROOM_STORAGE_KEY)!)).toEqual(SESSION);
     expect(loadSavedSession(storage)).toEqual(SESSION);
-    expect(currentUsername(storage)).toBe('ali.k');
+    expect(currentStudentName(storage)).toBe('Ali Khoury');
   });
-  it('is null when nothing is saved, on bad JSON, a wrong version or a wrong shape', () => {
+  it('is null when nothing is saved, on bad JSON, an older version or a wrong shape', () => {
     const storage = memoryStorage();
     expect(loadSavedSession(storage)).toBeNull();
-    expect(currentUsername(storage)).toBe('');
+    expect(currentStudentName(storage)).toBe('');
     storage.setItem(CLASSROOM_STORAGE_KEY, '{not json');
     expect(loadSavedSession(storage)).toBeNull();
-    storage.setItem(CLASSROOM_STORAGE_KEY, JSON.stringify({ ...SESSION, v: 2 }));
+    // A v1 session (roster usernames) from before the simplification is simply dropped.
+    storage.setItem(CLASSROOM_STORAGE_KEY, JSON.stringify({ v: 1, code: 'BKT4M9', className: '8B', teacherName: '', studentId: 'x', username: 'ali.k', uid: 'u', lastUsedAt: 0, lastHandinAt: 0, lastHandinTitle: '' }));
     expect(loadSavedSession(storage)).toBeNull();
     storage.setItem(CLASSROOM_STORAGE_KEY, JSON.stringify({ ...SESSION, uid: 7 }));
     expect(loadSavedSession(storage)).toBeNull();
@@ -62,15 +58,12 @@ describe('saved session', () => {
     storage.setItem(CLASSROOM_STORAGE_KEY, JSON.stringify({ ...SESSION, extra: true }));
     expect(loadSavedSession(storage)).toEqual(SESSION);
   });
-  it('clears the session and the tab flag, keeps the last code', () => {
+  it('clears the session, keeps the last code', () => {
     const storage = memoryStorage();
-    const tab = memoryStorage();
     saveSession(SESSION, storage);
     saveLastCode('BKT4M9', storage);
-    markConfirmedInTab('anon-1', tab);
-    clearSession(storage, tab);
+    clearSession(storage);
     expect(loadSavedSession(storage)).toBeNull();
-    expect(isConfirmedInTab('anon-1', tab)).toBe(false);
     expect(loadLastCode(storage)).toBe('BKT4M9');
   });
   it('survives a storage that throws', () => {
@@ -79,14 +72,12 @@ describe('saved session', () => {
     expect(loadSavedSession(storage)).toBeNull();
     expect(loadLastCode(storage)).toBe('');
     expect(() => saveLastCode('BKT4M9', storage)).not.toThrow();
-    expect(() => clearSession(storage, storage)).not.toThrow();
-    expect(isConfirmedInTab('anon-1', storage)).toBe(false);
-    expect(() => markConfirmedInTab('anon-1', storage)).not.toThrow();
-    expect(currentUsername(storage)).toBe('');
+    expect(() => clearSession(storage)).not.toThrow();
+    expect(currentStudentName(storage)).toBe('');
   });
 });
 
-describe('last code and tab flag', () => {
+describe('last code', () => {
   it('stores the last code; an empty code removes it', () => {
     const storage = memoryStorage();
     expect(loadLastCode(storage)).toBe('');
@@ -94,14 +85,5 @@ describe('last code and tab flag', () => {
     expect(storage.getItem(LAST_CODE_STORAGE_KEY)).toBe('BKT4M9');
     saveLastCode('', storage);
     expect(storage.getItem(LAST_CODE_STORAGE_KEY)).toBeNull();
-  });
-  it('the tab flag is per uid', () => {
-    const tab = memoryStorage();
-    expect(isConfirmedInTab('anon-1', tab)).toBe(false);
-    markConfirmedInTab('anon-1', tab);
-    expect(tab.getItem(CONFIRMED_SESSION_KEY)).toBe('anon-1');
-    expect(isConfirmedInTab('anon-1', tab)).toBe(true);
-    expect(isConfirmedInTab('anon-2', tab)).toBe(false);
-    expect(isConfirmedInTab('', tab)).toBe(false);
   });
 });

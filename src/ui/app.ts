@@ -46,8 +46,9 @@ import { createExamplesMenu, type ExamplesMenu } from './examples-menu';
 import { createBuzzerAudio, loadMuted, saveMuted, type BuzzerAudio } from './audio';
 import { isClassroomConfigured } from '../classroom/firebase';
 import { STUDENT_ERROR_TEXT } from '../classroom/errors';
-import { currentUsername } from '../classroom/session-store';
-import { classFromHash, handinHash, parseWorkspaceJson } from '../share-link';
+import { currentStudentName } from '../classroom/session-store';
+import { classFromHash, parseWorkspaceJson } from '../share-link';
+import { installUploadButton, type InstalledUploadButton } from '../upload';
 
 /** What "New" puts in the editor: exactly the Arduino IDE's File > New. */
 export const BLANK_SKETCH = `void setup() {
@@ -153,6 +154,8 @@ export class App {
   private readonly settings: SettingsDialog;
   private readonly shareDialog: ShareDialog;
   private readonly ideDialog: ArduinoIdeDialog;
+  /** "Upload to board" (shown only in browsers with Web Serial and when the toolchain is deployed). */
+  private readonly uploadButton: InstalledUploadButton;
   /** The Hand in dialog of the class platform; null while it is not configured (no button either). */
   private readonly handinDialog: HandinDialog | null;
   private readonly examplesMenu: ExamplesMenu<Example | BlockExample>;
@@ -280,13 +283,17 @@ export class App {
 
     this.shareDialog = createShareDialog(root);
     this.ideDialog = createArduinoIdeDialog(root);
+    this.uploadButton = installUploadButton({
+      button: this.slot<HTMLButtonElement>('upload'),
+      parent: root,
+      getSketch: () => this.exportSketch(),
+      onConsole: (msg) => this.consolePanel.push(msg),
+      toast: (text) => this.toast(text),
+    });
     this.handinDialog =
       !review && isClassroomConfigured()
         ? createHandinDialog(root, {
-            openWork: (content) => {
-              location.hash = handinHash(content).hash; // onHashChange asks before replacing work
-            },
-            onSessionChange: (username) => this.setHandinName(username),
+            onSessionChange: (name) => this.setHandinName(name),
             onAppUpdated: () => this.showUpdatePrompt(),
             toast: (text) => this.toast(text),
           })
@@ -307,12 +314,13 @@ export class App {
     this.slot('ide').addEventListener('click', () => this.openInIde());
     if (this.handinDialog) {
       this.slot('handin').addEventListener('click', () => this.handIn());
-      this.setHandinName(currentUsername()); // the previous student's name shows until they sign out
+      this.setHandinName(currentStudentName()); // the previous student's name shows until they press Change
     }
     this.slot('reload').addEventListener('click', () => location.reload());
     if (review) {
       // The teacher reviews one hand-in: no new work, no examples, no links out of the sandbox.
       for (const slot of ['new', 'examples', 'share', 'ide']) this.slot(slot).hidden = true;
+      this.uploadButton.dispose(); // review mode: no upload from a hand-in
     }
     for (const mode of MODES) this.modeButtons.get(mode)!.addEventListener('click', () => void this.switchMode(mode));
 
@@ -898,13 +906,13 @@ export class App {
     return example ? { kind: 'example', title: example.title } : null;
   }
 
-  /** The header button reads "Hand in · ali.k" while joined, "Hand in" otherwise. */
-  private setHandinName(username: string): void {
+  /** The header button reads "Hand in · Ali Khoury" while a name is remembered, "Hand in" otherwise. */
+  private setHandinName(studentName: string): void {
     const button = this.slot<HTMLButtonElement>('handin');
     const name = button.querySelector<HTMLElement>('.z1-handin-name')!;
-    name.textContent = username ? ` · ${username}` : '';
-    button.setAttribute('aria-label', username ? `Hand in as ${username} to your class` : 'Hand in your work to your teacher');
-    button.title = username ? `Hand in: send this work to your teacher as ${username}` : 'Hand in: send this work to your teacher';
+    name.textContent = studentName ? ` · ${studentName}` : '';
+    button.setAttribute('aria-label', studentName ? `Hand in as ${studentName} to your class` : 'Hand in your work to your teacher');
+    button.title = studentName ? `Hand in: send this work to your teacher as ${studentName}` : 'Hand in: send this work to your teacher';
   }
 
   /** Header "Arduino IDE": download / save / copy the sketch for the desktop Arduino IDE. */
@@ -988,7 +996,15 @@ export class App {
   private readonly onKeyDown = (e: KeyboardEvent): void => {
     if (e.defaultPrevented) return;
     // Keys pressed in a dialog are for the dialog (Esc closes it), never for the sketch behind it.
-    if (this.settings.element.open || this.shareDialog.isOpen() || this.ideDialog.isOpen() || this.handinDialog?.isOpen()) return;
+    if (
+      this.settings.element.open ||
+      this.shareDialog.isOpen() ||
+      this.ideDialog.isOpen() ||
+      this.uploadButton.isOpen() ||
+      this.handinDialog?.isOpen()
+    ) {
+      return;
+    }
     if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
       e.preventDefault();
       void this.run();
@@ -1080,6 +1096,7 @@ export class App {
     window.removeEventListener('vite:preloadError', this.onPreloadError);
     if (this.reviewListener) window.removeEventListener('message', this.reviewListener);
     void this.stopExecutor();
+    this.uploadButton.dispose();
     this.audio.dispose();
     this.boardView.destroy();
     this.examplesMenu.destroy();
@@ -1149,6 +1166,7 @@ export class App {
             ${handin}
             <button type="button" class="z1-btn" data-slot="share" aria-label="Share your work" title="Share: copy the link or download an .ino file"><span aria-hidden="true">🔗</span> Share</button>
             <button type="button" class="z1-btn" data-slot="ide" aria-label="Open this sketch in the Arduino IDE" title="Open in the Arduino IDE"><span aria-hidden="true">∞</span> Arduino IDE</button>
+            <button type="button" class="z1-btn" data-slot="upload" aria-label="Upload this sketch to the ZERO1 board" title="Compile in the browser and upload to the board over USB" hidden><span aria-hidden="true">⬆</span> Upload to board</button>
           </nav>
           <div class="z1-run-status" data-slot="status" data-status="idle" role="status" aria-live="polite">
             <span class="z1-run-dot" aria-hidden="true"></span>

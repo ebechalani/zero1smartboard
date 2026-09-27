@@ -23,18 +23,16 @@ export type ClassroomErrorCode =
   | 'index_missing'
   | 'bad_code'
   | 'class_not_found'
-  | 'class_closed'
   | 'handins_closed'
   | 'class_deleted'
   | 'lost_identity'
-  | 'not_on_roster'
   | 'device_removed'
   | 'too_soon'
   | 'limit_reached'
   | 'empty_sketch'
   | 'too_large'
   | 'code_collision'
-  | 'bad_roster'
+  | 'bad_name'
   | 'classes_left'
   | 'permission'
   | 'unknown';
@@ -141,19 +139,16 @@ export const STUDENT_ERROR_TEXT: Readonly<Record<ClassroomErrorCode, string>> = 
   index_missing: 'The class platform is not fully set up yet. Tell your teacher.',
   bad_code: 'A class code has 6 letters and digits, like BKT-4M9. Check it with your teacher.',
   class_not_found: 'There is no class with the code {code}. Check the code with your teacher.',
-  class_closed: 'Joining {class} is closed right now. Ask your teacher to open joining for a few minutes.',
   handins_closed: '{class} no longer accepts hand-ins. If you have a new class code, choose Different class.',
   class_deleted: 'This class no longer exists.',
-  lost_identity: 'This computer lost its class sign-in. Pick your name again.',
-  not_on_roster: 'Your name is no longer on the class list. Pick your name again.',
-  device_removed: 'Your teacher removed this computer from the class. Join again.',
+  lost_identity: 'This computer lost its class sign-in. Enter the class code and your name again.',
+  device_removed: 'Your teacher removed this computer from the class. Enter your name again.',
   too_soon: 'Wait a few seconds before handing in again.',
-  limit_reached:
-    'This computer has handed in 300 times in this class. Ask your teacher to let you join again, then sign out and join again.',
+  limit_reached: 'This computer has handed in 300 times in this class. Tell your teacher.',
   empty_sketch: 'Your sketch is empty. There is nothing to hand in yet.',
   too_large: 'Your work is too big to hand in (more than 50,000 characters of code). Use Share → Download .ino instead.',
   code_collision: 'Could not find a free class code. Try again.',
-  bad_roster: 'Some usernames are not valid. Fix the list and try again.',
+  bad_name: 'Type your first name and your last name (letters only, up to 30 characters each).',
   classes_left: 'Delete all your classes first (step 1).',
   permission: 'The class did not accept this. Try again; if it keeps failing, tell your teacher.',
   unknown: 'Something went wrong. Try again.',
@@ -180,18 +175,16 @@ export const TEACHER_ERROR_TEXT: Readonly<Record<ClassroomErrorCode, string>> = 
     'The database is missing an index. The site maintainer must deploy firestore.indexes.json (docs/CLASSROOM.md, step 7).',
   bad_code: 'That is not a valid class code.',
   class_not_found: 'This class no longer exists.',
-  class_closed: 'Joining this class is closed.',
   handins_closed: 'This class no longer accepts hand-ins.',
   class_deleted: 'This class no longer exists.',
   lost_identity: 'The sign-in was lost. Sign in again.',
-  not_on_roster: 'This student is no longer on the class list.',
   device_removed: 'This computer was removed from the class.',
   too_soon: 'Wait a few seconds and try again.',
   limit_reached: 'This computer has reached its hand-in limit.',
   empty_sketch: 'The sketch is empty.',
   too_large: 'This hand-in is larger than the simulator accepts.',
   code_collision: 'Could not find a free class code. Try again.',
-  bad_roster: 'Some usernames are not valid. Fix the list and try again.',
+  bad_name: 'That name is not valid.',
   classes_left: 'Delete all your classes first (step 1).',
   permission: 'You do not have access to this class. Sign in with the account that created it.',
   unknown: 'Something went wrong: {message}. Try again.',

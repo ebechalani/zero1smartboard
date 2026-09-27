@@ -4,11 +4,11 @@
  * teacher is the job of the Hand in dialog (handin-dialog.ts, docs/CLASSROOM.md);
  * when the class platform is configured this dialog points there.
  *
- * File names carry the username of the joined class, when there is one
- * (session-store.ts `currentUsername()`).
+ * File names carry the name the student gave their class, when there is one
+ * (session-store.ts `currentStudentName()`).
  */
 import { isClassroomConfigured } from '../classroom/firebase';
-import { currentUsername } from '../classroom/session-store';
+import { currentStudentName } from '../classroom/session-store';
 import { downloadTextFile, sketchFileName } from './sketch-file';
 
 /** What is being shared: a hand-written sketch or a blocks program. */
@@ -43,7 +43,7 @@ export interface ShareDialogOptions {
   download?(fileName: string, text: string): void;
   /** Whether the class platform is set up (default: isClassroomConfigured()); shows the Hand in hint. */
   configured?: boolean;
-  /** The name in the file name (default: currentUsername()). */
+  /** The name in the file name (default: currentStudentName()). */
   studentName?(): string;
 }
 
@@ -66,7 +66,7 @@ function defaultCopyText(text: string): Promise<void> {
 export function createShareDialog(parent: HTMLElement, options: ShareDialogOptions = {}): ShareDialog {
   const copyText = options.copyText ?? defaultCopyText;
   const configured = options.configured ?? isClassroomConfigured();
-  const studentName = options.studentName ?? (() => currentUsername());
+  const studentName = options.studentName ?? (() => currentStudentName());
 
   const dialog = document.createElement('dialog');
   dialog.className = 'z1-dialog z1-share';

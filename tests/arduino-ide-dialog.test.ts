@@ -114,8 +114,8 @@ describe('Arduino IDE dialog', () => {
   });
 
   it('downloads a uniquely named .ino and shows the steps with that file name', () => {
-    // The joined class username (session-store) names the file.
-    saveSession({ v: 1, code: 'BKT4M9', className: '8B', teacherName: '', studentId: 'eli00001', username: 'elise.m', uid: 'u1', lastUsedAt: 0, lastHandinAt: 0, lastHandinTitle: '' });
+    // The student's remembered name (session-store) names the file.
+    saveSession({ v: 2, code: 'BKT4M9', className: '8B', firstName: 'Élise', lastName: 'M', uid: 'u1', lastUsedAt: 0, lastHandinAt: 0 });
     const m = mount();
     m.dialog.open({ code: SKETCH, kind: 'code' });
     const steps = m.el.querySelector<HTMLOListElement>('[data-role="steps"]')!;
@@ -129,10 +129,10 @@ describe('Arduino IDE dialog', () => {
 
     m.click('download');
     expect(m.download).toHaveBeenCalledTimes(1);
-    expect(m.download).toHaveBeenCalledWith('zero1_elise_m_0926_143205.ino', SKETCH);
+    expect(m.download).toHaveBeenCalledWith('zero1_Elise_M_0926_143205.ino', SKETCH);
     expect(steps.classList.contains('is-active')).toBe(true);
-    expect(steps.children[0].querySelector('b')!.textContent).toBe('zero1_elise_m_0926_143205.ino');
-    expect(m.status()).toContain('zero1_elise_m_0926_143205.ino');
+    expect(steps.children[0].querySelector('b')!.textContent).toBe('zero1_Elise_M_0926_143205.ino');
+    expect(m.status()).toContain('zero1_Elise_M_0926_143205.ino');
   });
 
   it('downloads once on a double click (the same name would be saved as "name (1).ino")', () => {

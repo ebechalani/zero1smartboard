@@ -105,7 +105,7 @@ describe('share dialog', () => {
     expect(document.activeElement).toBe(link);
   });
 
-  it('downloads the sketch as a unique .ino file named after the joined username', () => {
+  it('downloads the sketch as a unique .ino file named after the remembered student name', () => {
     vi.useFakeTimers({ now: NOW, toFake: ['Date'] });
     const { dialog, spies, status, click } = setup();
     dialog.open(payload);
@@ -113,22 +113,11 @@ describe('share dialog', () => {
     expect(spies.download).toHaveBeenLastCalledWith('zero1_0926_143205.ino', SKETCH);
     expect(status.textContent).toBe('Downloading zero1_0926_143205.ino');
 
-    saveSession({
-      v: 1,
-      code: 'BKT4M9',
-      className: '8B',
-      teacherName: '',
-      studentId: 'ali00001',
-      username: 'elise.m',
-      uid: 'u1',
-      lastUsedAt: 0,
-      lastHandinAt: 0,
-      lastHandinTitle: '',
-    });
+    saveSession({ v: 2, code: 'BKT4M9', className: '8B', firstName: 'Élise', lastName: 'M', uid: 'u1', lastUsedAt: 0, lastHandinAt: 0 });
     const joined = setup();
     joined.dialog.open(payload);
     joined.click('download');
-    expect(joined.spies.download).toHaveBeenLastCalledWith('zero1_elise_m_0926_143205.ino', SKETCH);
+    expect(joined.spies.download).toHaveBeenLastCalledWith('zero1_Elise_M_0926_143205.ino', SKETCH);
   });
 
   it('downloads once on a double click (the same name would be saved as "name (1).ino")', () => {

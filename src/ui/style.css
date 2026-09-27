@@ -1196,12 +1196,12 @@ input[type='range'] {
 }
 
 /* ---------------------------------------------------------- hand in dialog */
-/* handin-dialog.ts (docs/CLASSROOM.md §4.10): the class-code field, the name
-   list, the ready form with its warnings, the history rows and the status
-   line. The rest comes from .z1-dialog. */
+/* handin-dialog.ts (docs/CLASSROOM.md §4.10): the class-code field, the two
+   name fields, the work description with its warnings and the status line.
+   The rest comes from .z1-dialog. */
 
 .z1-dialog.z1-handin {
-  width: min(600px, calc(100vw - 32px));
+  width: min(560px, calc(100vw - 32px));
 }
 .z1-handin-view {
   display: flex;
@@ -1216,14 +1216,7 @@ input[type='range'] {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
-}
-/* "Hand in as <name>": a long name is cut with an ellipsis (the aria-label has it whole). */
-.z1-handin-submit {
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  gap: 8px 14px;
 }
 .z1-handin-code {
   width: 12ch;
@@ -1235,7 +1228,6 @@ input[type='range'] {
 .z1-handin input[aria-invalid='true'] {
   border-color: var(--error);
 }
-.z1-handin textarea,
 .z1-handin input[type='text']:not(.z1-handin-code) {
   width: 100%;
   font: inherit;
@@ -1245,12 +1237,13 @@ input[type='range'] {
   border-radius: 6px;
   padding: 5px 8px;
 }
-.z1-handin textarea {
-  min-height: 3.5em;
-  line-height: 1.4;
-  resize: vertical;
+/* First name and last name side by side; stacked on a phone. */
+.z1-handin-names {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
 }
-/* A button that reads like a link ("Refresh the list", "Not ali.k? Sign out"). */
+/* A button that reads like a link ("Change"). */
 .z1-linkbtn {
   padding: 0;
   border: 0;
@@ -1263,32 +1256,10 @@ input[type='range'] {
 .z1-linkbtn:hover {
   color: var(--accent-strong);
 }
-.z1-handin-list {
+.z1-handin-work {
   display: flex;
   flex-direction: column;
-  max-height: 50vh;
-  overflow-y: auto;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--bg);
-}
-.z1-handin-pick {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 10px;
-  border-bottom: 1px solid var(--border);
-  cursor: pointer;
-}
-.z1-handin-pick:last-child {
-  border-bottom: 0;
-}
-.z1-handin-pick:hover {
-  background: var(--accent-tint);
-}
-.z1-handin-pick:has(input:checked) {
-  background: var(--accent-tint);
-  font-weight: 600;
+  gap: 6px;
 }
 .z1-handin-error,
 .z1-handin-warning {
@@ -1319,45 +1290,11 @@ input[type='range'] {
 .z1-handin-status[data-tone='error'] {
   color: var(--error);
 }
-.z1-handin-history > summary {
-  cursor: pointer;
-  font-weight: 600;
-}
-.z1-handin-rows {
-  list-style: none;
-  margin: 8px 0;
-  padding: 0;
-}
-.z1-handin-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px 12px;
-  padding: 6px 0;
-  border-top: 1px solid var(--border);
-}
-.z1-handin-when {
-  color: var(--muted);
-  font-size: 13px;
-}
-.z1-handin-what {
-  flex: 1 1 160px;
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-.z1-handin-kind {
-  padding: 1px 8px;
-  border-radius: 999px;
-  background: var(--accent-tint);
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--accent-soft);
-}
 
-/* Header: the joined username after "Hand in", cut with an ellipsis. */
+/* Header: the remembered student name after "Hand in", cut with an ellipsis. */
 .z1-toolbar [data-slot='handin'] .z1-handin-name {
   display: inline-block;
-  max-width: 9ch;
+  max-width: 14ch;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

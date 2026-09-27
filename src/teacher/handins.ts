@@ -1,11 +1,11 @@
 /**
  * Hand-ins on the dashboard (docs/CLASSROOM.md §1.3 T5-T7, §4.13): the decode cache (every
  * record is inflated once, right after it arrives, so Open / .ino / Copy never await), the
- * per-student Overview rows, the review-page payload and the zip downloads. Pure apart from
- * decodeContent (CompressionStream) and Blob.
+ * per-student Overview rows (grouped by nameKey), the review-page payload and the zip downloads.
+ * Pure apart from decodeContent (CompressionStream) and Blob.
  */
 import { decodeContent, type DecodeResult } from '../classroom/codec';
-import { LIMITS, type HandinRecord, type RosterEntry } from '../classroom/model';
+import { LIMITS, fullName, listName, type HandinRecord } from '../classroom/model';
 import { reviewLink, type ReviewPayload } from '../share-link';
 import { sketchFileName } from '../ui/sketch-file';
 import { fileStamp } from './format';
@@ -57,13 +57,14 @@ export const DECODE_PROBLEM_TEXT: Readonly<Record<'too_large' | 'unsupported' | 
 // Overview rows
 // ---------------------------------------------------------------------------
 
-export type RowStatus = 'new' | 'seen' | 'none';
+export type RowStatus = 'new' | 'seen';
 export interface OverviewRow {
-  studentId: string;
-  username: string;
+  nameKey: string;
+  /** "Khoury, Ali" (from the newest hand-in of the group). */
+  name: string;
   status: RowStatus;
-  /** The newest hand-in in the view, or null. */
-  latest: HandinRecord | null;
+  /** The newest hand-in in the view. */
+  latest: HandinRecord;
   versions: number;
   /** Distinct device uids in the view. */
   computers: number;
@@ -78,20 +79,32 @@ export function newestFirst(a: HandinRecord, b: HandinRecord): number {
   return ms(b) - ms(a) || (a.id < b.id ? -1 : 1);
 }
 
+/** Plain code-unit order: the same on every device. */
+function compareText(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+/** "Khoury, Ali" of a record. */
+export function recordName(record: HandinRecord): string {
+  return listName(record.firstName, record.lastName);
+}
+
 /**
- * One row per roster student from the loaded view. `seen` maps studentId → createdAt ms of the
- * newest hand-in the teacher has looked at. A hand-in without createdAt (just written) counts as new.
+ * One row per student (nameKey) of the loaded view, sorted by name. `seen` maps nameKey →
+ * createdAt ms of the newest hand-in the teacher has looked at. A hand-in without createdAt
+ * (just written) counts as new.
  */
-export function overviewRows(students: readonly RosterEntry[], items: readonly HandinRecord[], seen: Readonly<Record<string, number>>): OverviewRow[] {
+export function overviewRows(items: readonly HandinRecord[], seen: Readonly<Record<string, number>>): OverviewRow[] {
   const byStudent = new Map<string, HandinRecord[]>();
   for (const item of items) {
-    const list = byStudent.get(item.studentId);
+    const list = byStudent.get(item.nameKey);
     if (list) list.push(item);
-    else byStudent.set(item.studentId, [item]);
+    else byStudent.set(item.nameKey, [item]);
   }
-  return students.map(({ studentId, username }) => {
-    const list = (byStudent.get(studentId) ?? []).sort(newestFirst);
-    const latest = list[0] ?? null;
+  const rows: OverviewRow[] = [];
+  for (const [nameKey, group] of byStudent) {
+    const list = group.sort(newestFirst);
+    const latest = list[0];
     const uids = new Set(list.map((r) => r.uid));
     let closeDevices = false;
     for (let i = 0; i < list.length && !closeDevices; i++) {
@@ -104,18 +117,16 @@ export function overviewRows(students: readonly RosterEntry[], items: readonly H
         }
       }
     }
-    let status: RowStatus = 'none';
-    if (latest) status = latest.createdAt === null || latest.createdAt.getTime() > (seen[studentId] ?? 0) ? 'new' : 'seen';
-    return { studentId, username, status, latest, versions: list.length, computers: uids.size, closeDevices };
-  });
+    const status: RowStatus = latest.createdAt === null || latest.createdAt.getTime() > (seen[nameKey] ?? 0) ? 'new' : 'seen';
+    rows.push({ nameKey, name: recordName(latest), status, latest, versions: list.length, computers: uids.size, closeDevices });
+  }
+  return rows.sort((a, b) => compareText(a.name.toLowerCase(), b.name.toLowerCase()) || compareText(a.nameKey, b.nameKey));
 }
 
-/** Sort rows by name (default) or by the last hand-in, newest first (students without one last). */
+/** Sort rows by name (default) or by the last hand-in, newest first. */
 export function sortRows(rows: OverviewRow[], by: 'name' | 'last'): OverviewRow[] {
   const sorted = [...rows];
-  if (by === 'last') {
-    sorted.sort((a, b) => (b.latest ? ms(b.latest) : -1) - (a.latest ? ms(a.latest) : -1) || (a.username < b.username ? -1 : 1));
-  }
+  if (by === 'last') sorted.sort((a, b) => ms(b.latest) - ms(a.latest) || compareText(a.name, b.name));
   return sorted;
 }
 
@@ -123,33 +134,41 @@ export function sortRows(rows: OverviewRow[], by: 'name' | 'last'): OverviewRow[
 // Review page payload and file names
 // ---------------------------------------------------------------------------
 
-export function reviewPayloadFor(record: HandinRecord, decoded: { code: string; workspaceJson: string }, className: string, taskTitle: string): ReviewPayload {
+export function reviewPayloadFor(record: HandinRecord, decoded: { code: string; workspaceJson: string }, className: string): ReviewPayload {
   return {
     v: 1,
     kind: record.kind,
     code: decoded.code,
     workspaceJson: record.kind === 'blocks' ? decoded.workspaceJson : '',
-    who: record.username,
+    who: fullName(record.firstName, record.lastName),
     className,
-    task: taskTitle,
-    title: record.title,
+    task: '',
+    title: '',
     at: record.createdAt?.getTime() ?? Date.now(),
   };
 }
 
-export function reviewLinkFor(record: HandinRecord, decoded: { code: string; workspaceJson: string }, className: string, taskTitle: string): ReturnType<typeof reviewLink> {
-  return reviewLink(reviewPayloadFor(record, decoded, className, taskTitle));
+export function reviewLinkFor(record: HandinRecord, decoded: { code: string; workspaceJson: string }, className: string): ReturnType<typeof reviewLink> {
+  return reviewLink(reviewPayloadFor(record, decoded, className));
 }
 
-/** The .ino name of a hand-in: sketchFileName(username, createdAt). */
+/** The .ino name of a hand-in: sketchFileName("First Last", createdAt). */
 export function inoName(record: HandinRecord, now: Date): string {
-  return sketchFileName(record.username, record.createdAt ?? now);
+  return sketchFileName(fullName(record.firstName, record.lastName), record.createdAt ?? now);
+}
+
+/** The file stem of a student: "Ali Khoury" → "Ali_Khoury"; 'student' when empty. */
+export function fileStem(record: HandinRecord): string {
+  const stem = fullName(record.firstName, record.lastName)
+    .replace(/[^\p{L}\p{N}]+/gu, '_')
+    .replace(/^_+|_+$/g, '');
+  return stem || 'student';
 }
 
 /**
- * The entries of a zip download: `<username>.ino` (and `<username>.blocks.json`) for the newest
- * hand-in of each student, `<username>-<yyyy-mm-dd-hhmm>.ino` for older versions; names made unique.
- * Records that could not be decoded are left out.
+ * The entries of a zip download: `<First_Last>.ino` (and `<First_Last>.blocks.json`) for the
+ * newest hand-in of each student, `<First_Last>-<yyyy-mm-dd-hhmm>.ino` for older versions;
+ * names made unique. Records that could not be decoded are left out.
  */
 export function zipEntries(items: readonly HandinRecord[], cache: DecodeCache, now: Date): ZipEntry[] {
   const taken = new Set<string>();
@@ -158,10 +177,10 @@ export function zipEntries(items: readonly HandinRecord[], cache: DecodeCache, n
   for (const record of [...items].sort(newestFirst)) {
     const decoded = cache.get(record.id);
     if (!decoded?.ok) continue;
-    const base = record.username || 'student';
+    const base = fileStem(record);
     const date = record.createdAt ?? now;
-    const latest = !seenStudent.has(record.studentId);
-    seenStudent.add(record.studentId);
+    const latest = !seenStudent.has(record.nameKey);
+    seenStudent.add(record.nameKey);
     const stem = latest ? base : `${base}-${fileStamp(date)}`;
     entries.push({ name: uniqueName(`${stem}.ino`, taken), data: decoded.code, date });
     if (record.kind === 'blocks' && decoded.workspaceJson !== '') {
@@ -180,8 +199,8 @@ export function latestOfEach(items: readonly HandinRecord[]): HandinRecord[] {
   const seen = new Set<string>();
   const out: HandinRecord[] = [];
   for (const record of [...items].sort(newestFirst)) {
-    if (seen.has(record.studentId)) continue;
-    seen.add(record.studentId);
+    if (seen.has(record.nameKey)) continue;
+    seen.add(record.nameKey);
     out.push(record);
   }
   return out;

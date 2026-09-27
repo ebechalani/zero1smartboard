@@ -1,15 +1,16 @@
 /**
  * The live state of one open class (docs/CLASSROOM.md §4.13 "Live data"): the class listener,
  * the Today listener (or the one-off view of a longer period), the members listener while a
- * view needs it, and the decode cache. A session outlives its page: when the teacher switches
- * class, the previous session is parked for 10 minutes so coming back re-bills nothing.
+ * view needs it, the decode cache and the review links. A session outlives its page: when the
+ * teacher switches class, the previous session is parked for 10 minutes so coming back re-bills
+ * nothing.
  */
 import { ClassroomError } from '../classroom/errors';
 import type { HandinRecord } from '../classroom/model';
 import type { ClassDetail, HandinsUpdate, Member, Unsubscribe } from '../classroom/teacher';
 import type { DashboardContext } from './context';
 import { periodKey, readItem, readJson, seenKey, writeItem } from './format';
-import { DecodeCache, newestFirst } from './handins';
+import { DecodeCache, newestFirst, reviewLinkFor } from './handins';
 
 export type Period = 'today' | '7' | '14' | '30';
 export const PERIODS: { value: Period; label: string; header: string }[] = [
@@ -38,8 +39,10 @@ export class ClassSession {
   members: Member[] | null = null;
   readonly cache = new DecodeCache();
   error: SessionError | null = null;
-  /** studentId → createdAt ms of the newest hand-in the teacher looked at (z1.teacher.seen.<code>). */
+  /** nameKey → createdAt ms of the newest hand-in the teacher looked at (z1.teacher.seen.<code>). */
   seen: Record<string, number>;
+  /** Review links by hand-in id and class name: one #rid= handoff per record, reused across renders. */
+  private readonly links = new Map<string, ReturnType<typeof reviewLinkFor>>();
 
   private classUnsub: Unsubscribe | null = null;
   private todayUnsub: Unsubscribe | null = null;
@@ -63,12 +66,28 @@ export class ClassSession {
   }
 
   /** The teacher looked at this student's hand-in made at `at`: newer ones stay "New". */
-  markSeen(studentId: string, at: Date | null): void {
+  markSeen(nameKey: string, at: Date | null): void {
     const ms = at ? at.getTime() : this.ctx.now().getTime();
-    if ((this.seen[studentId] ?? 0) >= ms) return;
-    this.seen[studentId] = ms;
+    if ((this.seen[nameKey] ?? 0) >= ms) return;
+    this.seen[nameKey] = ms;
     writeItem(this.ctx.storage, seenKey(this.code), JSON.stringify(this.seen));
     this.notify();
+  }
+
+  /**
+   * The review link of a decoded record, memoised per record and class name: a large payload
+   * gets ONE `z1.review.<rid>` handoff, stored once, instead of a fresh 60 KB entry per render.
+   */
+  reviewLink(record: HandinRecord, decoded: { code: string; workspaceJson: string }): ReturnType<typeof reviewLinkFor> {
+    const className = this.detail?.name ?? '';
+    const key = `${record.id}|${className}`;
+    let link = this.links.get(key);
+    if (!link) {
+      link = reviewLinkFor(record, decoded, className);
+      this.links.set(key, link);
+      if (link.handoff) this.ctx.rememberHandoff(link.handoff.key, link.handoff.value);
+    }
+    return link;
   }
 
   onChange(listener: () => void): Unsubscribe {
@@ -224,6 +243,28 @@ export class ClassSession {
     this.notify();
   }
 
+  /**
+   * EVERY hand-in of the class, page by page (100 per read batch), decoded: the zip downloads
+   * that must be complete (before deleting the class, the retention warning). Rejects on a
+   * failed page; `onProgress` reports the count loaded so far.
+   */
+  async loadAll(onProgress?: (count: number) => void): Promise<HandinRecord[]> {
+    const since = new Date(0);
+    const items: HandinRecord[] = [];
+    let page = await this.ctx.api.loadHandins(this.code, since);
+    items.push(...page.items);
+    onProgress?.(items.length);
+    while (page.hasMore) {
+      const last = items[items.length - 1];
+      if (!last?.createdAt) break;
+      page = await this.ctx.api.loadHandins(this.code, since, { before: last.createdAt });
+      items.push(...page.items);
+      onProgress?.(items.length);
+    }
+    await this.cache.decodeAll(items);
+    return items;
+  }
+
   /** Decode records and notify when the cache changed. */
   async decode(items: readonly HandinRecord[]): Promise<void> {
     const fresh = items.filter((r) => this.cache.get(r.id) === undefined);
@@ -272,10 +313,5 @@ export class ClassSession {
 
   get membersWatched(): boolean {
     return this.membersUnsub !== null;
-  }
-
-  taskTitle(taskId: string): string {
-    if (taskId === '') return '';
-    return this.detail?.tasks.find((t) => t.taskId === taskId)?.title ?? '(deleted task)';
   }
 }

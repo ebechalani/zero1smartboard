@@ -284,3 +284,15 @@ Groups as the text examples. Each is a workspace JSON with the two hats:
 4. **Projects** — `b30_parking` (distance → RGB green/orange/red + beep when
    < 30 cm, print distance), `b31_reaction` (wait for button 1, random wait
    1–3 s, green LED on, measure time until button 2 with millis, print it).
+
+Then the part-by-part groups, one block program per text sketch 40–66 (same
+ids with a `b` prefix, same titles; see docs/ARCHITECTURE.md §9): **LED**
+(`b40`–`b42`, the 10-times one is a *repeat* in the setup hat), **Buzzer**
+(`b43`–`b45`, *buzzer on/off* + waits), **Push Button** (`b46`–`b49`),
+**RGB LED** (`b50`, `b51`), **LDR** (`b52`, `b53`, `LDR read` compared with
+500), **Seven-Segment** (`b54`, `b55`, a *count with n from 1 to 4* / *from 7
+to 1 by -1* feeding *show digit*), **Ultrasonic** (`b56`–`b59`, the beep pause
+is *distance × 10* ms), **Servo Motor** (`b60`–`b62`), **DHT Sensor** (`b63`,
+`b64`, a *count with angle from 1 to 180* with a 20 ms wait), **DC Motor**
+(`b65`, `b66`, *repeat 5* of *motor on/off*). Every bullet of the list could
+be expressed with the existing block set; no block was added.

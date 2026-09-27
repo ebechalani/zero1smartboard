@@ -3,10 +3,10 @@
  * shares with it (T5). Every user string is rendered with textContent (§3.4). Open is a real
  * link to review.html so middle-click works; .ino and Copy act with no await after the click.
  */
-import { shortDeviceId, type HandinRecord } from '../classroom/model';
+import { fullName, shortDeviceId, type HandinRecord } from '../classroom/model';
 import { SAVE_FAILED, type DashboardContext } from './context';
 import { button, el, fullWhenText, plural } from './format';
-import { DECODE_PROBLEM_TEXT, inoName, newestFirst, reviewLinkFor } from './handins';
+import { DECODE_PROBLEM_TEXT, fileStem, inoName, newestFirst } from './handins';
 import { makeZip } from './zip';
 import type { ClassSession } from './session';
 
@@ -15,16 +15,15 @@ export function openLink(ctx: DashboardContext, session: ClassSession, record: H
   const a = el('a', { className: 'z1-btn z1t-open', text, attrs: { target: '_blank', rel: 'noopener noreferrer' } });
   const decoded = session.cache.get(record.id);
   if (decoded?.ok) {
-    const link = reviewLinkFor(record, decoded, session.detail?.name ?? '', session.taskTitle(record.taskId));
-    a.href = link.href;
-    if (link.handoff) ctx.rememberHandoff(link.handoff.key, link.handoff.value);
-    a.title = `Run ${record.username}'s hand-in in the simulator (new tab)`;
+    a.href = session.reviewLink(record, decoded).href;
+    a.title = `Run ${fullName(record.firstName, record.lastName)}'s hand-in in the simulator (new tab)`;
     a.addEventListener('click', () => onOpen?.());
   } else {
     a.setAttribute('aria-disabled', 'true');
     a.title = decoded ? DECODE_PROBLEM_TEXT[decoded.problem] : 'Unpacking…';
     a.addEventListener('click', (ev) => ev.preventDefault());
   }
+  void ctx;
   return a;
 }
 
@@ -44,17 +43,17 @@ export function inoButton(ctx: DashboardContext, session: ClassSession, record: 
 
 export interface DetailPanel {
   readonly element: HTMLElement;
-  /** Show this student's versions; `focusId` scrolls that version into view. */
-  show(studentId: string, focusId?: string): void;
+  /** Show this student's versions (by nameKey); `focusId` highlights that version. */
+  show(nameKey: string, focusId?: string): void;
   hide(): void;
   /** Re-render from the session (call on session change). */
   refresh(): void;
-  readonly studentId: string | null;
+  readonly nameKey: string | null;
 }
 
 export function createDetailPanel(ctx: DashboardContext, session: ClassSession, options: { onClose?: () => void } = {}): DetailPanel {
   const element = el('section', { className: 'z1t-detail', attrs: { 'aria-label': 'Hand-in detail', hidden: '' } });
-  let studentId: string | null = null;
+  let nameKey: string | null = null;
   let focusId: string | undefined;
   /** Older versions loaded on demand, newest first. */
   let older: HandinRecord[] = [];
@@ -63,19 +62,17 @@ export function createDetailPanel(ctx: DashboardContext, session: ClassSession, 
   let olderOpen = false;
 
   function versions(): HandinRecord[] {
-    if (studentId === null) return [];
-    return session.items.filter((r) => r.studentId === studentId).sort(newestFirst);
+    if (nameKey === null) return [];
+    return session.items.filter((r) => r.nameKey === nameKey).sort(newestFirst);
   }
 
-  function username(): string {
-    const fromRoster = session.detail?.roster[studentId ?? ''];
-    if (fromRoster !== undefined) return fromRoster;
+  function studentName(): string {
     const any = versions()[0] ?? older[0];
-    return any ? `(removed) ${any.username}` : '';
+    return any ? fullName(any.firstName, any.lastName) : '';
   }
 
   async function loadOlder(): Promise<void> {
-    if (studentId === null || olderLoading) return;
+    if (nameKey === null || olderLoading) return;
     olderLoading = true;
     olderOpen = true;
     render();
@@ -83,7 +80,7 @@ export function createDetailPanel(ctx: DashboardContext, session: ClassSession, 
     const known = new Set([...inView, ...older].map((r) => r.id));
     const last = older[older.length - 1] ?? inView[inView.length - 1];
     try {
-      const page = await session.ctx.api.studentHandins(session.code, studentId, last?.createdAt ? { before: last.createdAt } : undefined);
+      const page = await session.ctx.api.studentHandins(session.code, nameKey, last?.createdAt ? { before: last.createdAt } : undefined);
       const fresh = page.items.filter((r) => !known.has(r.id));
       older = [...older, ...fresh].sort(newestFirst);
       olderHasMore = page.hasMore;
@@ -101,11 +98,7 @@ export function createDetailPanel(ctx: DashboardContext, session: ClassSession, 
     const when = fullWhenText(record.createdAt, ctx.now());
     const head = el('header', { className: 'z1t-version-head' });
     head.append(el('strong', { text: when }), el('span', { className: `z1t-kind z1t-kind-${record.kind}`, text: record.kind === 'blocks' ? 'Blocks' : 'Code' }));
-    const task = session.taskTitle(record.taskId);
-    if (task) head.append(el('span', { className: 'z1t-task', text: task }));
     card.append(head);
-    if (record.title) card.append(el('p', { className: 'z1t-version-title', text: record.title }));
-    if (record.note) card.append(el('pre', { className: 'z1t-note', text: record.note }));
     const member = session.members?.find((m) => m.uid === record.uid);
     const computer = `Computer ${shortDeviceId(record.uid)}${member ? ` · ${member.device}` : ''}`;
     card.append(el('p', { className: 'z1-muted z1t-computer', text: computer }));
@@ -121,8 +114,8 @@ export function createDetailPanel(ctx: DashboardContext, session: ClassSession, 
     }
 
     const actions = el('div', { className: 'z1t-version-actions' });
-    const open = openLink(ctx, session, record, 'Open in the simulator', () => session.markSeen(record.studentId, record.createdAt));
-    const ino = inoButton(ctx, session, record, 'Download .ino', () => session.markSeen(record.studentId, record.createdAt));
+    const open = openLink(ctx, session, record, 'Open in the simulator', () => session.markSeen(record.nameKey, record.createdAt));
+    const ino = inoButton(ctx, session, record, 'Download .ino', () => session.markSeen(record.nameKey, record.createdAt));
     if (record.kind === 'blocks' && decoded?.ok && decoded.workspaceJson !== '') {
       ino.textContent = 'Download .ino + blocks (.zip)';
       ino.title = 'Download the sketch and the blocks program as a .zip';
@@ -131,8 +124,8 @@ export function createDetailPanel(ctx: DashboardContext, session: ClassSession, 
         if (!d?.ok) return;
         const base = inoName(record, ctx.now()).replace(/\.ino$/, '');
         const date = record.createdAt ?? ctx.now();
-        ctx.download(`${base}.zip`, makeZip([{ name: `${base}.ino`, data: d.code, date }, { name: `${record.username}.blocks.json`, data: d.workspaceJson, date }]));
-        session.markSeen(record.studentId, record.createdAt);
+        ctx.download(`${base}.zip`, makeZip([{ name: `${base}.ino`, data: d.code, date }, { name: `${fileStem(record)}.blocks.json`, data: d.workspaceJson, date }]));
+        session.markSeen(record.nameKey, record.createdAt);
       };
     }
     const copyStatus = el('span', { className: 'z1t-status', attrs: { role: 'status' } });
@@ -158,44 +151,16 @@ export function createDetailPanel(ctx: DashboardContext, session: ClassSession, 
     actions.append(open, ino, copy, copyStatus);
     card.append(actions);
 
-    // Move to… (student / task), remove the computer, delete.
+    // Remove the computer, delete.
     const tools = el('div', { className: 'z1t-version-tools' });
-    const students = session.detail?.students ?? [];
-    const moveStudent = el('select', { attrs: { 'aria-label': 'Wrong student? Move to…' } });
-    moveStudent.append(el('option', { text: 'Wrong student? Move to…', attrs: { value: '' } }));
-    for (const s of students) if (s.studentId !== record.studentId) moveStudent.append(el('option', { text: s.username, attrs: { value: s.studentId } }));
-    const moveStatus = el('span', { className: 'z1t-status', attrs: { role: 'status' } });
-    moveStudent.addEventListener('change', () => {
-      const target = moveStudent.value;
-      if (!target) return;
-      moveStudent.value = '';
-      void ctx.save(ctx.api.refileHandin(session.code, record.id, { studentId: target }), moveStatus).then((ok) => {
-        if (ok !== SAVE_FAILED) ctx.toast(`Moved to ${session.detail?.roster[target] ?? 'the student'}`);
-      });
-    });
-    tools.append(moveStudent);
-    const tasks = session.detail?.tasks ?? [];
-    if (tasks.length > 0) {
-      const moveTask = el('select', { attrs: { 'aria-label': 'Wrong task? Move to…' } });
-      moveTask.append(el('option', { text: 'Wrong task? Move to…', attrs: { value: '' } }));
-      moveTask.append(el('option', { text: '(no task)', attrs: { value: 'none' } }));
-      for (const t of tasks) if (t.taskId !== record.taskId) moveTask.append(el('option', { text: t.title, attrs: { value: t.taskId } }));
-      moveTask.addEventListener('change', () => {
-        const target = moveTask.value;
-        if (!target) return;
-        moveTask.value = '';
-        void ctx.save(ctx.api.refileHandin(session.code, record.id, { taskId: target === 'none' ? '' : target }), moveStatus);
-      });
-      tools.append(moveTask);
-    }
-    tools.append(moveStatus);
+    const toolStatus = el('span', { className: 'z1t-status', attrs: { role: 'status' } });
     const removeDevice = button('Remove the computer that sent this', () => {
-      if (!ctx.confirm(`Remove computer ${shortDeviceId(record.uid)} from the class? The student can join again while joining is open.`)) return;
-      void ctx.save(ctx.api.removeDevice(session.code, record.uid), moveStatus).then((ok) => ok !== SAVE_FAILED && ctx.toast('Computer removed'));
+      if (!ctx.confirm(`Remove computer ${shortDeviceId(record.uid)} from the class? Its student can enter their name again to hand in.`)) return;
+      void ctx.save(ctx.api.removeDevice(session.code, record.uid), toolStatus).then((ok) => ok !== SAVE_FAILED && ctx.toast('Computer removed'));
     });
     const del = button('Delete', () => {
       if (!ctx.confirm('Delete this hand-in? This cannot be undone.')) return;
-      void ctx.save(ctx.api.deleteHandin(session.code, record.id), moveStatus).then((ok) => {
+      void ctx.save(ctx.api.deleteHandin(session.code, record.id), toolStatus).then((ok) => {
         if (ok === SAVE_FAILED) return;
         older = older.filter((r) => r.id !== record.id);
         ctx.toast('Hand-in deleted');
@@ -207,20 +172,20 @@ export function createDetailPanel(ctx: DashboardContext, session: ClassSession, 
       removeDevice.disabled = true;
       del.disabled = true;
     }
-    tools.append(removeDevice, del);
+    tools.append(removeDevice, del, toolStatus);
     card.append(tools);
     return card;
   }
 
   function render(): void {
     element.replaceChildren();
-    if (studentId === null) {
+    if (nameKey === null) {
       element.hidden = true;
       return;
     }
     element.hidden = false;
     const head = el('header', { className: 'z1t-detail-head' });
-    head.append(el('h3', { text: username() }));
+    head.append(el('h3', { text: studentName() }));
     head.append(
       button('Close', () => {
         hide();
@@ -256,32 +221,32 @@ export function createDetailPanel(ctx: DashboardContext, session: ClassSession, 
   }
 
   function hide(): void {
-    studentId = null;
+    nameKey = null;
     older = [];
     render();
   }
 
   return {
     element,
-    show(id, focus) {
-      if (id !== studentId) {
+    show(key, focus) {
+      if (key !== nameKey) {
         older = [];
         olderHasMore = true;
         olderOpen = false;
       }
-      studentId = id;
+      nameKey = key;
       focusId = focus;
       render();
       const first = versions()[0];
-      if (first) session.markSeen(id, first.createdAt);
+      if (first) session.markSeen(key, first.createdAt);
       element.querySelector<HTMLElement>('h3')?.focus?.();
     },
     hide,
     refresh: () => {
-      if (studentId !== null) render();
+      if (nameKey !== null) render();
     },
-    get studentId() {
-      return studentId;
+    get nameKey() {
+      return nameKey;
     },
   };
 }

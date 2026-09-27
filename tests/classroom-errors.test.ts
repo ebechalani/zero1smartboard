@@ -18,9 +18,9 @@ import {
 const ALL_CODES: ClassroomErrorCode[] = [
   'not_configured', 'load_failed', 'app_updated', 'offline', 'timeout', 'quota', 'signup_limit',
   'auth_disabled', 'storage_blocked', 'popup_blocked', 'popup_closed', 'unauthorized_domain',
-  'recent_login', 'not_ready', 'index_missing', 'bad_code', 'class_not_found', 'class_closed',
-  'handins_closed', 'class_deleted', 'lost_identity', 'not_on_roster', 'device_removed', 'too_soon',
-  'limit_reached', 'empty_sketch', 'too_large', 'code_collision', 'bad_roster', 'classes_left',
+  'recent_login', 'not_ready', 'index_missing', 'bad_code', 'class_not_found',
+  'handins_closed', 'class_deleted', 'lost_identity', 'device_removed', 'too_soon',
+  'limit_reached', 'empty_sketch', 'too_large', 'code_collision', 'bad_name', 'classes_left',
   'permission', 'unknown',
 ];
 
@@ -116,7 +116,7 @@ describe('texts', () => {
   });
   it('fills placeholders', () => {
     expect(errorText(STUDENT_ERROR_TEXT, 'class_not_found', { code: 'BKT-4M9' })).toBe('There is no class with the code BKT-4M9. Check the code with your teacher.');
-    expect(errorText(STUDENT_ERROR_TEXT, 'class_closed', { class: '8B Robotics' })).toContain('Joining 8B Robotics is closed');
+    expect(errorText(STUDENT_ERROR_TEXT, 'handins_closed', { class: '8B Robotics' })).toContain('8B Robotics no longer accepts hand-ins');
     expect(errorText(STUDENT_ERROR_TEXT, 'quota', { reset: '10:00' })).toContain('after 10:00.');
     expect(errorText(TEACHER_ERROR_TEXT, 'unknown', { message: 'boom' })).toBe('Something went wrong: boom. Try again.');
     expect(errorText(TEACHER_ERROR_TEXT, 'unauthorized_domain', { host: 'x.github.io' })).toContain('add x.github.io in Firebase');

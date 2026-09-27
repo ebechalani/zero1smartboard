@@ -1,13 +1,12 @@
 /**
- * The Settings tab (docs/CLASSROOM.md §1.3 T9): class name and teacher name, "Keep hand-ins
- * for" weeks, the task list (add, rename, delete, set current) and the two-step Delete class
- * with the "download everything first" zip and a resumable, budgeted deletion.
+ * The Settings tab (docs/CLASSROOM.md §1.3 T9): the class name, the hand-ins switch, "Keep
+ * hand-ins for" weeks, and the two-step Delete class with the "download everything first" zip
+ * (every hand-in of the class, paged) and a resumable, budgeted deletion.
  */
-import { LIMITS, cleanLine, formatClassCode, normalizeClassCode, type RandomBytes } from '../classroom/model';
+import { LIMITS, cleanLine, formatClassCode, normalizeClassCode } from '../classroom/model';
 import { SAVE_FAILED, type DashboardContext } from './context';
 import { button, el, plural } from './format';
 import { zipOf } from './handins';
-import { createTasksForm } from './roster-form';
 import type { ClassSession } from './session';
 
 export interface SettingsTab {
@@ -23,18 +22,17 @@ export interface SettingsCallbacks {
   onDeleted(): void;
   /** Deletion stopped early: the class stays with deleting: true. */
   onDeletionUnfinished(): void;
-  randomBytes?: RandomBytes;
 }
 
-export const DELETE_CLASS_TEXT = 'Deletes the class, its class list, all hand-ins and all joined computers. This cannot be undone.';
+export const DELETE_CLASS_TEXT = 'Deletes the class, all hand-ins and all joined computers. This cannot be undone.';
 export const KEEP_WEEKS_HELP = 'Older hand-ins are deleted automatically when you open this class. You are warned a week before.';
+export const HANDINS_OFF_TEXT = 'This class no longer accepts hand-ins (use it for last year\'s classes).';
 
 export function createSettings(ctx: DashboardContext, session: ClassSession, callbacks: SettingsCallbacks): SettingsTab {
   const element = el('section', { className: 'z1t-settings', attrs: { 'aria-label': 'Settings' } });
 
-  // Names.
+  // Name.
   const nameInput = el('input', { attrs: { type: 'text', id: 'z1t-set-name', maxlength: String(LIMITS.classNameMax), required: '' } });
-  const teacherInput = el('input', { attrs: { type: 'text', id: 'z1t-set-teacher', maxlength: String(LIMITS.teacherNameMax) } });
   const namesStatus = el('span', { className: 'z1t-status', attrs: { role: 'status' } });
   const namesError = el('p', { className: 'z1t-error', attrs: { role: 'alert' } });
   const saveNames = button('Save', () => {
@@ -44,14 +42,11 @@ export function createSettings(ctx: DashboardContext, session: ClassSession, cal
       return;
     }
     namesError.textContent = '';
-    void ctx.save(ctx.api.updateClass(session.code, { name, teacherName: cleanLine(teacherInput.value, LIMITS.teacherNameMax) }), namesStatus).then(
-      (ok) => ok !== SAVE_FAILED && ctx.toast('Saved'),
-    );
+    void ctx.save(ctx.api.updateClass(session.code, { name }), namesStatus).then((ok) => ok !== SAVE_FAILED && ctx.toast('Saved'));
   }, 'z1-btn z1-btn-primary');
   const names = el('form', { className: 'z1t-card' }, [
     el('h3', { text: 'Class' }),
     el('div', { className: 'z1-setting' }, [el('label', { text: 'Class name', attrs: { for: nameInput.id } }), nameInput]),
-    el('div', { className: 'z1-setting' }, [el('label', { text: 'Your name as students see it', attrs: { for: teacherInput.id } }), teacherInput]),
     namesError,
     el('div', { className: 'z1t-row' }, [saveNames, namesStatus]),
   ]);
@@ -60,7 +55,11 @@ export function createSettings(ctx: DashboardContext, session: ClassSession, cal
     saveNames.click();
   });
 
-  // Retention.
+  // Hand-ins: the switch and the retention.
+  const handinsStatus = el('span', { className: 'z1t-status', attrs: { role: 'status' } });
+  const handinsSwitch = el('input', { attrs: { type: 'checkbox', role: 'switch', id: 'z1t-set-open', 'aria-label': 'Accepting hand-ins' } });
+  handinsSwitch.addEventListener('change', () => void ctx.save(ctx.api.updateClass(session.code, { handinsOpen: handinsSwitch.checked }), handinsStatus));
+  const handinsOff = el('p', { className: 'z1t-warn-text', text: HANDINS_OFF_TEXT, attrs: { hidden: '' } });
   const keepInput = el('input', { attrs: { type: 'number', id: 'z1t-set-keep', min: String(LIMITS.keepWeeksMin), max: String(LIMITS.keepWeeksMax), step: '1' } });
   const keepStatus = el('span', { className: 'z1t-status', attrs: { role: 'status' } });
   keepInput.addEventListener('change', () => {
@@ -71,8 +70,10 @@ export function createSettings(ctx: DashboardContext, session: ClassSession, cal
     }
     void ctx.save(ctx.api.updateClass(session.code, { keepWeeks: weeks }), keepStatus);
   });
-  const retention = el('div', { className: 'z1t-card' }, [
+  const handins = el('div', { className: 'z1t-card' }, [
     el('h3', { text: 'Hand-ins' }),
+    el('div', { className: 'z1t-row' }, [el('label', { className: 'z1t-switch' }, [handinsSwitch, el('span', { text: 'Accepting hand-ins' })]), handinsStatus]),
+    handinsOff,
     el('div', { className: 'z1-setting' }, [
       el('label', { text: 'Keep hand-ins for', attrs: { for: keepInput.id } }),
       el('div', { className: 'z1t-row' }, [keepInput, el('span', { text: 'weeks' }), keepStatus]),
@@ -80,95 +81,34 @@ export function createSettings(ctx: DashboardContext, session: ClassSession, cal
     ]),
   ]);
 
-  // Tasks.
-  const taskList = el('ul', { className: 'z1t-tasks' });
-  const tasksForm = createTasksForm({ existing: {}, idPrefix: 'z1t-set', randomBytes: callbacks.randomBytes, label: 'Add tasks (one per line)' });
-  const tasksStatus = el('span', { className: 'z1t-status', attrs: { role: 'status' } });
-  const addTasks = button('Add tasks', () => {
-    const entries = tasksForm.entries();
-    if (!entries || entries.length === 0) return;
-    void ctx.save(ctx.api.addTasks(session.code, entries), tasksStatus).then((ok) => {
-      if (ok === SAVE_FAILED) return;
-      tasksForm.clear();
-      ctx.toast(`Added ${plural(entries.length, 'task')}`);
-    });
-  }, 'z1-btn z1-btn-primary');
-  addTasks.disabled = true;
-  tasksForm.onChange(() => {
-    const entries = tasksForm.entries();
-    addTasks.disabled = !entries || entries.length === 0;
-  });
-  const tasks = el('div', { className: 'z1t-card' }, [el('h3', { text: 'Tasks' }), taskList, tasksForm.element, el('div', { className: 'z1t-row' }, [addTasks, tasksStatus])]);
-  let renamingTask: string | null = null;
-
-  function renderTasks(): void {
-    const detail = session.detail;
-    taskList.replaceChildren();
-    tasksForm.setExisting(Object.fromEntries((detail?.tasks ?? []).map((t) => [t.taskId, t.title])));
-    if (!detail) return;
-    if (detail.tasks.length === 0) taskList.append(el('li', { className: 'z1-muted', text: 'No tasks yet. Tasks let you filter hand-ins, for example "Traffic light".' }));
-    for (const t of detail.tasks) {
-      const li = el('li', { className: 'z1t-task-item', attrs: { 'data-task': t.taskId } });
-      if (renamingTask === t.taskId) {
-        const input = el('input', { attrs: { type: 'text', value: t.title, maxlength: String(LIMITS.taskTitleMax), 'aria-label': 'Task title' } });
-        const save = button('Save', () => {
-          const title = cleanLine(input.value, LIMITS.taskTitleMax);
-          if (title === '') return;
-          if (detail.tasks.some((o) => o.taskId !== t.taskId && o.title === title)) {
-            ctx.toast('A task with this title exists already.');
-            return;
-          }
-          void ctx.save(ctx.api.renameTask(session.code, t.taskId, title), tasksStatus).then((ok) => {
-            if (ok === SAVE_FAILED) return;
-            renamingTask = null;
-            renderTasks();
-          });
-        }, 'z1-btn z1-btn-primary z1-btn-small');
-        const cancel = button('Cancel', () => {
-          renamingTask = null;
-          renderTasks();
-        }, 'z1-btn z1-btn-small');
-        input.addEventListener('keydown', (ev) => {
-          if (ev.key === 'Enter') {
-            ev.preventDefault();
-            save.click();
-          } else if (ev.key === 'Escape') cancel.click();
-        });
-        li.append(input, save, cancel);
-        queueMicrotask(() => input.focus());
-      } else {
-        li.append(el('span', { className: 'z1t-task-title', text: t.title }));
-        if (detail.currentTaskId === t.taskId) li.append(el('span', { className: 'z1t-badge', text: 'Current task' }));
-        else {
-          li.append(
-            button('Set as current', () => void ctx.save(ctx.api.updateClass(session.code, { currentTaskId: t.taskId }), tasksStatus), 'z1-btn z1-btn-small'),
-          );
-        }
-        li.append(
-          button('Rename', () => {
-            renamingTask = t.taskId;
-            renderTasks();
-          }, 'z1-btn z1-btn-small'),
-          button('Delete', () => {
-            if (!ctx.confirm(`Delete the task "${t.title}"? Hand-ins keep it as "(deleted task)".`)) return;
-            void ctx.save(ctx.api.deleteTask(session.code, t.taskId), tasksStatus);
-          }, 'z1-btn z1-btn-small z1t-danger'),
-        );
-      }
-      taskList.append(li);
-    }
-  }
-
   // Delete class.
   const codeInput = el('input', { attrs: { type: 'text', id: 'z1t-del-code', autocomplete: 'off', spellcheck: 'false', placeholder: 'BKT-4M9' } });
   const progress = el('p', { className: 'z1t-progress', attrs: { role: 'status', 'aria-live': 'polite' } });
-  const downloadAll = button('Download everything first (.zip)', () => {
-    if (session.items.length === 0) {
-      ctx.toast('Nothing loaded to download. Choose "Last 30 days" on the Overview first.');
-      return;
+  const downloadStatus = el('span', { className: 'z1t-status', attrs: { role: 'status' } });
+  let downloading = false;
+  const downloadAll = button('Download everything first (.zip)', () => void downloadEverything(), 'z1t-linkish');
+  async function downloadEverything(): Promise<void> {
+    if (downloading) return;
+    downloading = true;
+    downloadAll.disabled = true;
+    downloadStatus.textContent = 'Loading…';
+    try {
+      const items = await session.loadAll((n) => (downloadStatus.textContent = `Loading… ${n}`));
+      if (items.length === 0) {
+        downloadStatus.textContent = '';
+        ctx.toast('This class has no hand-ins.');
+        return;
+      }
+      ctx.download(`${session.detail?.name ?? 'class'}-everything.zip`.replace(/[^\w.-]+/g, '_'), zipOf(items, session.cache, ctx.now()));
+      downloadStatus.textContent = `${plural(items.length, 'hand-in')} in the zip`;
+    } catch (err) {
+      downloadStatus.textContent = '';
+      ctx.showError(err);
+    } finally {
+      downloading = false;
+      downloadAll.disabled = false;
     }
-    ctx.download(`${session.detail?.name ?? 'class'}-everything.zip`.replace(/[^\w.-]+/g, '_'), zipOf(session.items, session.cache, ctx.now()));
-  }, 'z1t-linkish');
+  }
   let deleting = false;
   const deleteButton = button('Delete class', () => void runDelete(), 'z1-btn z1t-danger');
   deleteButton.disabled = true;
@@ -205,22 +145,22 @@ export function createSettings(ctx: DashboardContext, session: ClassSession, cal
   const danger = el('div', { className: 'z1t-card z1t-card-danger' }, [
     el('h3', { text: 'Delete class' }),
     el('p', { text: DELETE_CLASS_TEXT }),
-    el('p', {}, [downloadAll]),
+    el('p', {}, [downloadAll, ' ', downloadStatus]),
     el('div', { className: 'z1-setting' }, [el('label', { text: 'Type the class code to confirm', attrs: { for: codeInput.id } }), codeInput]),
     el('div', { className: 'z1t-row' }, [deleteButton, progress]),
   ]);
 
-  element.append(names, retention, tasks, danger);
+  element.append(names, handins, danger);
 
   let filled = false;
   function refresh(): void {
     const detail = session.detail;
     if (!detail) return;
     if (!filled || document.activeElement !== nameInput) nameInput.value = detail.name;
-    if (!filled || document.activeElement !== teacherInput) teacherInput.value = detail.teacherName;
     if (document.activeElement !== keepInput) keepInput.value = String(detail.keepWeeks);
+    handinsSwitch.checked = detail.handinsOpen;
+    handinsOff.hidden = detail.handinsOpen;
     filled = true;
-    renderTasks();
     if (detail.deleting) {
       deleteButton.textContent = deleting ? 'Deleting…' : 'Finish deleting';
       codeInput.parentElement!.hidden = true;
