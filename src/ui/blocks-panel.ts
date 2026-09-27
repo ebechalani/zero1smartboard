@@ -10,7 +10,7 @@
  * the `#blocks=` share link, and the Code → Blocks hand-off rule.
  */
 import type { BlockExample } from '../blocks';
-import { decodeShareCode, encodeShareCode } from './editor';
+import { parseWorkspaceJson } from '../share-link';
 
 type BlocklyModule = typeof import('blockly');
 type BlocksModule = typeof import('../blocks');
@@ -256,16 +256,6 @@ export function saveBlocksBaseline(fingerprint: string | null): void {
   }
 }
 
-/** Parse serialized workspace JSON; null unless it is a JSON object. */
-export function parseWorkspaceJson(text: string): object | null {
-  try {
-    const value: unknown = JSON.parse(text);
-    return typeof value === 'object' && value !== null && !Array.isArray(value) ? value : null;
-  } catch {
-    return null;
-  }
-}
-
 /**
  * A comparable form of a workspace that ignores where the blocks are placed
  * (`x` / `y`), so that merely dragging blocks around does not count as a change.
@@ -295,18 +285,9 @@ export function workspaceFingerprint(workspace: object): string {
 // Share links (#blocks=<base64url JSON>)
 // ---------------------------------------------------------------------------
 
-/** Encode a workspace for a `#blocks=` link (base64url of its JSON). */
-export function encodeShareBlocks(workspace: object): string {
-  return encodeShareCode(JSON.stringify(workspace));
-}
-
-/** Extract the workspace from a URL hash such as `#blocks=...`, or null. */
-export function blocksFromHash(hash: string): object | null {
-  const match = /^#blocks=([A-Za-z0-9_-]+)$/.exec(hash);
-  if (!match) return null;
-  const text = decodeShareCode(match[1]);
-  return text === null ? null : parseWorkspaceJson(text);
-}
+// The encoding lives in src/share-link.ts (docs/CLASSROOM.md §4.9); re-exported so that
+// existing imports keep working.
+export { blocksFromHash, encodeShareBlocks, parseWorkspaceJson } from '../share-link';
 
 // ---------------------------------------------------------------------------
 // Mode switch hand-off

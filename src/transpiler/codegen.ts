@@ -56,6 +56,20 @@ import {
 } from './typesys';
 import type { Diagnostic } from '../types';
 
+/**
+ * Member names a sketch may never reach (docs/CLASSROOM.md §3.4, X1): through them the
+ * generated JavaScript could climb from a runtime object to `Function` and run arbitrary
+ * code on the page (`Serial.constructor.constructor("...")()`). The runtime (`__m` in
+ * src/runtime/libs/strings.ts) refuses the same names; tests/codegen.test.ts keeps both
+ * lists equal.
+ */
+export const FORBIDDEN_MEMBER_NAMES: readonly string[] = ['constructor', 'prototype', '__proto__', 'caller', 'callee', 'arguments', 'call', 'apply', 'bind'];
+
+/** Whether `name` is a member a sketch may not use: one of FORBIDDEN_MEMBER_NAMES or a `__` helper name. */
+export function isForbiddenMember(name: string): boolean {
+  return name.startsWith('__') || FORBIDDEN_MEMBER_NAMES.includes(name);
+}
+
 export class CodegenError extends Error {
   constructor(
     message: string,
@@ -708,6 +722,7 @@ export class CodeGen {
       case 'CallExpr':
         return this.genCall(e, valueUsed);
       case 'MemberExpr': {
+        this.checkMemberName(e.property, e.pos);
         const o = this.genExpr(e.object);
         if (o.type.kind === 'class' || o.type.kind === 'unknown') {
           return this.result(e, `${o.code}.${e.property}`, T.unknown, { lvalue: true });
@@ -754,7 +769,13 @@ export class CodeGen {
     this.fail(e.pos, `'${e.name}' was not declared in this scope`);
   }
 
+  /** X1: refuse the member names that lead out of the sandbox (see FORBIDDEN_MEMBER_NAMES). */
+  private checkMemberName(name: string, pos: Pos): void {
+    if (isForbiddenMember(name)) this.fail(pos, `'${name}' is not available in the simulator`);
+  }
+
   private genIndex(e: Expression & { kind: 'IndexExpr' }): ExprResult {
+    if (e.index.kind === 'StringLiteral') this.checkMemberName(e.index.value, e.index.pos);
     const o = this.genExpr(e.object);
     const i = this.genExpr(e.index);
     if (o.type.kind === 'array') {
@@ -982,6 +1003,7 @@ export class CodeGen {
       if ((name === 'print' || name === 'println' || name === 'write') && !this.usesSerialPrint) this.usesSerialPrint = e.pos;
     }
     const recv = this.genExpr(callee.object);
+    this.checkMemberName(name, callee.pos); // after the receiver, so the innermost bad name is reported
 
     if (recv.type.kind === 'string' || recv.type.kind === 'cstring') {
       if (name === 'length' && e.args.length === 0) return this.result(e, `${recv.code}.length`, T.uint);

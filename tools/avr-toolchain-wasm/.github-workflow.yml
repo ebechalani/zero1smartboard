@@ -1,0 +1,80 @@
+# Move to .github/workflows/avr-toolchain-wasm.yml (kept here so that this
+# folder is self-contained; the repo's workflow directory is owned by the maintainer).
+#
+# Builds cc1plus / avr-as / avr-ld / avr-objcopy as WebAssembly in the pinned
+# Docker image, checks the build is deterministic (two independent builds must
+# produce identical SHA256SUMS), and publishes wasm + glue + SHA256SUMS +
+# SOURCES.txt as a workflow artifact and, on a tag, as release assets.
+name: avr-toolchain-wasm
+
+on:
+  workflow_dispatch: {}
+  push:
+    tags: ["avr-toolchain-wasm-v*"]
+    paths: ["tools/avr-toolchain-wasm/**"]
+  pull_request:
+    paths: ["tools/avr-toolchain-wasm/**"]
+
+permissions:
+  contents: write   # release assets on tags; read is enough for PR runs
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      matrix:
+        run: [a, b]          # two builds from scratch -> determinism check in the next job
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build in Docker (pinned emsdk, pinned sources)
+        working-directory: tools/avr-toolchain-wasm
+        run: |
+          docker build --progress=plain -t avr-toolchain-wasm .
+          mkdir -p out
+          docker run --rm -v "$PWD/out:/build/work/out-mount" avr-toolchain-wasm
+          ls -la out && cat out/SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: avr-toolchain-wasm-${{ matrix.run }}
+          path: tools/avr-toolchain-wasm/out/
+          if-no-files-found: error
+
+  verify:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { name: avr-toolchain-wasm-a, path: a }
+      - uses: actions/download-artifact@v4
+        with: { name: avr-toolchain-wasm-b, path: b }
+      - name: Determinism check (build a == build b)
+        run: |
+          diff <(cd a && cat SHA256SUMS) <(cd b && cat SHA256SUMS) && echo "deterministic: identical SHA256SUMS"
+          (cd a && sha256sum -c SHA256SUMS)
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - name: Smoke test (each module loads and prints its version)
+        run: |
+          cd a
+          for t in cc1plus avr-as avr-ld avr-objcopy; do
+            node --input-type=module -e "
+              const f = (await import('./$t.mjs')).default;
+              const m = await f({ noInitialRun: true, print: console.log, printErr: console.error });
+              try { m.callMain(['--version']); } catch (e) { if (typeof e.status !== 'number') throw e; }"
+          done
+      - name: Release assets
+        if: startsWith(github.ref, 'refs/tags/avr-toolchain-wasm-v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            a/*.wasm
+            a/*.mjs
+            a/SHA256SUMS
+            a/SOURCES.txt
+          body: |
+            AVR toolchain (GCC 7.3.0 cc1plus, binutils 2.42 as/ld/objcopy) built as WebAssembly.
+            Corresponding source (GPLv3 section 6): tools/avr-toolchain-wasm in this repository at this tag
+            (build.sh, Dockerfile, patches/, SOURCES.txt pins every upstream commit/tarball).

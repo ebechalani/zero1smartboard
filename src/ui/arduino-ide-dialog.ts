@@ -15,7 +15,7 @@
  * Without an IDE (Chromebooks) the Arduino Cloud Editor can import the file.
  */
 import type { AppMode } from './blocks-panel';
-import { STUDENT_NAME_STORAGE_KEY } from './share-dialog';
+import { currentUsername } from '../classroom/session-store';
 import { downloadTextFile, sketchFileName, sketchName } from './sketch-file';
 
 export interface ArduinoIdePayload {
@@ -50,7 +50,7 @@ export interface ArduinoIdeDialogOptions {
    * "Save into my Arduino folder" button.
    */
   pickDirectory?: (() => Promise<SketchFolder>) | null;
-  /** The student's name for the sketch name (default: the one remembered by the Share dialog). */
+  /** The student's name for the sketch name (default: the username of the joined class, if any). */
   studentName?(): string;
 }
 
@@ -80,14 +80,6 @@ function defaultCopyText(text: string): Promise<void> {
   return navigator.clipboard.writeText(text);
 }
 
-function defaultStudentName(): string {
-  try {
-    return localStorage.getItem(STUDENT_NAME_STORAGE_KEY) ?? '';
-  } catch {
-    return '';
-  }
-}
-
 /** The error's DOMException name (`AbortError`, `NotAllowedError`, …), or ''. */
 function errorName(err: unknown): string {
   return typeof err === 'object' && err !== null && 'name' in err ? String((err as { name: unknown }).name) : '';
@@ -99,7 +91,7 @@ function errorName(err: unknown): string {
 export function createArduinoIdeDialog(parent: HTMLElement, options: ArduinoIdeDialogOptions = {}): ArduinoIdeDialog {
   const now = options.now ?? (() => new Date());
   const copyText = options.copyText ?? defaultCopyText;
-  const studentName = options.studentName ?? defaultStudentName;
+  const studentName = options.studentName ?? (() => currentUsername());
   const pickDirectory = options.pickDirectory === undefined ? defaultPickDirectory() : options.pickDirectory;
 
   const dialog = document.createElement('dialog');

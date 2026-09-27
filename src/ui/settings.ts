@@ -119,6 +119,8 @@ export interface SettingsDialogOptions {
   getConfig(): BoardConfig;
   /** Called with the full configuration when the user presses Save. */
   onApply(config: BoardConfig): void;
+  /** Save the configuration to localStorage (default true; false in the sandboxed review frame). */
+  persist?: boolean;
 }
 
 export interface SettingsDialog {
@@ -197,7 +199,7 @@ export function createSettingsDialog(parent: HTMLElement, options: SettingsDialo
   dialog.querySelector('[data-action="cancel"]')!.addEventListener('click', () => dialog.close());
   dialog.querySelector('form')!.addEventListener('submit', () => {
     const config = readForm();
-    saveConfig(config);
+    if (options.persist !== false) saveConfig(config);
     options.onApply(config);
   });
 

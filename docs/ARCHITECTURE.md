@@ -63,14 +63,21 @@ src/
     board-view.ts board-svg.ts  interactive SVG board                       [board-svg]
     app.ts editor.ts serial-monitor.ts pinmap.ts console-panel.ts
     controls.ts settings.ts examples-menu.ts audio.ts style.css             [ui-app]
+    share-dialog.ts arduino-ide-dialog.ts sketch-file.ts                    [ui-app]
+    handin-dialog.ts            the student side of the class platform      [ui-app / B]
+  share-link.ts                 #code= / #blocks= / #class= links, review payload (pure) [A]
+  firebase-config.ts            public Firebase web config (empty = classes off) [A]
+  classroom/                    class platform data layer (§12)             [A]
+  teacher/  review/             teacher dashboard, sandboxed review page (§13) [C]
   examples/
     *.ino, index.ts             example sketches + manifest                 [examples]
 tests/
-  *.test.ts                     Vitest (node environment)
+  *.test.ts                     Vitest (node environment; UI tests use happy-dom)
   helpers.ts                    makeBoard(), runSketch()                    [integration]
+tests-emulator/                 Firebase emulator suites (rules, APIs, flow) [A]
 docs/
-  ARCHITECTURE.md PINOUT.md
-index.html                                                                  [ui-app]
+  ARCHITECTURE.md PINOUT.md BLOCKS.md CLASSROOM.md
+index.html teacher.html review.html                                         [ui-app / C]
 ```
 
 Only touch files you own. Import other modules by the paths and names given
@@ -686,8 +693,9 @@ WCAG AA on its background). Responsive grid:
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│ header: ZERO1 Smart Board Simulator · [＋ New] [Examples ▾] [▶ Run] │
-│         [■ Stop] [↺ Reset] [⚙ Settings] [🔗 Share] [∞ Arduino IDE]  │
+│ header: ZERO1 Simulator · [Code|Blocks] · [＋ New] [Examples ▾] [▶ Run] │
+│   [■ Stop] [↺ Reset] [⚙ Settings] [📥 Hand in · ali.k] [🔗 Share]     │
+│   [∞ Arduino IDE] · run status                                        │
 ├───────────────────────────────┬─────────────────────────────────────┤
 │ board SVG (scales to fit)     │ tabs: Code | Serial Monitor |       │
 │                               │       Pin Map | Generated JS        │
@@ -703,6 +711,11 @@ Code | Blocks switch, the actions, run status) is one row from 1366 px wide
 (up to 1439 px the Settings button shows only its ⚙; the run status texts
 stay short, e.g. "2 errors", "Error at 1523 ms"); narrower, the actions
 move to rows of their own under the brand, the mode switch and the status.
+Below 1536 px the brand reads "ZERO1 Simulator" (`.z1-title-short`); the full
+name stays in `<title>` and in visually hidden text. **Hand in** exists only
+when the class platform is configured (`isClassroomConfigured()`,
+docs/CLASSROOM.md §1.1); while joined it reads "Hand in · ali.k" (the name
+part is cut at 9ch with an ellipsis, the `aria-label` has it whole).
 
 ### 8.2 Board view (`board-view.ts`, `board-svg.ts`) — owner: board-svg
 
@@ -750,25 +763,38 @@ export function createBoardView(container: HTMLElement, board: Zero1Board): Boar
   Blocks mode it resets the workspace to `DEFAULT_WORKSPACE`. Neither stops a
   running sketch. URL hash `#code=<base64url>` loads shared code.
 - Share dialog (`share-dialog.ts`, opened by the "Share" button): the
-  `#code=` / `#blocks=` link with Copy link; "Send to your teacher" — the
-  teacher's email (invisible characters removed, then validated: no spaces
-  or `, ; ? & # < > "`, an apostrophe only before the `@`), the student's
-  name (required) and an optional message (≤ 500 characters); email and
-  name are remembered in `localStorage` (`z1.teacherEmail`,
-  `z1.studentName`). **Send to teacher** (or Enter in those two fields)
-  POSTs `{ to, studentName, message, kind, link, code, fileName }` as
-  `text/plain` JSON (no CORS preflight) to the teacher's email relay,
-  `EMAIL_RELAY_URL` in `src/config.ts` (`sendWorkToTeacher`, 30 s timeout,
-  one send at a time). The relay (`tools/email-relay/Code.gs`, a Google Apps
-  Script web app the teacher deploys, see `docs/EMAIL.md`) checks every
-  field, the recipient against its allow-list and the link against the
-  simulator URL, limits emails per hour and sends the email with the sketch
-  attached through MailApp. Its error codes are shown as plain sentences
-  (an answer that comes after the student closed the dialog is also shown
-  as a page toast, and still on show at the next open);
-  while `EMAIL_RELAY_URL` is empty the send section is replaced by one
-  "not set up" line. "Download .ino" saves `sketchFileName()`
-  (`sketch-file.ts`).
+  `#code=` / `#blocks=` link with **Copy link**, and **Download .ino**, which
+  saves `sketchFileName()` (`sketch-file.ts`) named after the joined class
+  username (`currentUsername()`, `src/classroom/session-store.ts`). When the
+  class platform is configured one line points to Hand in; a small line
+  always tells teachers about the class dashboard (`teacher.html`). The
+  former email sending (a Google Apps Script relay) is gone; `main.ts`
+  removes its two legacy `localStorage` keys once.
+- Hand in dialog (`handin-dialog.ts`, opened by the "Hand in" button, spec
+  docs/CLASSROOM.md §1.2 and §4.10). The App builds a `HandinWork` from the
+  same `exportSketch()` as Share (the sketch, in Blocks mode also the
+  workspace JSON), plus `unchanged` (the blank sketch / empty program, or an
+  untouched example with its title) and `errorCount` from a synchronous
+  `transpile()`. The dialog loads `src/classroom/student.ts` with `import()`
+  on first open and calls `restore()`; nothing is downloaded while no session
+  is saved. Views: Loading → Code (class code, checked locally with
+  `normalizeClassCode` / `codeProblem`) → Pick your name (radio list, filter
+  above 12 names, Refresh the list, local `joinStatus` check) or Already
+  joined; Confirm ("Hand in to 8B Robotics as ali.k?", shown in a new tab or
+  after 20 minutes); Ready (task select, title, note, the example / blank
+  warning that needs a second click, the error-count note, "Hand in as
+  ali.k"); Success (title and task kept for the next hand-in, note cleared);
+  My hand-ins (lazy, 20 per page, Open → `location.hash = handinHash(...)`
+  so the existing `hashchange` handler asks before replacing work); Sign out
+  (`leave()`, then the Code view). A hand-in keeps one `newHandinId()` per
+  draft so Try again after a timeout reuses it; after the request timeout the
+  status reads "Checking whether it arrived…". Every error shows its §1.5
+  text; `not_on_roster`, `device_removed`, `class_deleted`, `handins_closed`
+  and `lost_identity` get their own button. `onSessionChange` updates the
+  header label. A `#class=<code>` link (`takeHashPayload`, also on
+  `hashchange`) opens the dialog in join mode with the code, or shows the
+  "Classes are not set up on this site." toast when not configured. All
+  class strings are rendered with `textContent`.
 - Arduino IDE dialog (`arduino-ide-dialog.ts`, opened by the "Arduino IDE"
   button with the editor text, or in Blocks mode the sketch generated from
   the blocks — the same `exportSketch()` as Share). A web page cannot start
@@ -817,7 +843,35 @@ export function createBoardView(container: HTMLElement, board: Zero1Board): Boar
   `buzzer.state.freq` (start on first user gesture; gain 0.05; mute toggle).
 - Examples menu (`examples-menu.ts`): grouped list from `src/examples/index.ts`.
 - Keyboard: `Ctrl/Cmd+Enter` run, `Esc` stop — both ignored while the
-  Settings, Share or Arduino IDE dialog is open (Esc then closes the dialog).
+  Settings, Share, Hand in or Arduino IDE dialog is open (Esc then closes the
+  dialog).
+- Mode from links: a `#code=` / `#blocks=` link decides the mode at start-up
+  (`this.mode = fromLink.kind`), so a saved Blocks mode never hides a shared
+  sketch; only without a link is `loadMode()` used.
+- Review mode (`isReviewFrame()`: `location.hash === '#review'` inside an
+  opaque origin, i.e. review.html's `<iframe sandbox="allow-scripts">`): the
+  App reads and writes no storage (editor `persist: false`, no mode / blocks /
+  mute / config writes; `main.ts` skips `loadConfig()`), hides New, Examples,
+  Hand in, Share and Arduino IDE, has no `hashchange` listener, posts
+  `{ type: 'z1-review-ready' }` to the parent and accepts `{ type: 'z1-review',
+  payload }` only from `window.parent` on the site's own origin; the payload
+  decides the mode (blocks from `workspaceJson`, else the sketch with the
+  "generated from blocks" banner) and nothing runs until Run. A `#review=` /
+  `#rid=` hash on the site origin is sent to `./review.html` with
+  `location.replace` (docs/CLASSROOM.md §3.4).
+- X1 hardening: `codegen.ts` refuses the member names `constructor`,
+  `prototype`, `__proto__`, `caller`, `callee`, `arguments`, `call`, `apply`,
+  `bind` and any `__` name in members, method calls and constant string keys
+  ("'name' is not available in the simulator"); `__m` / `__mut` in
+  `src/runtime/libs/strings.ts` refuse the same names and any function
+  inherited from `Object.prototype` / `Function.prototype`.
+- Update prompt: `vite:preloadError` (and a Blockly chunk that cannot be
+  fetched while online) flushes the editor and blocks autosave and shows the
+  banner "The simulator was updated. Reload the page to continue (your work is
+  saved)." with a Reload button (`data-slot="update"`); the Hand in dialog
+  reports `app_updated` errors to it through `onAppUpdated`.
+- The class platform's data layer is §12 (A); the teacher dashboard and the
+  review page are §13 (C).
 - `index.html`: minimal shell with `<div id="app">`, meta viewport, title
   "ZERO1 Smart Board Simulator", favicon as inline SVG data URI.
 - `style.css`: imported from `main.ts`.
@@ -883,3 +937,107 @@ Module tests live next to their module name: `tests/parser.test.ts`,
 ## 11. Block programming
 
 See docs/BLOCKS.md (block set, Arduino generator rules, UI behaviour, tests, examples).
+
+---
+
+## 12. Classes: data layer (`src/classroom`, `src/firebase-config.ts`, `src/share-link.ts`) — owner: A
+
+The class platform (docs/CLASSROOM.md) has no server: Firebase Authentication and
+Cloud Firestore, guarded by `firestore.rules`, and client code. The data layer is
+the part between the UI (Hand in dialog, teacher dashboard) and Firebase.
+
+```
+src/firebase-config.ts        public web config, APP_CHECK_SITE_KEY, CLASSROOM_DEFAULTS
+src/share-link.ts             #code= / #blocks= / #class= links, review payload (pure)
+src/classroom/
+  model.ts                    types, LIMITS, class codes, usernames, rosters, tasks, joinStatus,
+                              cleanLine/cleanMultiline, deviceLabel, document readers (pure)
+  codec.ts                    encodeContent / decodeContent: gzip bytes or plain strings, capped inflate (pure)
+  errors.ts                   ClassroomError, toClassroomError, withTimeout, the text tables, quotaResetText (pure)
+  session-store.ts            z1.classroom in localStorage, the last code, the per-tab confirm flag (pure)
+  firebase.ts                 isClassroomConfigured(), lazy loaders of the two named apps, App Check, emulators
+  student-sdk.ts              the ONLY import of firebase/app, auth, firestore/lite, app-check (loaded with import())
+  teacher-sdk.ts              the ONLY import of firebase/app, auth, firestore, app-check (loaded with import())
+  student.ts                  createStudentApi(): restore, findClass, join, handIn (idempotent retry), myHandins, leave
+  teacher.ts                  createTeacherApi(): sign-in, classes, roster, tasks, members, hand-ins, retention, deletion
+```
+
+- **Bundle boundary.** Nothing reachable by static imports from a page entry imports
+  `firebase/*` except with `import type`; `firebase.ts` loads the two barrels with
+  `import()`. `tests/bundle-boundary.test.ts` scans the sources; `scripts/check-bundle.mjs`
+  (run by `npm run build`) checks the emitted chunks and the gzip sizes.
+- **Two named apps.** `z1-student` (Firestore Lite, anonymous auth persisted in IndexedDB)
+  and `z1-teacher` (full SDK with the memory cache, session-only auth persistence). A
+  teacher session and a student session never replace each other.
+- **Hand-in batch.** One document per hand-in plus the member counter tick, in one batch
+  whose id the dialog makes before sending (`newHandinId()`) and reuses on retry; the rules
+  tie the two writes together and refuse a second commit with the same id. After a timeout
+  the API reads the member doc: `lastHandinId === id` means it arrived.
+- **Errors.** Every method rejects with a `ClassroomError` whose `message` is the text of
+  the §1.5 table for its side (student or teacher); listeners report through `onError`.
+- **Configuration.** `src/firebase-config.ts` holds the public web config; while its four
+  keys are empty the platform is "not configured" and never downloads Firebase.
+  `vite --mode emulator` (`.env.emulator`) points both apps at the local emulators.
+- **Tests.** `tests/classroom-*.test.ts`, `tests/share-link.test.ts` and
+  `tests/bundle-boundary.test.ts` run with `npm test` (fakes only). `tests-emulator/`
+  holds the security-rules suite (78 cases), the API integration tests and the end-to-end
+  flow; they need the Firebase emulators: `npm run test:emulator` (Java 21), or
+  `npm run test:rules` for the rules alone. `tests-emulator/mutations.sh` checks that each
+  weakened copy of the rules in `tests-emulator/mutations/` makes a test fail.
+
+## 13. Teacher dashboard and review page (`teacher.html`, `review.html`, `src/teacher`, `src/review`) — owner: C
+
+Two extra Vite pages next to the simulator (`vite.config.ts`, `rollupOptions.input`;
+`base: './'` keeps every link relative for GitHub Pages). Both reuse the tokens and the
+`.z1-btn` / `.z1-dialog` / `.z1-setting` / `.z1-table` / `.z1-toast` classes of
+`src/ui/style.css` (imported, never edited) and add their own stylesheet (prefix `z1t-`
+for the dashboard, `z1r-` for the review page). Everything is vanilla DOM; every string
+that comes from a student or a teacher is rendered with `textContent` (CLASSROOM §3.4).
+
+```
+teacher.html, src/teacher/main.ts  entry: styles, then mountDashboard(); the TeacherApi (and the
+                                   Firebase SDK behind it) is loaded at page load, never on a click
+src/teacher/
+  dashboard.ts    mountDashboard(root, options): the not-configured, signed-out and main views, the
+                  top bar with the class switcher, the error banner (+ Retry), the toast, the class
+                  list, Create class, Sign out, Delete my data; parks the previous class's session
+  context.ts      DashboardContext: API, clock, storages, download / copy / confirm hooks, banner,
+                  toast, save() ("Saving…", the 10 s waiting text, SAVE_FAILED), tracked timers
+  session.ts      ClassSession: watchClass + watchTodayHandins (or the one-off period view), the
+                  members listener while a view needs it, the decode cache, the New/Seen marks
+  class-page.ts   the class header (code, joining control with the server-time countdown, hand-ins
+                  switch, current task), Show to the class overlay, the tabs, the retention check
+  overview.ts     T5: period/task/sort, "n of m handed in", one row per student, Open / .ino, zips
+  detail.ts       T6: versions, Load older (studentHandins), Open / .ino / Copy, Move to…, Delete;
+                  openLink() and inoButton() shared with the Overview
+  feed.ts         T7: All hand-ins, "(removed) name", filters
+  students.ts     T8: roster table, computers, Rename / Let join again / Remove, Add students
+  settings.ts     T9: names, keepWeeks, tasks, Delete class (code confirm, progress, Finish deleting)
+  roster-form.ts  the student-list textarea + "Shorten last names" + planRosterAdd preview; tasks form
+  handins.ts      DecodeCache, overviewRows(), review payload / link, .ino names, zip entries
+  zip.ts          makeZip(): store-only zip, CRC-32, UTF-8 names; uniqueName()
+  format.ts       time texts, storage keys (z1.teacher.*), storage access that never throws, el()
+review.html, src/review/main.ts, page.ts, review.css
+                  mountReview(): banner + Download .ino + Copy code, then
+                  <iframe sandbox="allow-scripts" src="./index.html#review">; the ready/payload
+                  handshake checks event.source and origin 'null'; #review= or #rid= (localStorage
+                  handoff `<created ms>:<payload>`, dropped after a day)
+```
+
+- **No await between a click and its effect.** Every record is decoded once when it
+  arrives (`DecodeCache`); Open is a real `<a target="_blank" rel="noopener noreferrer">`
+  whose `href` is computed at render time (large payloads write their `z1.review.<rid>`
+  handoff at render time too), `.ino` and Copy are enabled only once decoded, and
+  `signIn()` / `deleteAccount()` are the first statement of their click handlers.
+- **Listeners.** One `watchClasses` while signed in; the open class has `watchClass` and,
+  in the Today view, `watchTodayHandins`; `watchMembers` runs only while the Students tab or
+  the overlay is visible. Switching class keeps the previous session for 10 minutes (one at
+  most). Sign out stops everything and clears the review handoffs.
+- **Storage.** `z1.teacher.lastClass`, `z1.teacher.period.<code>`, `z1.teacher.seen.<code>`
+  in localStorage, `z1.teacher.pruned.<code>` in sessionStorage; all reads and writes are
+  wrapped, so a blocked storage only loses the conveniences.
+- **Tests.** `tests/teacher-dashboard.test.ts` (happy-dom, with `tests/fakes/fake-teacher-api.ts`:
+  an in-memory TeacherApi with `emit*` helpers, a `ready` deferred, call recording and
+  `failNext`), `tests/review-page.test.ts` and `tests/zip.test.ts`. The build check
+  (`scripts/check-bundle.mjs`) confirms that neither page's static import graph contains
+  Firebase.

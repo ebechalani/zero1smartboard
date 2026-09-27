@@ -6,7 +6,14 @@ import './ui/style.css';
 import { RealClock } from './runtime/clock';
 import { createZero1Board } from './zero1';
 import { loadConfig } from './ui/settings';
-import { mountApp } from './ui/app';
+import { isReviewFrame, mountApp } from './ui/app';
+
+// The email relay (removed) remembered the teacher's address and the student's name; forget them once.
+try {
+  for (const key of ['teacherEmail', 'studentName']) localStorage.removeItem('z1.' + key);
+} catch {
+  // No storage (private mode, a sandboxed frame): nothing to forget.
+}
 
 const root = document.getElementById('app');
 if (!root) {
@@ -14,5 +21,6 @@ if (!root) {
 }
 
 const clock = new RealClock();
-const board = createZero1Board(clock, loadConfig());
+// The sandboxed review frame (docs/CLASSROOM.md §3.4) touches no storage at all.
+const board = createZero1Board(clock, isReviewFrame() ? {} : loadConfig());
 mountApp(root, board, clock);

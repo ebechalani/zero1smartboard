@@ -10,6 +10,7 @@ permissions:
   pages: write
   id-token: write
 
+# Only this workflow uses the "pages" group: a pull request run (ci.yml) can never cancel a deploy.
 concurrency:
   group: pages
   cancel-in-progress: true
@@ -30,8 +31,35 @@ jobs:
         with:
           path: dist
 
+  # Security rules and data-layer integration tests against the Firebase emulators
+  # (docs/CLASSROOM.md §7.1-7.2, §7.6). firebase-tools is fetched with npx, not installed.
+  emulator-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - name: Cache the Firestore emulator jar
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/firebase/emulators
+          key: firebase-emulators-15.31.0
+      - name: Cache the npx download of firebase-tools
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm/_npx
+          key: npx-firebase-tools-15.31.0
+      - run: npm ci
+      - run: npm run test:emulator
+
   deploy:
-    needs: build
+    needs: [build, emulator-tests]
     runs-on: ubuntu-latest
     environment:
       name: github-pages

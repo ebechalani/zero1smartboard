@@ -159,6 +159,24 @@ p {
   font-weight: 600;
   white-space: nowrap;
 }
+/* Below 1536 px the brand reads "ZERO1 Simulator" so that the header (with
+   Hand in · <name>) stays on one row; the full name stays for screen readers. */
+.z1-title-short {
+  display: none;
+}
+@media (max-width: 1535px) {
+  .z1-title-full {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+  .z1-title-short {
+    display: inline;
+  }
+}
 
 .z1-toolbar {
   display: flex;
@@ -957,6 +975,19 @@ input[type='range'] {
   flex: 1;
 }
 
+/* "The simulator was updated. Reload the page to continue (your work is saved)." */
+.z1-update {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  padding: 8px 14px;
+  background: var(--accent-tint);
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+  font-weight: 500;
+}
+
 /* ----------------------------------------------------------------- toast */
 
 .z1-toast {
@@ -993,37 +1024,11 @@ input[type='range'] {
 }
 
 /* ---------------------------------------------------------- share dialog */
-/* share-dialog.ts: the link row, the "Send to your teacher" group (fields,
-   message, the Send button and its live status), the line shown instead of
-   that group when no email relay is set up, the "Save as a file" group and
-   the status line. The rest comes from .z1-dialog. */
+/* share-dialog.ts: the link row, the "Save as a file" group, the Hand in
+   hint and the status line. The rest comes from .z1-dialog. */
 
 .z1-dialog.z1-share {
   width: min(660px, calc(100vw - 32px));
-}
-
-.z1-share input[type='email'],
-.z1-share textarea {
-  /* Same look as the text inputs (the shared rule only covers type="text"). */
-  font: inherit;
-  color: var(--text);
-  background: var(--panel);
-  border: 1px solid var(--border-strong);
-  border-radius: 6px;
-  padding: 5px 8px;
-}
-.z1-share input[type='email']:hover,
-.z1-share textarea:hover {
-  border-color: var(--accent);
-}
-.z1-share input[aria-invalid='true'] {
-  border-color: var(--error);
-}
-.z1-share textarea {
-  width: 100%;
-  min-height: 4em;
-  line-height: 1.4;
-  resize: vertical;
 }
 
 .z1-share-row {
@@ -1060,50 +1065,10 @@ input[type='range'] {
   font-weight: 600;
 }
 
-.z1-share-fields {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 10px 14px;
-}
-.z1-share-fields input {
-  width: 100%;
-}
-
-/* "Send to teacher" with its status beside it (below it on a narrow screen). */
-.z1-share-send {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px 12px;
-}
-.z1-share-send > .z1-btn {
-  flex: none;
-  justify-content: center;
-  min-width: 10em; /* same width for "Send to teacher" and "Sending…" */
-}
-.z1-share-send-status {
-  flex: 1 1 240px;
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--muted);
-}
-.z1-share-send-status[data-state='ok'] {
-  color: var(--ok);
-}
-.z1-share-send-status[data-state='error'] {
-  color: var(--error);
-}
-
-/* Shown instead of the send group while no email relay is set up. */
-.z1-share-off {
+/* "To send your work to your teacher, use Hand in." */
+.z1-share-handin {
   padding-top: 14px;
   border-top: 1px solid var(--border);
-}
-
-.z1-share-error {
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--error);
 }
 .z1-share-status {
   align-self: center;
@@ -1216,7 +1181,7 @@ input[type='range'] {
    than push the Close button out of the dialog. */
 .z1-ide-status,
 .z1-share-status,
-.z1-share-send-status {
+.z1-handin-status {
   min-width: 0;
   overflow-wrap: anywhere;
 }
@@ -1228,4 +1193,173 @@ input[type='range'] {
   .z1-ide-steps {
     transition: none;
   }
+}
+
+/* ---------------------------------------------------------- hand in dialog */
+/* handin-dialog.ts (docs/CLASSROOM.md §4.10): the class-code field, the name
+   list, the ready form with its warnings, the history rows and the status
+   line. The rest comes from .z1-dialog. */
+
+.z1-dialog.z1-handin {
+  width: min(600px, calc(100vw - 32px));
+}
+.z1-handin-view {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+.z1-handin-heading {
+  font-size: 15px;
+}
+.z1-handin-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+/* "Hand in as <name>": a long name is cut with an ellipsis (the aria-label has it whole). */
+.z1-handin-submit {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.z1-handin-code {
+  width: 12ch;
+  font-family: var(--mono);
+  font-size: 16px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.z1-handin input[aria-invalid='true'] {
+  border-color: var(--error);
+}
+.z1-handin textarea,
+.z1-handin input[type='text']:not(.z1-handin-code) {
+  width: 100%;
+  font: inherit;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  padding: 5px 8px;
+}
+.z1-handin textarea {
+  min-height: 3.5em;
+  line-height: 1.4;
+  resize: vertical;
+}
+/* A button that reads like a link ("Refresh the list", "Not ali.k? Sign out"). */
+.z1-linkbtn {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: var(--accent-soft);
+  text-decoration: underline;
+  cursor: pointer;
+}
+.z1-linkbtn:hover {
+  color: var(--accent-strong);
+}
+.z1-handin-list {
+  display: flex;
+  flex-direction: column;
+  max-height: 50vh;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+}
+.z1-handin-pick {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+}
+.z1-handin-pick:last-child {
+  border-bottom: 0;
+}
+.z1-handin-pick:hover {
+  background: var(--accent-tint);
+}
+.z1-handin-pick:has(input:checked) {
+  background: var(--accent-tint);
+  font-weight: 600;
+}
+.z1-handin-error,
+.z1-handin-warning {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--error);
+}
+.z1-handin-error:empty {
+  display: none;
+}
+.z1-handin-warning {
+  color: var(--warn);
+}
+.z1-handin-note {
+  font-size: 13px;
+  color: var(--muted);
+}
+.z1-handin-success {
+  font-weight: 600;
+  color: var(--ok);
+}
+.z1-handin-status {
+  align-self: center;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--accent-soft);
+}
+.z1-handin-status[data-tone='error'] {
+  color: var(--error);
+}
+.z1-handin-history > summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.z1-handin-rows {
+  list-style: none;
+  margin: 8px 0;
+  padding: 0;
+}
+.z1-handin-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  padding: 6px 0;
+  border-top: 1px solid var(--border);
+}
+.z1-handin-when {
+  color: var(--muted);
+  font-size: 13px;
+}
+.z1-handin-what {
+  flex: 1 1 160px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.z1-handin-kind {
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--accent-tint);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--accent-soft);
+}
+
+/* Header: the joined username after "Hand in", cut with an ellipsis. */
+.z1-toolbar [data-slot='handin'] .z1-handin-name {
+  display: inline-block;
+  max-width: 9ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
 }

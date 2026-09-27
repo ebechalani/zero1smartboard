@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+# Its own group: a new push to the pull request cancels the previous run, never a Pages deploy.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
+
+  emulator-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - name: Cache the Firestore emulator jar
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/firebase/emulators
+          key: firebase-emulators-15.31.0
+      - name: Cache the npx download of firebase-tools
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm/_npx
+          key: npx-firebase-tools-15.31.0
+      - run: npm ci
+      - run: npm run test:emulator

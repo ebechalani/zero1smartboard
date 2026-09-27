@@ -1,5 +1,6 @@
 /**
- * Application shell: header with actions and the Code | Blocks mode switch,
+ * Application shell: header with actions (including Hand in, the class
+ * platform's button, when it is configured) and the Code | Blocks mode switch,
  * board + inputs on the left, tabbed blocks/editor/monitors on the right,
  * console below. Wires the transpiler, the executor and the virtual board
  * together and drives the animation loop.
@@ -40,8 +41,13 @@ import { createControls, type Controls } from './controls';
 import { createSettingsDialog, type SettingsDialog } from './settings';
 import { createShareDialog, type ShareDialog } from './share-dialog';
 import { createArduinoIdeDialog, type ArduinoIdeDialog } from './arduino-ide-dialog';
+import { createHandinDialog, type HandinDialog, type HandinWork } from './handin-dialog';
 import { createExamplesMenu, type ExamplesMenu } from './examples-menu';
 import { createBuzzerAudio, loadMuted, saveMuted, type BuzzerAudio } from './audio';
+import { isClassroomConfigured } from '../classroom/firebase';
+import { STUDENT_ERROR_TEXT } from '../classroom/errors';
+import { currentUsername } from '../classroom/session-store';
+import { classFromHash, handinHash, parseWorkspaceJson } from '../share-link';
 
 /** What "New" puts in the editor: exactly the Arduino IDE's File > New. */
 export const BLANK_SKETCH = `void setup() {
@@ -60,8 +66,8 @@ type TabId = 'blocks' | 'code' | 'serial' | 'pinmap' | 'js';
 /** The board view may expose `pulseRx()` to flash the RX LED when the monitor sends text. */
 type BoardViewWithRx = BoardView & { pulseRx?(): void };
 
-/** What a share link / `#example=` hash carried. */
-type HashPayload = { kind: 'code'; code: string } | { kind: 'blocks'; workspace: object };
+/** What a share link / `#example=` / `#class=` hash carried. */
+type HashPayload = { kind: 'code'; code: string } | { kind: 'blocks'; workspace: object } | { kind: 'class'; code: string };
 
 /** The work as it leaves the simulator (Share, Arduino IDE): the sketch and its share-link hash. */
 interface ExportedSketch {
@@ -70,6 +76,8 @@ interface ExportedSketch {
   kind: AppMode;
   /** `#code=…` or `#blocks=…`. */
   hash: string;
+  /** The Blockly workspace in Blocks mode, null in Code mode. */
+  workspace: object | null;
 }
 
 /** Delay between an edit and the live syntax check. */
@@ -91,10 +99,47 @@ const TABS: readonly { id: TabId; label: string }[] = [
 
 const MODES: readonly AppMode[] = ['code', 'blocks'];
 
+/** Browser messages for a lazy chunk that could not be fetched (after a redeploy the hashed file is gone). */
+const CHUNK_LOAD_FAILURE = /dynamically imported module|Importing a module script failed|Failed to fetch|Load failed|ChunkLoadError/i;
+
+/** The message the review page sends the sandboxed simulator (docs/CLASSROOM.md §1.4). */
+interface ReviewMessage {
+  kind: 'code' | 'blocks';
+  code: string;
+  workspaceJson: string;
+}
+
+/**
+ * Review mode (docs/CLASSROOM.md §4.11): the simulator runs a hand-in inside
+ * review.html's `<iframe sandbox="allow-scripts">`, so its origin is opaque
+ * ('null'). Only then: on the site's own origin a `#review` hash is a link
+ * that must go to review.html (see mountApp).
+ */
+export function isReviewFrame(): boolean {
+  try {
+    return location.hash === '#review' && self.origin === 'null';
+  } catch {
+    return false;
+  }
+}
+
+/** The payload of a `z1-review` message, or null when it is not one. */
+function reviewMessageOf(data: unknown): ReviewMessage | null {
+  if (!data || typeof data !== 'object') return null;
+  const o = data as { type?: unknown; payload?: unknown };
+  if (o.type !== 'z1-review' || !o.payload || typeof o.payload !== 'object') return null;
+  const p = o.payload as Record<string, unknown>;
+  if (p.kind !== 'code' && p.kind !== 'blocks') return null;
+  if (typeof p.code !== 'string' || typeof p.workspaceJson !== 'string') return null;
+  return { kind: p.kind, code: p.code, workspaceJson: p.workspaceJson };
+}
+
 /**
  * Mount the simulator into `root` and start the animation loop.
  */
 export function mountApp(root: HTMLElement, board: Zero1Board, clock: Clock): App {
+  // A review link opened on the site's own origin: a hand-in never runs here (docs/CLASSROOM.md §3.4).
+  if (!isReviewFrame() && /^#(review|rid)=/.test(location.hash)) location.replace(`./review.html${location.hash}`);
   return new App(root, board, clock);
 }
 
@@ -108,6 +153,8 @@ export class App {
   private readonly settings: SettingsDialog;
   private readonly shareDialog: ShareDialog;
   private readonly ideDialog: ArduinoIdeDialog;
+  /** The Hand in dialog of the class platform; null while it is not configured (no button either). */
+  private readonly handinDialog: HandinDialog | null;
   private readonly examplesMenu: ExamplesMenu<Example | BlockExample>;
   private readonly audio: BuzzerAudio;
 
@@ -149,14 +196,22 @@ export class App {
   private blocksSaveTimer: ReturnType<typeof setTimeout> | null = null;
   private unsavedWorkspace: object | null = null;
 
+  /** Review mode: inside review.html's sandbox; no storage, no links, no hand-in (docs/CLASSROOM.md §4.11). */
+  private readonly review: boolean;
+  private reviewListener: ((e: MessageEvent) => void) | null = null;
+
   constructor(
     private readonly root: HTMLElement,
     private readonly board: Zero1Board,
     private readonly clock: Clock,
   ) {
     document.body.dataset.running = 'false';
-    const fromLink = takeHashPayload();
-    this.mode = fromLink?.kind === 'blocks' ? 'blocks' : loadMode();
+    const review = isReviewFrame();
+    this.review = review;
+    const fromLink = review ? null : takeHashPayload();
+    // A share link decides the mode (a `#code=` link opens in Code mode even after a Blocks visit).
+    // In review mode the payload decides it later; nothing is read from storage.
+    this.mode = review ? 'code' : fromLink && fromLink.kind !== 'class' ? fromLink.kind : loadMode();
     this.activeTab = this.mode === 'blocks' ? 'blocks' : 'code';
     root.innerHTML = this.template();
 
@@ -176,7 +231,8 @@ export class App {
 
     // --- panels -----------------------------------------------------------
     this.editor = createEditor(this.slot('editor'), {
-      initialCode: this.initialCode(fromLink),
+      initialCode: review ? '' : this.initialCode(fromLink),
+      persist: !review,
       onRun: () => void this.run(),
       onStop: () => void this.stop(),
       onChange: () => this.scheduleLiveLint(),
@@ -204,16 +260,17 @@ export class App {
       },
     });
 
-    this.audio = createBuzzerAudio({ muted: loadMuted() });
+    this.audio = createBuzzerAudio({ muted: review ? false : loadMuted() });
     this.controls = createControls(this.slot('inputs'), board, {
       initialMuted: this.audio.isMuted(),
       onMuteChange: (muted) => {
         this.audio.setMuted(muted);
-        saveMuted(muted);
+        if (!review) saveMuted(muted);
       },
     });
 
     this.settings = createSettingsDialog(root, {
+      persist: !review,
       getConfig: () => board.config,
       onApply: (config) => {
         board.applyConfig(config);
@@ -221,13 +278,19 @@ export class App {
       },
     });
 
-    this.shareDialog = createShareDialog(root, {
-      // The relay may answer after the student closed the dialog: say it on the page too.
-      toast: (text) => {
-        if (!this.shareDialog.isOpen()) this.toast(text);
-      },
-    });
+    this.shareDialog = createShareDialog(root);
     this.ideDialog = createArduinoIdeDialog(root);
+    this.handinDialog =
+      !review && isClassroomConfigured()
+        ? createHandinDialog(root, {
+            openWork: (content) => {
+              location.hash = handinHash(content).hash; // onHashChange asks before replacing work
+            },
+            onSessionChange: (username) => this.setHandinName(username),
+            onAppUpdated: () => this.showUpdatePrompt(),
+            toast: (text) => this.toast(text),
+          })
+        : null;
 
     this.examplesMenu = createExamplesMenu<Example | BlockExample>(this.slot('examples'), EXAMPLES, (example) => {
       if ('source' in example) this.loadExample(example);
@@ -242,6 +305,15 @@ export class App {
     this.slot('settings').addEventListener('click', () => this.settings.open());
     this.slot('share').addEventListener('click', () => this.share());
     this.slot('ide').addEventListener('click', () => this.openInIde());
+    if (this.handinDialog) {
+      this.slot('handin').addEventListener('click', () => this.handIn());
+      this.setHandinName(currentUsername()); // the previous student's name shows until they sign out
+    }
+    this.slot('reload').addEventListener('click', () => location.reload());
+    if (review) {
+      // The teacher reviews one hand-in: no new work, no examples, no links out of the sandbox.
+      for (const slot of ['new', 'examples', 'share', 'ide']) this.slot(slot).hidden = true;
+    }
     for (const mode of MODES) this.modeButtons.get(mode)!.addEventListener('click', () => void this.switchMode(mode));
 
     for (const tab of TABS) {
@@ -252,9 +324,10 @@ export class App {
 
     document.addEventListener('keydown', this.onKeyDown);
     document.addEventListener('keydown', this.onBlocksKeyDown, true);
-    window.addEventListener('hashchange', this.onHashChange);
+    if (!review) window.addEventListener('hashchange', this.onHashChange);
     window.addEventListener('resize', this.onWindowResize);
     window.addEventListener('pagehide', this.onPageHide);
+    window.addEventListener('vite:preloadError', this.onPreloadError);
 
     // --- loops ------------------------------------------------------------
     this.applyMode();
@@ -266,7 +339,62 @@ export class App {
       this.controls.refresh();
       if (this.activeTab === 'pinmap') this.pinMap.refresh();
     }, SLOW_REFRESH_MS);
+    if (fromLink?.kind === 'class') this.openClassLink(fromLink.code);
+    if (review) this.startReview();
   }
+
+  // -------------------------------------------------------------------------
+  // Review mode (docs/CLASSROOM.md §1.4, §4.11)
+  // -------------------------------------------------------------------------
+
+  /**
+   * Ask review.html for the hand-in and wait for it. The frame has an opaque
+   * origin, so it posts to '*'; the answer is accepted only from the parent
+   * window on the site's own origin. Nothing runs until the teacher presses Run.
+   */
+  private startReview(): void {
+    const origin = new URL(location.href).origin;
+    this.reviewListener = (event: MessageEvent) => {
+      if (event.source !== window.parent || event.origin !== origin) return;
+      const payload = reviewMessageOf(event.data);
+      if (payload) void this.loadReview(payload);
+    };
+    window.addEventListener('message', this.reviewListener);
+    window.parent.postMessage({ type: 'z1-review-ready' }, '*');
+  }
+
+  /** Show the hand-in: the blocks when they can be read, else the sketch (with the "generated from blocks" banner). */
+  private async loadReview(payload: ReviewMessage): Promise<void> {
+    if (payload.kind === 'blocks') {
+      const workspace = parseWorkspaceJson(payload.workspaceJson);
+      if (workspace) {
+        this.setMode('blocks');
+        await this.enterBlocksMode(workspace);
+        if (this.blocksPanel) return;
+      }
+    }
+    this.setMode('code');
+    this.editor.setCode(payload.code);
+    this.lastLoadedSource = payload.code;
+    this.codeBanner.hidden = payload.kind !== 'blocks';
+    this.selectTab('code');
+  }
+
+  /**
+   * The site was redeployed under this tab: a lazy chunk (Blockly, the class
+   * features) is gone. Save the work, then ask for a reload.
+   */
+  private showUpdatePrompt(): void {
+    this.editor.flush();
+    this.flushBlocksSave();
+    this.slot('update-text').textContent = STUDENT_ERROR_TEXT.app_updated;
+    this.slot('update').hidden = false;
+  }
+
+  private readonly onPreloadError = (e: Event): void => {
+    e.preventDefault(); // Vite would rethrow and reload on its own; the banner asks first
+    this.showUpdatePrompt();
+  };
 
   // -------------------------------------------------------------------------
   // Run / stop / reset
@@ -492,7 +620,7 @@ export class App {
 
   private setMode(mode: AppMode): void {
     this.mode = mode;
-    saveMode(mode);
+    if (!this.review) saveMode(mode);
     this.applyMode();
   }
 
@@ -547,12 +675,13 @@ export class App {
       this.consolePanel.push({ level: 'error', text: `The block editor could not be loaded: ${errorText(err)}` });
       this.consolePanel.setStatus('The block editor could not be loaded — check your connection and reload');
       this.blocksLoading = null; // the next attempt (Run, mode switch) tries again
+      if (CHUNK_LOAD_FAILURE.test(errorText(err)) && navigator.onLine !== false) this.showUpdatePrompt();
       return null;
     }
     await examples;
 
     this.defaultBlocks = workspaceFingerprint(panel.getWorkspaceJson()); // a new panel starts with DEFAULT_WORKSPACE
-    const saved = loadSavedWorkspace();
+    const saved = this.review ? null : loadSavedWorkspace();
     if (saved) {
       try {
         panel.loadWorkspace(saved);
@@ -584,7 +713,7 @@ export class App {
       clearTimeout(this.blocksSaveTimer);
       this.blocksSaveTimer = null;
     }
-    if (this.unsavedWorkspace) saveWorkspace(this.unsavedWorkspace);
+    if (this.unsavedWorkspace && !this.review) saveWorkspace(this.unsavedWorkspace);
     this.unsavedWorkspace = null;
   }
 
@@ -618,7 +747,7 @@ export class App {
   /** Remember the untouched workspace, also for the next visit (the workspace itself is saved on change). */
   private setBlocksBaseline(fingerprint: string | null): void {
     this.lastLoadedBlocks = fingerprint;
-    saveBlocksBaseline(fingerprint);
+    if (!this.review) saveBlocksBaseline(fingerprint);
   }
 
   private async loadBlockExample(example: BlockExample): Promise<void> {
@@ -711,14 +840,71 @@ export class App {
 
   /**
    * Header "Share": build the `#code=` / `#blocks=` link and open the share
-   * dialog (copy the link, email it with the code to the teacher, download
-   * the sketch as an .ino file).
+   * dialog (copy the link, download the sketch as an .ino file).
    */
   private share(): void {
     const sketch = this.exportSketch();
     if (!sketch) return;
     const url = `${location.origin}${location.pathname}${location.search}${sketch.hash}`;
     this.shareDialog.open({ url, code: sketch.code, kind: sketch.kind });
+  }
+
+  /**
+   * Header "Hand in": the same work as Share, plus what the dialog warns
+   * about (an untouched example or blank sketch, transpiler errors), then the
+   * Hand in dialog (docs/CLASSROOM.md §1.2).
+   */
+  private handIn(joinCode?: string): void {
+    const work = this.handinWork();
+    if (!work || !this.handinDialog) return;
+    this.handinDialog.open(work, joinCode === undefined ? undefined : { joinCode });
+  }
+
+  /** A `#class=` link: join that class (or say that classes are not set up here). */
+  private openClassLink(code: string): void {
+    if (!this.handinDialog) {
+      this.toast(STUDENT_ERROR_TEXT.not_configured);
+      return;
+    }
+    this.handIn(code);
+  }
+
+  /** The current work as the Hand in dialog wants it, or null while the blocks are still loading. */
+  private handinWork(): HandinWork | null {
+    const sketch = this.exportSketch();
+    if (!sketch) return null;
+    const result = safeTranspile(sketch.code);
+    return {
+      kind: sketch.kind,
+      code: sketch.code,
+      workspaceJson: sketch.workspace ? JSON.stringify(sketch.workspace) : '',
+      unchanged: this.unchangedWork(sketch),
+      errorCount: result.ok ? 0 : result.errors.length,
+    };
+  }
+
+  /** Whether the work is still the blank sketch / empty program or an untouched example (with its title). */
+  private unchangedWork(sketch: ExportedSketch): HandinWork['unchanged'] {
+    if (sketch.kind === 'code') {
+      const text = sketch.code;
+      if (text.trim() === '' || text === BLANK_SKETCH) return { kind: 'blank' };
+      const example = EXAMPLES.find((e) => e.source === text);
+      return example ? { kind: 'example', title: example.title } : null;
+    }
+    if (!sketch.workspace) return null;
+    const current = workspaceFingerprint(sketch.workspace);
+    if (current === this.defaultBlocks) return { kind: 'blank' };
+    const example = this.blockExamples.find((e) => workspaceFingerprint(e.workspace) === current);
+    return example ? { kind: 'example', title: example.title } : null;
+  }
+
+  /** The header button reads "Hand in · ali.k" while joined, "Hand in" otherwise. */
+  private setHandinName(username: string): void {
+    const button = this.slot<HTMLButtonElement>('handin');
+    const name = button.querySelector<HTMLElement>('.z1-handin-name')!;
+    name.textContent = username ? ` · ${username}` : '';
+    button.setAttribute('aria-label', username ? `Hand in as ${username} to your class` : 'Hand in your work to your teacher');
+    button.title = username ? `Hand in: send this work to your teacher as ${username}` : 'Hand in: send this work to your teacher';
   }
 
   /** Header "Arduino IDE": download / save / copy the sketch for the desktop Arduino IDE. */
@@ -736,7 +922,7 @@ export class App {
   private exportSketch(): ExportedSketch | null {
     if (this.mode !== 'blocks') {
       const code = this.editor.getCode();
-      return { code, kind: 'code', hash: `#code=${encodeShareCode(code)}` };
+      return { code, kind: 'code', hash: `#code=${encodeShareCode(code)}`, workspace: null };
     }
     const panel = this.blocksPanel;
     if (!panel) {
@@ -749,7 +935,8 @@ export class App {
     } catch {
       code = this.lastGeneratedCode ?? this.editor.getCode(); // generator failure: the explanation comment
     }
-    return { code, kind: 'blocks', hash: `#blocks=${encodeShareBlocks(panel.getWorkspaceJson())}` };
+    const workspace = panel.getWorkspaceJson();
+    return { code, kind: 'blocks', hash: `#blocks=${encodeShareBlocks(workspace)}`, workspace };
   }
 
   /** Tabs that exist in the current mode (the Blocks tab is hidden in Code mode). */
@@ -801,7 +988,7 @@ export class App {
   private readonly onKeyDown = (e: KeyboardEvent): void => {
     if (e.defaultPrevented) return;
     // Keys pressed in a dialog are for the dialog (Esc closes it), never for the sketch behind it.
-    if (this.settings.element.open || this.shareDialog.isOpen() || this.ideDialog.isOpen()) return;
+    if (this.settings.element.open || this.shareDialog.isOpen() || this.ideDialog.isOpen() || this.handinDialog?.isOpen()) return;
     if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
       e.preventDefault();
       void this.run();
@@ -829,7 +1016,9 @@ export class App {
   private readonly onHashChange = (): void => {
     const payload = takeHashPayload();
     if (!payload) return;
-    if (payload.kind === 'code') {
+    if (payload.kind === 'class') {
+      this.openClassLink(payload.code);
+    } else if (payload.kind === 'code') {
       if (this.mode === 'code' && !this.confirmReplace('Load the sketch from this link?')) return;
       if (this.mode !== 'code') this.setMode('code'); // the generated text is reproducible: no question needed
       this.editor.setCode(payload.code);
@@ -888,6 +1077,8 @@ export class App {
     window.removeEventListener('hashchange', this.onHashChange);
     window.removeEventListener('resize', this.onWindowResize);
     window.removeEventListener('pagehide', this.onPageHide);
+    window.removeEventListener('vite:preloadError', this.onPreloadError);
+    if (this.reviewListener) window.removeEventListener('message', this.reviewListener);
     void this.stopExecutor();
     this.audio.dispose();
     this.boardView.destroy();
@@ -927,6 +1118,11 @@ export class App {
           t.id === initialTab ? '' : ' hidden'
         }>${panelContent[t.id] ?? ''}</div>`,
     ).join('');
+    // The class platform's button exists only when the platform is configured (docs/CLASSROOM.md §1.1).
+    const handin =
+      !this.review && isClassroomConfigured()
+        ? '<button type="button" class="z1-btn" data-slot="handin" aria-label="Hand in your work to your teacher" title="Hand in: send this work to your teacher"><span aria-hidden="true">📥</span> <span class="z1-handin-label">Hand in</span><span class="z1-handin-name"></span></button>'
+      : '';
     const modeSwitch = MODES.map(
       (m) =>
         `<button type="button" class="z1-btn z1-mode-btn" data-slot="mode-${m}" aria-pressed="${m === this.mode}" title="${
@@ -936,10 +1132,11 @@ export class App {
 
     return `
       <div class="z1-app">
+        <div class="z1-update" data-slot="update" role="alert" hidden><span data-slot="update-text"></span> <button type="button" class="z1-btn" data-slot="reload">Reload</button></div>
         <header class="z1-header">
           <div class="z1-brand">
             <span class="z1-logo" aria-hidden="true">Z1</span>
-            <h1 class="z1-title">ZERO1 Smart Board Simulator</h1>
+            <h1 class="z1-title"><span class="z1-title-full">ZERO1 Smart Board Simulator</span><span class="z1-title-short" aria-hidden="true">ZERO1 Simulator</span></h1>
           </div>
           <div class="z1-mode" role="group" aria-label="Programming mode">${modeSwitch}</div>
           <nav class="z1-toolbar" aria-label="Sketch actions">
@@ -949,7 +1146,8 @@ export class App {
             <button type="button" class="z1-btn z1-btn-stop" data-slot="stop" aria-label="Stop the sketch (Esc)" title="Stop (Esc)" disabled><span aria-hidden="true">■</span> Stop</button>
             <button type="button" class="z1-btn" data-slot="reset" aria-label="Reset the board" title="Stop and reset the board"><span aria-hidden="true">↺</span> Reset</button>
             <button type="button" class="z1-btn" data-slot="settings" aria-label="Open board settings" title="Board settings"><span aria-hidden="true">⚙</span> <span class="z1-btn-label">Settings</span></button>
-            <button type="button" class="z1-btn" data-slot="share" aria-label="Share your work" title="Share: copy the link, email your teacher, download an .ino file"><span aria-hidden="true">🔗</span> Share</button>
+            ${handin}
+            <button type="button" class="z1-btn" data-slot="share" aria-label="Share your work" title="Share: copy the link or download an .ino file"><span aria-hidden="true">🔗</span> Share</button>
             <button type="button" class="z1-btn" data-slot="ide" aria-label="Open this sketch in the Arduino IDE" title="Open in the Arduino IDE"><span aria-hidden="true">∞</span> Arduino IDE</button>
           </nav>
           <div class="z1-run-status" data-slot="status" data-status="idle" role="status" aria-live="polite">
@@ -991,12 +1189,17 @@ function safeTranspile(code: string): TranspileResult {
 
 /**
  * What the URL hash carries — `#code=<base64url>` / `#example=<id>` (a text
- * sketch) or `#blocks=<base64url JSON>` (a workspace) — or null. The hash is
- * removed afterwards so that a reload shows the saved work instead of loading
- * the link again.
+ * sketch), `#blocks=<base64url JSON>` (a workspace) or `#class=<code>` (a
+ * class to join) — or null. The hash is removed afterwards so that a reload
+ * shows the saved work instead of loading the link again.
  */
 function takeHashPayload(): HashPayload | null {
   const hash = location.hash;
+  const classCode = classFromHash(hash);
+  if (classCode !== null) {
+    dropHash();
+    return { kind: 'class', code: classCode };
+  }
   const exampleId = /^#example=([\w-]+)$/.exec(hash)?.[1];
   const example: Example | undefined = exampleId === undefined ? undefined : findExample(exampleId);
   const code = example ? example.source : codeFromHash(hash);
@@ -1008,12 +1211,16 @@ function takeHashPayload(): HashPayload | null {
     if (workspace) payload = { kind: 'blocks', workspace };
   }
   if (!payload) return null;
+  dropHash();
+  return payload;
+}
+
+function dropHash(): void {
   try {
     history.replaceState(null, '', location.pathname + location.search);
   } catch {
     // Some contexts (file://) refuse; the hash then simply stays in the address bar.
   }
-  return payload;
 }
 
 function errorText(err: unknown): string {

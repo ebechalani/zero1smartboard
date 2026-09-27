@@ -1,0 +1,29 @@
+# Apply-in: binutils-2.42
+# 0003 - ld: under Emscripten, look for the linker scripts in /ldscripts first
+#
+# ld locates its ldscripts/ directory relative to argv[0] (make_relative_prefix
+# against the configured BINDIR/TOOLBINDIR). In a WebAssembly build there is no
+# install tree: the front end writes the one script it needs (avr5.xn) to
+# /ldscripts in MEMFS, which is exactly what @horang-corp/avr-gcc-wasm 0.2.0
+# expects too. Whether the argv[0]-relative search happens to hit "/ldscripts"
+# depends on what the Emscripten glue reports as argv[0] (older glue: always
+# "./this.program"; Emscripten 6.x under Node: the caller script's path), so we
+# stop depending on it: when compiled with Emscripten, "/ldscripts" is tried
+# before the argv[0]-relative candidates. Native builds are unaffected (#ifdef).
+--- a/ld/ldfile.c
++++ b/ld/ldfile.c
+@@ -785,6 +785,14 @@ find_scripts_dir (void)
+ {
+   char *dir;
+ 
++#ifdef __EMSCRIPTEN__
++  /* WebAssembly/MEMFS build: no install tree, the scripts live in
++     "/ldscripts" (dir "" + "/ldscripts"); try that first so the result does
++     not depend on what the JS glue reports as argv[0].  */
++  if (check_for_scripts_dir ((char *) ""))
++    return xstrdup ("");
++#endif
++
+   dir = make_relative_prefix (program_name, BINDIR, SCRIPTDIR);
+   if (dir)
+     {

@@ -606,6 +606,53 @@ describe('codegen: errors and warnings', () => {
   });
 });
 
+describe('codegen: X1 sandbox hardening (docs/CLASSROOM.md §3.4)', () => {
+  const NOT_AVAILABLE = /is not available in the simulator/;
+
+  it('refuses the PoC that climbs to Function through a runtime object', () => {
+    const e = errorOf(`void setup() {\n  Serial.constructor.constructor("alert(1)").call();\n}\n${LOOP}`);
+    expect(e.message).toBe("'constructor' is not available in the simulator");
+    expect(e.line).toBe(2);
+  });
+
+  it('refuses constructor / call / apply / bind / __proto__ on members, method calls and string keys', () => {
+    expect(errorOf(`void setup() { Serial.begin.constructor("x"); } ${LOOP}`).message).toMatch(NOT_AVAILABLE);
+    expect(errorOf(`void setup() { Serial.begin.call(0); } ${LOOP}`).message).toMatch(NOT_AVAILABLE);
+    expect(errorOf(`void setup() { Serial.println.apply(0, 0); } ${LOOP}`).message).toMatch(NOT_AVAILABLE);
+    expect(errorOf(`void setup() { Serial.print.bind(0); } ${LOOP}`).message).toMatch(NOT_AVAILABLE);
+    expect(errorOf(`Servo obj; void setup() { obj.__proto__; } ${LOOP}`).message).toBe("'__proto__' is not available in the simulator");
+    expect(errorOf(`Servo obj; void setup() { obj.prototype.x = 1; } ${LOOP}`).message).toMatch(NOT_AVAILABLE);
+    expect(errorOf(`void setup() { Serial["constructor"]; } ${LOOP}`).message).toMatch(NOT_AVAILABLE);
+    expect(errorOf(`void setup() { Serial["__rt"]; } ${LOOP}`).message).toMatch(NOT_AVAILABLE);
+    expect(errorOf(`void setup() { Serial.__tick(); } ${LOOP}`).message).toMatch(NOT_AVAILABLE);
+    expect(errorOf(`void setup() { String s = "a"; s.constructor("x"); } ${LOOP}`).message).toMatch(NOT_AVAILABLE);
+    expect(errorOf(`void setup() { String s = "a"; s.__proto__.x = 1; } ${LOOP}`).message).toMatch(NOT_AVAILABLE);
+  });
+
+  it('still allows ordinary members, methods and string keys', async () => {
+    const r = await run(`void setup() { Serial.begin(9600); Serial.println("ok"); int a[2]; a[1] = 3; String s = "hi"; s.toUpperCase(); } ${LOOP}`);
+    expect(r.serial.join('')).toContain('ok');
+  });
+
+  it('the runtime refuses the same names and inherited built-ins (defence in depth)', async () => {
+    const { __m, __mut, FORBIDDEN_MEMBER_NAMES } = await import('../src/runtime/libs/strings');
+    const { FORBIDDEN_MEMBER_NAMES: FROM_CODEGEN } = await import('../src/transpiler/codegen');
+    const { SketchError } = await import('../src/runtime/values');
+    expect([...FORBIDDEN_MEMBER_NAMES]).toEqual([...FROM_CODEGEN]);
+    const fn = () => 1;
+    expect(() => __m(fn, 'constructor', ['alert(1)'])).toThrow(SketchError);
+    expect(() => __m(fn, 'call', [])).toThrow(NOT_AVAILABLE);
+    expect(() => __m({ begin() {} }, '__proto__', [])).toThrow(NOT_AVAILABLE);
+    expect(() => __m({ begin() {} }, 'toString', [])).toThrow(NOT_AVAILABLE);
+    expect(() => __m({ begin() {} }, 'hasOwnProperty', ['begin'])).toThrow(NOT_AVAILABLE);
+    expect(() => __mut('abc', 'constructor', [])).toThrow(NOT_AVAILABLE);
+    const calls: string[] = [];
+    expect(__m({ begin: (b: number) => calls.push(String(b)) }, 'begin', [9600])).toBe(1);
+    expect(calls).toEqual(['9600']);
+    expect(__m('abc', 'length', [])).toBe(3);
+  });
+});
+
 describe('codegen: example sketches', () => {
   for (const f of readdirSync(EXAMPLES_DIR).filter((x) => x.endsWith('.ino'))) {
     it(`transpiles ${f}`, () => {

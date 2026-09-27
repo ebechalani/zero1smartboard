@@ -238,9 +238,9 @@ App behaviour:
   that example's `workspaceFingerprint` is kept in
   `localStorage['z1.blocksBaseline']`, so an unchanged example restored after
   a reload does not ask).
-  Share opens the share dialog with a `#blocks=<base64url JSON>` link ("Send
-  to teacher" emails that link with the sketch generated from the blocks,
-  shown in the email and attached as an `.ino`; "Download .ino" saves the
+  Share opens the share dialog with a `#blocks=<base64url JSON>` link (Hand
+  in sends the blocks and the sketch generated from them to the teacher's
+  class, docs/CLASSROOM.md; "Download .ino" saves the
   same sketch); loading such a hash switches to Blocks mode. New resets
   the workspace to `DEFAULT_WORKSPACE` (same confirmation as an example).
 - In **Code mode** the Blocks tab is hidden and everything works as today.
