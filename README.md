@@ -27,14 +27,13 @@ No installation is needed for students: the simulator is a static web page.
   lost (an example that was not changed never asks, even after a reload).
 - **21 example sketches** grouped by Outputs, Inputs, Display and Projects,
   each with its expected behaviour written in the header comment.
-- **Share** — send the work straight to the teacher's email (the student
-  types the teacher's address and their name once and presses *Send to
-  teacher*; the email carries the student's message, a link that opens the
-  work in the simulator, the Arduino code and the `.ino` file, and nothing
-  else opens). The email goes out through a small Google Apps Script relay
-  the teacher sets up once from their own Google account — see
-  [docs/EMAIL.md](docs/EMAIL.md). Share also copies the link and downloads
-  the sketch as an `.ino` file for the Arduino IDE.
+- **Share** — copy a link to the work or download it as an `.ino` file.
+- **Classes** — teachers create a class on the teacher page and share the
+  class code or link. Students press *Hand in*, pick their name and hand in
+  their sketch or blocks. The teacher sees who handed in, runs each hand-in
+  safely in the simulator and downloads the `.ino`. See
+  [docs/CLASSROOM.md](docs/CLASSROOM.md) (set up once by the site maintainer,
+  free Firebase plan).
 - **Arduino IDE** — get the sketch (in Blocks mode, the one made from the
   blocks) into the desktop Arduino IDE to upload it to the real board:
   download it as an `.ino` file with a new name each time (the IDE opens it
@@ -80,15 +79,19 @@ npm install
 npm run dev
 ```
 
-Then open the printed URL (usually http://localhost:5173).
+Then open the printed URL (usually http://localhost:5173). The teacher
+dashboard is `teacher.html` and the sandboxed review page `review.html` on
+the same server (for example http://localhost:5173/teacher.html).
 
 Other commands:
 
 ```bash
-npm test            # unit tests (Vitest)
-npm run typecheck   # TypeScript
-npm run build       # static site in dist/
-npm run preview     # serve dist/ locally
+npm test               # unit tests (Vitest)
+npm run typecheck      # TypeScript
+npm run build          # static site in dist/ (with the bundle checks)
+npm run preview        # serve dist/ locally
+npm run test:emulator  # class platform tests on the Firebase emulators (Java 21)
+npm run dev:emulator   # the site against the local emulators (npm run emulators first)
 ```
 
 ## Deploying to GitHub Pages

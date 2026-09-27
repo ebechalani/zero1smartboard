@@ -63,14 +63,21 @@ src/
     board-view.ts board-svg.ts  interactive SVG board                       [board-svg]
     app.ts editor.ts serial-monitor.ts pinmap.ts console-panel.ts
     controls.ts settings.ts examples-menu.ts audio.ts style.css             [ui-app]
+    share-dialog.ts arduino-ide-dialog.ts sketch-file.ts                    [ui-app]
+    handin-dialog.ts            the student side of the class platform      [ui-app / B]
+  share-link.ts                 #code= / #blocks= / #class= links, review payload (pure) [A]
+  firebase-config.ts            public Firebase web config (empty = classes off) [A]
+  classroom/                    class platform data layer (§12)             [A]
+  teacher/  review/             teacher dashboard, sandboxed review page (§13) [C]
   examples/
     *.ino, index.ts             example sketches + manifest                 [examples]
 tests/
-  *.test.ts                     Vitest (node environment)
+  *.test.ts                     Vitest (node environment; UI tests use happy-dom)
   helpers.ts                    makeBoard(), runSketch()                    [integration]
+tests-emulator/                 Firebase emulator suites (rules, APIs, flow) [A]
 docs/
-  ARCHITECTURE.md PINOUT.md
-index.html                                                                  [ui-app]
+  ARCHITECTURE.md PINOUT.md BLOCKS.md CLASSROOM.md
+index.html teacher.html review.html                                         [ui-app / C]
 ```
 
 Only touch files you own. Import other modules by the paths and names given
@@ -686,8 +693,9 @@ WCAG AA on its background). Responsive grid:
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│ header: ZERO1 Smart Board Simulator · [＋ New] [Examples ▾] [▶ Run] │
-│         [■ Stop] [↺ Reset] [⚙ Settings] [🔗 Share] [∞ Arduino IDE]  │
+│ header: ZERO1 Simulator · [Code|Blocks] · [＋ New] [Examples ▾] [▶ Run] │
+│   [■ Stop] [↺ Reset] [⚙ Settings] [📥 Hand in · ali.k] [🔗 Share]     │
+│   [∞ Arduino IDE] · run status                                        │
 ├───────────────────────────────┬─────────────────────────────────────┤
 │ board SVG (scales to fit)     │ tabs: Code | Serial Monitor |       │
 │                               │       Pin Map | Generated JS        │
@@ -703,6 +711,11 @@ Code | Blocks switch, the actions, run status) is one row from 1366 px wide
 (up to 1439 px the Settings button shows only its ⚙; the run status texts
 stay short, e.g. "2 errors", "Error at 1523 ms"); narrower, the actions
 move to rows of their own under the brand, the mode switch and the status.
+Below 1536 px the brand reads "ZERO1 Simulator" (`.z1-title-short`); the full
+name stays in `<title>` and in visually hidden text. **Hand in** exists only
+when the class platform is configured (`isClassroomConfigured()`,
+docs/CLASSROOM.md §1.1); while joined it reads "Hand in · ali.k" (the name
+part is cut at 9ch with an ellipsis, the `aria-label` has it whole).
 
 ### 8.2 Board view (`board-view.ts`, `board-svg.ts`) — owner: board-svg
 
@@ -750,25 +763,38 @@ export function createBoardView(container: HTMLElement, board: Zero1Board): Boar
   Blocks mode it resets the workspace to `DEFAULT_WORKSPACE`. Neither stops a
   running sketch. URL hash `#code=<base64url>` loads shared code.
 - Share dialog (`share-dialog.ts`, opened by the "Share" button): the
-  `#code=` / `#blocks=` link with Copy link; "Send to your teacher" — the
-  teacher's email (invisible characters removed, then validated: no spaces
-  or `, ; ? & # < > "`, an apostrophe only before the `@`), the student's
-  name (required) and an optional message (≤ 500 characters); email and
-  name are remembered in `localStorage` (`z1.teacherEmail`,
-  `z1.studentName`). **Send to teacher** (or Enter in those two fields)
-  POSTs `{ to, studentName, message, kind, link, code, fileName }` as
-  `text/plain` JSON (no CORS preflight) to the teacher's email relay,
-  `EMAIL_RELAY_URL` in `src/config.ts` (`sendWorkToTeacher`, 30 s timeout,
-  one send at a time). The relay (`tools/email-relay/Code.gs`, a Google Apps
-  Script web app the teacher deploys, see `docs/EMAIL.md`) checks every
-  field, the recipient against its allow-list and the link against the
-  simulator URL, limits emails per hour and sends the email with the sketch
-  attached through MailApp. Its error codes are shown as plain sentences
-  (an answer that comes after the student closed the dialog is also shown
-  as a page toast, and still on show at the next open);
-  while `EMAIL_RELAY_URL` is empty the send section is replaced by one
-  "not set up" line. "Download .ino" saves `sketchFileName()`
-  (`sketch-file.ts`).
+  `#code=` / `#blocks=` link with **Copy link**, and **Download .ino**, which
+  saves `sketchFileName()` (`sketch-file.ts`) named after the joined class
+  username (`currentUsername()`, `src/classroom/session-store.ts`). When the
+  class platform is configured one line points to Hand in; a small line
+  always tells teachers about the class dashboard (`teacher.html`). The
+  former email sending (a Google Apps Script relay) is gone; `main.ts`
+  removes its two legacy `localStorage` keys once.
+- Hand in dialog (`handin-dialog.ts`, opened by the "Hand in" button, spec
+  docs/CLASSROOM.md §1.2 and §4.10). The App builds a `HandinWork` from the
+  same `exportSketch()` as Share (the sketch, in Blocks mode also the
+  workspace JSON), plus `unchanged` (the blank sketch / empty program, or an
+  untouched example with its title) and `errorCount` from a synchronous
+  `transpile()`. The dialog loads `src/classroom/student.ts` with `import()`
+  on first open and calls `restore()`; nothing is downloaded while no session
+  is saved. Views: Loading → Code (class code, checked locally with
+  `normalizeClassCode` / `codeProblem`) → Pick your name (radio list, filter
+  above 12 names, Refresh the list, local `joinStatus` check) or Already
+  joined; Confirm ("Hand in to 8B Robotics as ali.k?", shown in a new tab or
+  after 20 minutes); Ready (task select, title, note, the example / blank
+  warning that needs a second click, the error-count note, "Hand in as
+  ali.k"); Success (title and task kept for the next hand-in, note cleared);
+  My hand-ins (lazy, 20 per page, Open → `location.hash = handinHash(...)`
+  so the existing `hashchange` handler asks before replacing work); Sign out
+  (`leave()`, then the Code view). A hand-in keeps one `newHandinId()` per
+  draft so Try again after a timeout reuses it; after the request timeout the
+  status reads "Checking whether it arrived…". Every error shows its §1.5
+  text; `not_on_roster`, `device_removed`, `class_deleted`, `handins_closed`
+  and `lost_identity` get their own button. `onSessionChange` updates the
+  header label. A `#class=<code>` link (`takeHashPayload`, also on
+  `hashchange`) opens the dialog in join mode with the code, or shows the
+  "Classes are not set up on this site." toast when not configured. All
+  class strings are rendered with `textContent`.
 - Arduino IDE dialog (`arduino-ide-dialog.ts`, opened by the "Arduino IDE"
   button with the editor text, or in Blocks mode the sketch generated from
   the blocks — the same `exportSketch()` as Share). A web page cannot start
@@ -817,7 +843,13 @@ export function createBoardView(container: HTMLElement, board: Zero1Board): Boar
   `buzzer.state.freq` (start on first user gesture; gain 0.05; mute toggle).
 - Examples menu (`examples-menu.ts`): grouped list from `src/examples/index.ts`.
 - Keyboard: `Ctrl/Cmd+Enter` run, `Esc` stop — both ignored while the
-  Settings, Share or Arduino IDE dialog is open (Esc then closes the dialog).
+  Settings, Share, Hand in or Arduino IDE dialog is open (Esc then closes the
+  dialog).
+- Mode from links: a `#code=` / `#blocks=` link decides the mode at start-up
+  (`this.mode = fromLink.kind`), so a saved Blocks mode never hides a shared
+  sketch; only without a link is `loadMode()` used.
+- The class platform's data layer is §12 (A); the teacher dashboard and the
+  review page are §13 (C).
 - `index.html`: minimal shell with `<div id="app">`, meta viewport, title
   "ZERO1 Smart Board Simulator", favicon as inline SVG data URI.
 - `style.css`: imported from `main.ts`.

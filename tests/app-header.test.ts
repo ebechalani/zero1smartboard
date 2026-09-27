@@ -4,8 +4,9 @@
  * board to check the toolbar — New replaces the sketch with the Arduino IDE's
  * blank sketch (asking only when hand-written work would be lost), there is
  * no GitHub link, Share opens the share dialog with the `#code=` /
- * `#blocks=` link (and a relay answer that comes after the dialog was closed
- * shows as a page toast), Arduino IDE opens its dialog with the sketch, the
+ * `#blocks=` link, Arduino IDE opens its dialog with the sketch, Hand in
+ * exists only when the class platform is configured and opens its dialog with
+ * the work (docs/CLASSROOM.md §7.3), `#class=` links open it in join mode, the
  * run status stays short, and the global keys leave a sketch alone while a
  * dialog is open.
  *
@@ -29,7 +30,9 @@ import {
 } from '../src/ui/blocks-panel';
 import type { BlockExample } from '../src/blocks';
 import { EXAMPLES } from '../src/examples';
-import { SEND_ERROR_TEXT } from '../src/ui/share-dialog';
+import { saveSession } from '../src/classroom/session-store';
+import { STUDENT_ERROR_TEXT } from '../src/classroom/errors';
+import type { HandinWork } from '../src/ui/handin-dialog';
 
 // ---------------------------------------------------------------------------
 // Fake blocks panel
@@ -103,14 +106,51 @@ class FakePanel implements BlocksPanel {
   }
 }
 
-const fake = vi.hoisted(() => ({ panel: null as unknown, examples: [] as unknown[], relayUrl: '' }));
-
-// EMAIL_RELAY_URL as the app sees it: empty, as shipped, unless a test sets fake.relayUrl.
-vi.mock('../src/config', () => ({
-  get EMAIL_RELAY_URL() {
-    return fake.relayUrl;
-  },
+const fake = vi.hoisted(() => ({
+  panel: null as unknown,
+  examples: [] as unknown[],
+  /** Whether the class platform counts as configured (docs/CLASSROOM.md §7.3: mocked, not read from the real config). */
+  configured: true,
+  /** Every open() of the Hand in dialog: the work and the join code. */
+  handinOpens: [] as { work: HandinWork; joinCode?: string }[],
 }));
+
+vi.mock('../src/classroom/firebase', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../src/classroom/firebase')>()),
+  isClassroomConfigured: () => fake.configured,
+}));
+
+// The real dialog over a fake StudentApi (nothing saved, every request "offline"), with its open() recorded.
+vi.mock('../src/ui/handin-dialog', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../src/ui/handin-dialog')>();
+  const { ClassroomError } = await import('../src/classroom/errors');
+  const offline = async () => {
+    throw new ClassroomError('offline');
+  };
+  const api = {
+    restore: async () => null,
+    findClass: offline,
+    refreshClass: offline,
+    join: offline,
+    continueAs: offline,
+    confirm: () => undefined,
+    handIn: offline,
+    myHandins: offline,
+    leave: async () => undefined,
+  } as unknown as import('../src/classroom/student').StudentApi;
+  return {
+    ...original,
+    createHandinDialog: (parent: HTMLElement, options?: import('../src/ui/handin-dialog').HandinDialogOptions) => {
+      const dialog = original.createHandinDialog(parent, { ...options, loadApi: async () => api });
+      const open = dialog.open;
+      dialog.open = (work, opts) => {
+        fake.handinOpens.push({ work, joinCode: opts?.joinCode });
+        open(work, opts);
+      };
+      return dialog;
+    },
+  };
+});
 
 vi.mock('../src/ui/blocks-panel', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../src/ui/blocks-panel')>()),
@@ -147,9 +187,12 @@ afterEach(() => {
   app = null;
   fake.panel = null;
   fake.examples = [];
-  fake.relayUrl = '';
+  fake.configured = true;
+  fake.handinOpens = [];
   document.body.innerHTML = '';
   localStorage.clear();
+  sessionStorage.clear();
+  location.hash = '';
   Reflect.deleteProperty(window, 'confirm');
   vi.restoreAllMocks();
 });
@@ -242,7 +285,7 @@ const SKETCH_FILE = /^zero1_\d{4}_\d{6}\.ino$/;
 // ---------------------------------------------------------------------------
 
 describe('header toolbar', () => {
-  it('starts with New, has no GitHub link and ends with Share and Arduino IDE', () => {
+  it('starts with New, has no GitHub link and ends with Hand in, Share and Arduino IDE', () => {
     const root = start();
     const toolbar = root.querySelector('.z1-toolbar')!;
     const first = toolbar.firstElementChild as HTMLElement;
@@ -256,9 +299,18 @@ describe('header toolbar', () => {
       'stop',
       'reset',
       'settings',
+      'handin',
       'share',
       'ide',
     ]);
+    const handin = button(root, 'handin');
+    expect(handin.textContent!.replace(/\s+/g, ' ').trim()).toBe('📥 Hand in');
+    expect(handin.getAttribute('aria-label')).toBe('Hand in your work to your teacher');
+    expect(handin.title).toBe('Hand in: send this work to your teacher');
+    expect(button(root, 'share').title).toBe('Share: copy the link or download an .ino file');
+    // The brand: the full name for assistive technology, the short one on smaller screens.
+    expect(root.querySelector('.z1-title-full')!.textContent).toBe('ZERO1 Smart Board Simulator');
+    expect(root.querySelector('.z1-title-short')!.textContent).toBe('ZERO1 Simulator');
     const ide = button(root, 'ide');
     expect(ide.type).toBe('button');
     expect(ide.textContent!.trim().endsWith('Arduino IDE')).toBe(true);
@@ -266,6 +318,32 @@ describe('header toolbar', () => {
     expect(ide.title).toBe('Open in the Arduino IDE');
     expect(root.querySelector('a[href*="github"]')).toBeNull();
     expect(root.querySelector('header')!.textContent).not.toContain('GitHub');
+  });
+
+  it('has no Hand in button at all while the class platform is not configured', () => {
+    fake.configured = false;
+    const root = start();
+    expect(root.querySelector('[data-slot="handin"]')).toBeNull();
+    expect(root.querySelector('dialog.z1-handin')).toBeNull();
+    expect(Array.from(root.querySelectorAll('.z1-toolbar > *'), (el) => (el as HTMLElement).dataset.slot)).toEqual([
+      'new',
+      'examples',
+      'run',
+      'stop',
+      'reset',
+      'settings',
+      'share',
+      'ide',
+    ]);
+  });
+
+  it('reads "Hand in · ali.k" from the saved class session', () => {
+    saveSession({ v: 1, code: 'BKT4M9', className: '8B Robotics', teacherName: 'Mr. B', studentId: 'ali00001', username: 'ali.k', uid: 'u1', lastUsedAt: 0, lastHandinAt: 0, lastHandinTitle: '' });
+    const root = start();
+    const handin = button(root, 'handin');
+    expect(handin.querySelector('.z1-handin-name')!.textContent).toBe(' · ali.k');
+    expect(handin.textContent!.replace(/\s+/g, ' ').trim()).toBe('📥 Hand in · ali.k');
+    expect(handin.getAttribute('aria-label')).toBe('Hand in as ali.k to your class');
   });
 
   it('is exactly the Arduino IDE blank sketch', () => {
@@ -340,35 +418,72 @@ describe('Share', () => {
     key({ key: 'Escape' });
     expect(stop).toHaveBeenCalledTimes(1);
   });
+});
 
-  it("shows the relay's answer on the page only when the dialog was closed while sending", async () => {
-    fake.relayUrl = 'https://relay.example/macros/s/abc/exec';
-    const answers: ((body: string) => void)[] = [];
-    const fetchSpy = vi
-      .spyOn(globalThis, 'fetch')
-      .mockImplementation(() => new Promise<Response>((resolve) => answers.push((body) => resolve(new Response(body)))));
+describe('Hand in', () => {
+  it('opens the Hand in dialog with the editor text and the untouched-example / error facts', async () => {
     const root = start(MY_SKETCH);
-    button(root, 'share').click();
-    const dialog = root.querySelector<HTMLDialogElement>('dialog.z1-share')!;
-    dialog.querySelector<HTMLInputElement>('#z1-share-email')!.value = 'teacher@school.edu';
-    dialog.querySelector<HTMLInputElement>('#z1-share-name')!.value = 'Alex';
-    const send = dialog.querySelector<HTMLButtonElement>('[data-action="send"]')!;
-
-    // Open: the dialog says it (a page toast would sit under the modal backdrop).
-    send.click();
-    answers[0]('{"ok":true}');
+    button(root, 'handin').click();
     await settle();
-    expect(dialog.querySelector('[data-role="send-status"]')!.textContent).toContain('Sent to teacher@school.edu');
-    expect(toastText(root)).not.toContain('Sent to');
+    const dialog = root.querySelector<HTMLDialogElement>('dialog.z1-handin')!;
+    expect(dialog.open).toBe(true);
+    expect(fake.handinOpens).toHaveLength(1);
+    expect(fake.handinOpens[0]).toEqual({ work: { kind: 'code', code: MY_SKETCH, workspaceJson: '', unchanged: null, errorCount: 0 }, joinCode: undefined });
+    // Nothing saved: the dialog asks for the class code without downloading anything.
+    expect(dialog.querySelector<HTMLElement>('[data-view="code"]')!.hidden).toBe(false);
 
-    // Closed while sending: the page says it.
-    send.click();
+    const stop = vi.spyOn(app!, 'stop');
+    key({ key: 'Escape' });
+    expect(stop).not.toHaveBeenCalled();
     dialog.close();
-    answers[1]('{"ok":false,"error":"send_failed","message":""}');
+
+    // An untouched example, and a sketch with errors.
+    stubConfirm(true);
+    pickExample(root, EXAMPLES[0].title);
+    button(root, 'handin').click();
+    expect(fake.handinOpens[1].work.unchanged).toEqual({ kind: 'example', title: EXAMPLES[0].title });
+    expect(fake.handinOpens[1].work.errorCount).toBe(0);
+    dialog.close();
+    button(root, 'new').click();
+    await Promise.resolve();
+    button(root, 'handin').click();
+    expect(fake.handinOpens[2].work.unchanged).toEqual({ kind: 'blank' });
+    dialog.close();
+    EditorView.findFromDOM(root.querySelector<HTMLElement>('.cm-editor')!)!.dispatch({ changes: { from: 0, insert: 'int x = ;\n' } });
+    button(root, 'handin').click();
+    expect(fake.handinOpens[3].work.unchanged).toBeNull();
+    expect(fake.handinOpens[3].work.errorCount).toBeGreaterThan(0);
+  });
+
+  it('a #class= link opens the dialog in join mode with the code, and is dropped from the address bar', async () => {
+    location.hash = '#class=bkt-4m9';
+    const root = start(MY_SKETCH);
     await settle();
-    expect(fetchSpy).toHaveBeenCalledTimes(2);
-    expect(toastText(root)).toBe(SEND_ERROR_TEXT.send_failed);
-    expect(root.querySelector<HTMLElement>('[data-slot="toast"]')!.hidden).toBe(false);
+    expect(location.hash).toBe('');
+    expect(fake.handinOpens).toHaveLength(1);
+    expect(fake.handinOpens[0].joinCode).toBe('BKT4M9');
+    expect(fake.handinOpens[0].work.code).toBe(MY_SKETCH);
+    expect(root.querySelector<HTMLDialogElement>('dialog.z1-handin')!.open).toBe(true);
+    expect(editorText(root)).toBe(MY_SKETCH); // the link changed nothing else
+  });
+
+  it('a #class= link on an unconfigured site only says that classes are not set up', async () => {
+    fake.configured = false;
+    location.hash = '#class=BKT4M9';
+    const root = start(MY_SKETCH);
+    await settle();
+    expect(location.hash).toBe('');
+    expect(toastText(root)).toBe(STUDENT_ERROR_TEXT.not_configured);
+    expect(root.querySelector('dialog.z1-handin')).toBeNull();
+  });
+
+  it('a saved Blocks mode does not override a #code= share link (B1a)', () => {
+    localStorage.setItem(MODE_STORAGE_KEY, 'blocks');
+    location.hash = `#code=${encodeShareCode(MY_SKETCH)}`;
+    const root = start();
+    expect(document.body.dataset.mode).toBe('code');
+    expect(editorText(root)).toBe(MY_SKETCH);
+    expect(button(root, 'mode-code').getAttribute('aria-pressed')).toBe('true');
   });
 });
 
@@ -412,7 +527,7 @@ describe('run status', () => {
 });
 
 describe('global keys with a dialog open', () => {
-  it('leave the sketch alone while the Arduino IDE, Share or Settings dialog is open', () => {
+  it('leave the sketch alone while the Arduino IDE, Share, Hand in or Settings dialog is open', () => {
     const root = start(MY_SKETCH);
     const run = vi.spyOn(app!, 'run').mockResolvedValue(undefined);
     const stop = vi.spyOn(app!, 'stop').mockResolvedValue(undefined);
@@ -420,7 +535,8 @@ describe('global keys with a dialog open', () => {
     for (const [slot, selector] of [
       ['ide', 'dialog.z1-ide'],
       ['share', 'dialog.z1-share'],
-      ['settings', 'dialog.z1-dialog:not(.z1-share):not(.z1-ide)'],
+      ['handin', 'dialog.z1-handin'],
+      ['settings', 'dialog.z1-dialog:not(.z1-share):not(.z1-ide):not(.z1-handin)'],
     ] as const) {
       button(root, slot).click();
       const dialog = root.querySelector<HTMLDialogElement>(selector)!;
@@ -485,15 +601,39 @@ describe('Blocks mode', () => {
     expect(file.text).toBe(sketchOf(MY_WS));
   });
 
+  it('Hand in gets the generated sketch, the workspace JSON and the example / blank facts', async () => {
+    const root = await startBlocks();
+    button(root, 'handin').click();
+    expect(fake.handinOpens[0].work).toEqual({
+      kind: 'blocks',
+      code: sketchOf(panel().getWorkspaceJson()),
+      workspaceJson: JSON.stringify(panel().getWorkspaceJson()),
+      unchanged: { kind: 'blank' },
+      errorCount: 0,
+    });
+    root.querySelector<HTMLDialogElement>('dialog.z1-handin')!.close();
+    pickExample(root, BLINK_EXAMPLE.title);
+    await settle();
+    button(root, 'handin').click();
+    expect(fake.handinOpens[1].work.unchanged).toEqual({ kind: 'example', title: BLINK_EXAMPLE.title });
+    root.querySelector<HTMLDialogElement>('dialog.z1-handin')!.close();
+    panel().edit(MY_WS);
+    button(root, 'handin').click();
+    expect(fake.handinOpens[2].work.unchanged).toBeNull();
+    expect(fake.handinOpens[2].work.workspaceJson).toBe(JSON.stringify(panel().getWorkspaceJson()));
+  });
+
   it('asks to wait while the blocks are still loading', () => {
     localStorage.setItem(MODE_STORAGE_KEY, 'blocks');
     const root = start();
-    for (const slot of ['share', 'ide']) {
+    for (const slot of ['share', 'ide', 'handin']) {
       button(root, slot).click();
       expect(toastText(root), slot).toBe('The blocks are still loading — try again in a moment');
     }
     expect(root.querySelector<HTMLDialogElement>('dialog.z1-share')!.open).toBe(false);
     expect(root.querySelector<HTMLDialogElement>('dialog.z1-ide')!.open).toBe(false);
+    expect(root.querySelector<HTMLDialogElement>('dialog.z1-handin')!.open).toBe(false);
+    expect(fake.handinOpens).toEqual([]);
   });
 
   it('hands out the explanation comment when the blocks cannot be turned into a sketch', async () => {

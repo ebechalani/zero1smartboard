@@ -13,7 +13,7 @@ import {
   type ArduinoIdeDialogOptions,
   type SketchFolder,
 } from '../src/ui/arduino-ide-dialog';
-import { STUDENT_NAME_STORAGE_KEY } from '../src/ui/share-dialog';
+import { saveSession } from '../src/classroom/session-store';
 
 const SKETCH = 'void setup() {\n  pinMode(A1, OUTPUT);\n}\n\nvoid loop() {\n  digitalWrite(A1, HIGH);\n}\n';
 const WHEN = new Date(2026, 8, 26, 14, 32, 5); // 26 Sep 2026, 14:32:05 local time
@@ -114,7 +114,8 @@ describe('Arduino IDE dialog', () => {
   });
 
   it('downloads a uniquely named .ino and shows the steps with that file name', () => {
-    localStorage.setItem(STUDENT_NAME_STORAGE_KEY, 'Élise Martin');
+    // The joined class username (session-store) names the file.
+    saveSession({ v: 1, code: 'BKT4M9', className: '8B', teacherName: '', studentId: 'eli00001', username: 'elise.m', uid: 'u1', lastUsedAt: 0, lastHandinAt: 0, lastHandinTitle: '' });
     const m = mount();
     m.dialog.open({ code: SKETCH, kind: 'code' });
     const steps = m.el.querySelector<HTMLOListElement>('[data-role="steps"]')!;
@@ -128,10 +129,10 @@ describe('Arduino IDE dialog', () => {
 
     m.click('download');
     expect(m.download).toHaveBeenCalledTimes(1);
-    expect(m.download).toHaveBeenCalledWith('zero1_Elise_Martin_0926_143205.ino', SKETCH);
+    expect(m.download).toHaveBeenCalledWith('zero1_elise_m_0926_143205.ino', SKETCH);
     expect(steps.classList.contains('is-active')).toBe(true);
-    expect(steps.children[0].querySelector('b')!.textContent).toBe('zero1_Elise_Martin_0926_143205.ino');
-    expect(m.status()).toContain('zero1_Elise_Martin_0926_143205.ino');
+    expect(steps.children[0].querySelector('b')!.textContent).toBe('zero1_elise_m_0926_143205.ino');
+    expect(m.status()).toContain('zero1_elise_m_0926_143205.ino');
   });
 
   it('downloads once on a double click (the same name would be saved as "name (1).ino")', () => {

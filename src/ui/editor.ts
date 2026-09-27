@@ -1,7 +1,8 @@
 /**
  * Code editor panel: CodeMirror 6 configured for Arduino C++, with transpiler
  * diagnostics, Ctrl/Cmd+Enter to run, Esc to stop, and persistence of the
- * sketch to localStorage. Also hosts the `#code=` share-link encoding.
+ * sketch to localStorage. The `#code=` share-link encoding is re-exported
+ * from src/share-link.ts.
  *
  * The editor can be switched to read-only (Blocks mode shows the generated
  * sketch here); `setCode()` keeps working in that state so the app can update
@@ -260,31 +261,6 @@ export function saveCode(code: string): void {
 // Share links (#code=<base64url>)
 // ---------------------------------------------------------------------------
 
-/** Encode a sketch as URL-safe base64 (UTF-8, no padding) for a `#code=` link. */
-export function encodeShareCode(code: string): string {
-  const bytes = new TextEncoder().encode(code);
-  let binary = '';
-  for (const b of bytes) binary += String.fromCharCode(b);
-  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-}
-
-/** Decode a `#code=` payload; returns null when it is not valid base64url. */
-export function decodeShareCode(encoded: string): string | null {
-  if (!/^[A-Za-z0-9_-]*$/.test(encoded)) return null;
-  const base64 = encoded.replace(/-/g, '+').replace(/_/g, '/');
-  const padded = base64 + '='.repeat((4 - (base64.length % 4)) % 4);
-  try {
-    const binary = atob(padded);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-    return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
-  } catch {
-    return null;
-  }
-}
-
-/** Extract the sketch from a URL hash such as `#code=...`, or null. */
-export function codeFromHash(hash: string): string | null {
-  const match = /^#code=([A-Za-z0-9_-]+)$/.exec(hash);
-  return match ? decodeShareCode(match[1]) : null;
-}
+// The encoding lives in src/share-link.ts (docs/CLASSROOM.md §4.9); re-exported so that
+// existing imports keep working.
+export { codeFromHash, decodeShareCode, encodeShareCode } from '../share-link';
