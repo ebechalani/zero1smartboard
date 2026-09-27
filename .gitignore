@@ -3,3 +3,6 @@ dist/
 .vite/
 *.log
 .DS_Store
+
+# built at build time by tools/build-toolchain-bundle.mjs + tools/fetch-toolchain.mjs
+public/toolchain/

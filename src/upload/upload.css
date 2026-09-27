@@ -1,0 +1,191 @@
+/* "Upload to board" dialog (src/upload/ui/upload-dialog.ts). Imported by the
+   dialog module itself; the tokens (--panel, --accent, ...) come from
+   src/ui/style.css. Layout: title, one stage line with an icon, a progress bar,
+   the size line, then either the board chooser, the error block or the Done
+   text, and the action row. */
+
+.z1-dialog.z1-upload {
+  width: min(560px, calc(100vw - 32px));
+}
+
+.z1-upload-stage {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 16px;
+  font-weight: 600;
+  min-height: 24px;
+}
+.z1-upload-stage[data-tone='error'] {
+  color: var(--error);
+}
+.z1-upload-stage[data-tone='ok'] {
+  color: var(--ok);
+}
+.z1-upload-stage .z1-upload-icon {
+  display: inline-flex;
+  width: 22px;
+  height: 22px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  font-size: 13px;
+  flex: none;
+}
+.z1-upload-stage[data-tone='busy'] .z1-upload-icon {
+  border: 2px solid var(--accent-tint);
+  border-top-color: var(--accent);
+  animation: z1-upload-spin 0.9s linear infinite;
+}
+.z1-upload-stage[data-tone='ok'] .z1-upload-icon {
+  background: var(--ok);
+  color: #fff;
+}
+.z1-upload-stage[data-tone='error'] .z1-upload-icon {
+  background: var(--error);
+  color: #fff;
+}
+.z1-upload-stage[data-tone='idle'] .z1-upload-icon {
+  background: var(--accent-tint);
+  color: var(--accent-soft);
+}
+@keyframes z1-upload-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .z1-upload-stage[data-tone='busy'] .z1-upload-icon {
+    animation: none;
+    border-color: var(--accent);
+  }
+}
+
+.z1-upload-progress {
+  width: 100%;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--panel-2);
+  overflow: hidden;
+}
+.z1-upload-progress > div {
+  height: 100%;
+  width: 0;
+  background: var(--accent);
+  transition: width 0.12s linear;
+}
+.z1-upload-progress.is-indeterminate > div {
+  width: 30%;
+  animation: z1-upload-slide 1.1s ease-in-out infinite alternate;
+}
+@keyframes z1-upload-slide {
+  from {
+    margin-left: 0;
+  }
+  to {
+    margin-left: 70%;
+  }
+}
+
+.z1-upload-size {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--muted);
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+/* the "Choose your board" step */
+.z1-upload-choose {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel-2);
+}
+.z1-upload-choose > .z1-btn {
+  align-self: flex-start;
+}
+.z1-upload-choose ol {
+  margin: 0;
+  padding-left: 20px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+/* errors: the message, a help line, then the diagnostics list */
+.z1-upload-error {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.z1-upload-message {
+  margin: 0;
+}
+.z1-upload-help {
+  margin: 0;
+  padding: 8px 12px;
+  border-left: 3px solid var(--warn);
+  background: var(--panel-2);
+  border-radius: 0 var(--radius) var(--radius) 0;
+}
+.z1-upload-diagnostics {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 40vh;
+  overflow: auto;
+}
+.z1-upload-diagnostics li {
+  padding: 6px 10px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+}
+.z1-upload-diagnostics li[data-severity='error'] {
+  border-left: 3px solid var(--error);
+}
+.z1-upload-diagnostics li[data-severity='warning'] {
+  border-left: 3px solid var(--warn);
+}
+.z1-upload-diagnostics .z1-upload-where {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--muted);
+}
+.z1-upload-diagnostics .z1-upload-hint {
+  display: block;
+  margin-top: 2px;
+  color: var(--accent-soft);
+}
+
+/* "Details" disclosure with the raw compiler / protocol output */
+.z1-upload-details summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 13px;
+}
+.z1-upload-details pre {
+  margin: 6px 0 0;
+  max-height: 30vh;
+  overflow: auto;
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  background: var(--bg);
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.z1-upload-note {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+.z1-upload-note a {
+  color: var(--accent-soft);
+}

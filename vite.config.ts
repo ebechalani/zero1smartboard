@@ -13,6 +13,9 @@ export default defineConfig({
   base: './',
   server: { cors: { origin: [LOCAL_ORIGIN, 'null'] } },
   preview: { cors: { origin: [LOCAL_ORIGIN, 'null'] } },
+  // The Upload feature's compiler runs in a module Web Worker that imports the
+  // Emscripten glue of the wasm tools from public/toolchain/ at run time.
+  worker: { format: 'es' },
   build: {
     outDir: 'dist',
     target: 'es2022',
