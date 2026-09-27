@@ -25,8 +25,34 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      # "Upload to board" (docs/UPLOAD.md): the Arduino core + libraries are precompiled with the
+      # native avr-gcc at build time, the WebAssembly compiler comes from the avr-toolchain-wasm-v*
+      # release of this repository. Both are cached; if the release does not exist yet the build
+      # still succeeds and the site simply hides the Upload button.
+      - name: Install avr-gcc (for the toolchain bundle)
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq gcc-avr avr-libc binutils-avr
+      - name: Cache the toolchain (wasm tools + bundle)
+        uses: actions/cache@v4
+        with:
+          path: |
+            public/toolchain
+            node_modules/.cache/zero1-toolchain
+            node_modules/.cache/zero1-arduino-sources
+          key: toolchain-${{ hashFiles('tools/build-toolchain-bundle.mjs', 'tools/fetch-toolchain.mjs', 'tools/arduino-libs/**', 'public/THIRD_PARTY_NOTICES.md') }}-${{ github.run_id }}
+          restore-keys: |
+            toolchain-${{ hashFiles('tools/build-toolchain-bundle.mjs', 'tools/fetch-toolchain.mjs', 'tools/arduino-libs/**', 'public/THIRD_PARTY_NOTICES.md') }}-
       - run: npm test
       - run: npm run build
+      - name: Emulated hardware tests (Optiboot upload, LCD / ultrasonic libraries)
+        run: npm run test:hardware-sim
+      - name: Toolchain status
+        run: |
+          if [ -f public/toolchain/manifest.json ]; then
+            echo "Upload feature ON: $(node -p "require('./public/toolchain/manifest.json').release")"
+            test -f dist/toolchain/tools/cc1plus.wasm
+          else
+            echo "::warning::No avr-toolchain-wasm release found: the site is deployed WITHOUT the Upload feature"
+          fi
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist

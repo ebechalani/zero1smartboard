@@ -39,3 +39,6 @@ package-lock.json -diff linguist-generated
 # GitHub language stats: this is a TypeScript project that ships Arduino
 # teaching sketches, so do not let the .ino files dominate the language bar.
 src/examples/*.ino linguist-documentation
+
+# Intel HEX test fixtures: keep exact bytes (some have CRLF on purpose).
+tests/fixtures/upload/*.hex binary

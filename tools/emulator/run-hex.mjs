@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-// run-hex.mjs - behavioural test harness for ZERO1 Smart Board firmware on avr8js.
+// run-hex.mjs - behavioural test harness for ZERO1 Smart Board firmware on avr8js
+// (from the feasibility spike; used by tests-hardware-sim/ to run sketches compiled by the wasm toolchain).
 //
 // Runs an Intel HEX on an emulated ATmega328P @ 16 MHz (avr8js 0.21.1) wired like the
 // ZERO1 board, and records a TRACE of every pin-state change with the simulated time,
@@ -44,7 +45,7 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const F_CPU = 16_000_000;
 const CYC_PER_US = F_CPU / 1e6; // 16
 const AVR8JS_VERSION = (() => {
-  try { return JSON.parse(fs.readFileSync(path.join(HERE, 'node_modules/avr8js/package.json'), 'utf8')).version; }
+  try { return JSON.parse(fs.readFileSync(path.join(HERE, '../../node_modules/avr8js/package.json'), 'utf8')).version; }
   catch { return 'unknown'; }
 })();
 
