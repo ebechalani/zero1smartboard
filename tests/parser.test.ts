@@ -225,8 +225,8 @@ describe('parser: errors', () => {
 
 describe('parser: example sketches', () => {
   const files = readdirSync(EXAMPLES_DIR).filter((f) => f.endsWith('.ino'));
-  it('has all 21 example sketches', () => {
-    expect(files.length).toBe(21);
+  it('has all 48 example sketches', () => {
+    expect(files.length).toBe(48);
   });
   for (const f of files) {
     it(`parses ${f}`, () => {
