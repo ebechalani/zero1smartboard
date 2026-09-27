@@ -1,7 +1,7 @@
 /**
  * firestore.rules (docs/CLASSROOM.md §3.1) against the Firestore emulator: the happy path of every
- * client operation and the attacks from the security, classroom-UX and feasibility reviews (§7.1,
- * cases R1-R8). Ported unchanged from the verified suite of the specification (Appendix B).
+ * client operation and the attacks from the security review (§7.1, cases R1-R8), for the
+ * simplified platform (code → first name + last name → Hand in).
  *
  * Run: npm run test:rules (or npm run test:emulator). RULES_FILE points at a mutated copy for
  * tests-emulator/mutations.sh; the default is the repository's firestore.rules.
@@ -16,7 +16,6 @@ import {
   collection,
   collectionGroup,
   deleteDoc,
-  deleteField,
   doc,
   getCountFromServer,
   getDoc,
@@ -37,10 +36,8 @@ let env: RulesTestEnvironment;
 
 const CODE = 'BKT4M9';
 const CODE2 = 'BKT4M7';
-const S1 = 'aaaaaaa1';
-const S2 = 'bbbbbbb2';
-const S3 = 'ccccccc3';
-const T1 = 'tsk001';
+const ALI = { firstName: 'Ali', lastName: 'Khoury', nameKey: 'ali khoury' };
+const SARA = { firstName: 'Sara', lastName: 'Mansour', nameKey: 'sara mansour' };
 
 const teacher = (uid: string, extra: Record<string, unknown> = {}) =>
   env.authenticatedContext(uid, { firebase: { sign_in_provider: 'google.com' }, email: `${uid}@school.edu`, email_verified: true, ...extra }).firestore() as unknown as Firestore;
@@ -49,17 +46,10 @@ const nobody = () => env.unauthenticatedContext().firestore() as unknown as Fire
 
 function newClass(ownerUid = 'tA', over: Record<string, unknown> = {}) {
   return {
-    schema: 1,
+    schema: 2,
     ownerUid,
     name: '8B Robotics',
-    teacherName: 'Mr. B',
-    roster: { [S1]: 'ali.k', [S2]: 'sara.m', [S3]: 'omar_7' },
-    joinOpen: true,
-    joinWindowAt: null,
-    rejoin: {},
     handinsOpen: true,
-    tasks: { [T1]: 'Traffic light' },
-    currentTaskId: T1,
     keepWeeks: 10,
     deleting: false,
     createdAt: serverTimestamp(),
@@ -68,10 +58,9 @@ function newClass(ownerUid = 'tA', over: Record<string, unknown> = {}) {
   };
 }
 
-function join(studentId = S1, username = 'ali.k', over: Record<string, unknown> = {}) {
+function member(name = ALI, over: Record<string, unknown> = {}) {
   return {
-    studentId,
-    username,
+    ...name,
     ownerUid: 'tA',
     joinedAt: serverTimestamp(),
     device: 'Chrome · Windows',
@@ -104,13 +93,9 @@ function handIn(db: Firestore, o: HandinOpts = {}) {
   const batch = writeBatch(db);
   batch.set(doc(db, `classes/${code}/handins/${hid}`), {
     uid,
-    studentId: S1,
-    username: 'ali.k',
+    ...ALI,
     ownerUid: 'tA',
     kind: 'code',
-    taskId: T1,
-    title: 'Traffic light',
-    note: '',
     createdAt: serverTimestamp(),
     enc: 'plain',
     code: 'void setup() {}\nvoid loop() {}\n',
@@ -136,11 +121,11 @@ async function seed(path: string, data: Record<string, unknown>) {
 async function seedClass(over: Record<string, unknown> = {}, code = CODE, owner = 'tA') {
   await seed(`classes/${code}`, { ...newClass(owner), createdAt: Timestamp.now(), updatedAt: Timestamp.now(), ...over });
 }
-async function seedMember(uid = 'stu1', studentId = S1, username = 'ali.k', over: Record<string, unknown> = {}, code = CODE) {
-  await seed(`classes/${code}/members/${uid}`, { ...join(studentId, username), joinedAt: Timestamp.now(), ...over });
+async function seedMember(uid = 'stu1', name = ALI, over: Record<string, unknown> = {}, code = CODE) {
+  await seed(`classes/${code}/members/${uid}`, { ...member(name), joinedAt: Timestamp.now(), ...over });
 }
-function storedHandin(uid: string, studentId: string, username: string, over: Record<string, unknown> = {}) {
-  return { uid, studentId, username, ownerUid: 'tA', kind: 'code', taskId: T1, title: 't', note: '', createdAt: Timestamp.now(), enc: 'plain', code: 'x', workspace: '', ...over };
+function storedHandin(uid: string, name = ALI, over: Record<string, unknown> = {}) {
+  return { uid, ...name, ownerUid: 'tA', kind: 'code', createdAt: Timestamp.now(), enc: 'plain', code: 'x', workspace: '', ...over };
 }
 const minutesAgo = (m: number) => Timestamp.fromMillis(Date.now() - m * 60_000);
 
@@ -156,7 +141,7 @@ beforeEach(async () => env.clearFirestore());
 // ======================================================================= classes
 
 describe('R1 classes: create', () => {
-  it('R1.1 a Google teacher creates a class (joining open, tasks, retention)', async () => {
+  it('R1.1 a Google teacher creates a class', async () => {
     await assertSucceeds(setDoc(doc(teacher('tA'), `classes/${CODE}`), newClass('tA')));
   });
   it('R1.2 only verified Google sign-ins are teachers', async () => {
@@ -182,7 +167,7 @@ describe('R1 classes: create', () => {
       await assertFails(setDoc(doc(teacher('tA'), `classes/${code}`), newClass('tA')));
     },
   );
-  it('R1.5 refuses extra/missing fields, client times, deleting, schema 2, rejoin at creation, a client join window', async () => {
+  it('R1.5 refuses extra/missing fields, client times, deleting, the old schema and the old roster fields', async () => {
     const db = teacher('tA');
     const at = `classes/${CODE}`;
     await assertFails(setDoc(doc(db, at), newClass('tA', { admin: true })));
@@ -191,69 +176,25 @@ describe('R1 classes: create', () => {
     await assertFails(setDoc(doc(db, at), missing));
     await assertFails(setDoc(doc(db, at), newClass('tA', { createdAt: Timestamp.fromMillis(0) })));
     await assertFails(setDoc(doc(db, at), newClass('tA', { deleting: true })));
-    await assertFails(setDoc(doc(db, at), newClass('tA', { schema: 2 })));
-    await assertFails(setDoc(doc(db, at), newClass('tA', { rejoin: { [S1]: Timestamp.now() } })));
-    await assertFails(setDoc(doc(db, at), newClass('tA', { joinWindowAt: Timestamp.fromMillis(Date.now() + 86_400_000) })));
-    await assertSucceeds(setDoc(doc(db, at), newClass('tA', { joinOpen: false, joinWindowAt: serverTimestamp() })));
+    await assertFails(setDoc(doc(db, at), newClass('tA', { schema: 1 })));
+    await assertFails(setDoc(doc(db, at), newClass('tA', { roster: {}, joinOpen: true, joinWindowAt: null, rejoin: {}, tasks: {}, currentTaskId: '', teacherName: 'Mr. B' })));
   });
-  it('R1.6 checks name lengths', async () => {
+  it('R1.6 checks the name length, the switch and the retention', async () => {
     const db = teacher('tA');
     await assertFails(setDoc(doc(db, `classes/${CODE}`), newClass('tA', { name: '' })));
     await assertFails(setDoc(doc(db, `classes/${CODE}`), newClass('tA', { name: 'x'.repeat(61) })));
     await assertSucceeds(setDoc(doc(db, `classes/${CODE}`), newClass('tA', { name: 'x'.repeat(60) })));
-    await assertFails(setDoc(doc(db, `classes/${CODE2}`), newClass('tA', { teacherName: 'x'.repeat(61) })));
+    await assertFails(setDoc(doc(db, `classes/${CODE2}`), newClass('tA', { handinsOpen: 'yes' })));
+    await assertFails(setDoc(doc(db, `classes/${CODE2}`), newClass('tA', { keepWeeks: 0 })));
+    await assertFails(setDoc(doc(db, `classes/${CODE2}`), newClass('tA', { keepWeeks: 53 })));
+    await assertFails(setDoc(doc(db, `classes/${CODE2}`), newClass('tA', { keepWeeks: 10.5 })));
+    await assertFails(setDoc(doc(db, `classes/${CODE2}`), newClass('tA', { keepWeeks: '10' })));
+    await assertSucceeds(setDoc(doc(db, `classes/${CODE2}`), newClass('tA', { keepWeeks: 52, handinsOpen: false })));
   });
   it('R1.7 a teacher cannot overwrite an existing class (code collision) by creating it again', async () => {
     await seedClass();
     await assertFails(setDoc(doc(teacher('tB'), `classes/${CODE}`), newClass('tB')));
     await assertFails(setDoc(doc(teacher('tA'), `classes/${CODE}`), newClass('tA')));
-  });
-});
-
-describe('R2 classes: roster, tasks, retention validation', () => {
-  const put = (over: Record<string, unknown>, code = CODE) => setDoc(doc(teacher('tA'), `classes/${code}`), newClass('tA', over));
-  it('R2.1 accepts an empty roster and 100 students; refuses 101', async () => {
-    await assertSucceeds(put({ roster: {}, currentTaskId: '', tasks: {} }));
-    const big: Record<string, string> = {};
-    for (let i = 0; i < 101; i++) big[`s${String(i).padStart(7, '0')}`] = `student.${i}`;
-    await assertFails(put({ roster: big }, CODE2));
-    delete big.s0000100;
-    await assertSucceeds(put({ roster: big }, CODE2));
-  });
-  it.each([['Ali.K'], ['ali k'], ['a'], ['.ali'], ['x'.repeat(25)], ['élise'], ['ali\nk']])('R2.2 refuses the username %j', async (name) => {
-    await assertFails(put({ roster: { [S1]: name } }));
-  });
-  it('R2.3 accepts 2- and 24-character usernames; refuses duplicates, bad ids, non-strings, arrays', async () => {
-    await assertSucceeds(put({ roster: { [S1]: 'ab', [S2]: 'x'.repeat(24) } }));
-    await assertFails(put({ roster: { [S1]: 'ali.k', [S2]: 'ali.k' } }, CODE2));
-    await assertFails(put({ roster: { ABCDEFGH: 'ali.k' } }, CODE2));
-    await assertFails(put({ roster: { short: 'ali.k' } }, CODE2));
-    await assertFails(put({ roster: { [S1]: 7 } }, CODE2));
-    await assertFails(put({ roster: ['ali.k'] }, CODE2));
-  });
-  it('R2.4 tasks: up to 30, 6-char ids, titles 1-60 chars (any language); currentTaskId must exist', async () => {
-    const t30: Record<string, string> = {};
-    for (let i = 0; i < 30; i++) t30[`t${String(i).padStart(5, '0')}`] = `Tâche ${i} · مهمة`;
-    await assertSucceeds(put({ tasks: t30, currentTaskId: 't00000' }));
-    await assertFails(put({ tasks: { ...t30, t00030: 'one more' }, currentTaskId: '' }, CODE2));
-    await assertFails(put({ tasks: { TSK001: 'Upper-case id' }, currentTaskId: '' }, CODE2));
-    await assertFails(put({ tasks: { [T1]: '' } }, CODE2));
-    await assertFails(put({ tasks: { [T1]: 'x'.repeat(61) } }, CODE2));
-    await assertSucceeds(put({ tasks: { [T1]: 'x'.repeat(60) } }, CODE2));
-    await assertFails(put({ tasks: { [T1]: 'Traffic light' }, currentTaskId: 'zzzzzz' }, 'BKT4M3'));
-  });
-  it('R2.6 join() turns non-strings into text: an int task title or username passes the class rules (owner-only data), but nobody can join as such a name', async () => {
-    await assertSucceeds(put({ tasks: { [T1]: 7 } }, 'BKT4M3'));
-    await assertSucceeds(put({ roster: { [S1]: 12 } }, 'BKT4M4'));
-    await assertFails(setDoc(doc(student('stu1'), 'classes/BKT4M4/members/stu1'), join(S1, '12')));
-    await assertFails(setDoc(doc(student('stu1'), 'classes/BKT4M4/members/stu1'), join(S1, 12 as unknown as string)));
-  });
-  it('R2.5 keepWeeks is an integer 1-52', async () => {
-    await assertFails(put({ keepWeeks: 0 }));
-    await assertFails(put({ keepWeeks: 53 }));
-    await assertFails(put({ keepWeeks: 10.5 }));
-    await assertFails(put({ keepWeeks: '10' }));
-    await assertSucceeds(put({ keepWeeks: 52 }));
   });
 });
 
@@ -266,10 +207,10 @@ describe('R3 classes: read, list, update, delete', () => {
     const snap = await assertSucceeds(getDoc(doc(student('stu1'), 'classes/ZZZZZZ')));
     expect(snap.exists()).toBe(false);
   });
-  it('R3.2 the class GET shows ownerUid and the roster to code-holders, never an email (documented exposure)', async () => {
+  it('R3.2 the class GET shows the name and ownerUid to code-holders, never an email (documented exposure)', async () => {
     const data = (await getDoc(doc(student('anon1'), `classes/${CODE}`))).data()!;
     expect(data.ownerUid).toBe('tA');
-    expect(Object.values(data.roster)).toContain('sara.m');
+    expect(data.name).toBe('8B Robotics');
     expect(JSON.stringify(data)).not.toContain('@');
   });
   it('R3.3 a teacher lists only their own classes, with the ownerUid filter', async () => {
@@ -279,60 +220,26 @@ describe('R3 classes: read, list, update, delete', () => {
     await assertFails(getDocs(collection(teacher('tA'), 'classes')));
     await assertFails(getDocs(query(collection(teacher('tB'), 'classes'), where('ownerUid', '==', 'tA'))));
     await assertFails(getDocs(query(collection(student('tA'), 'classes'), where('ownerUid', '==', 'tA'))));
-    await assertFails(getDocs(query(collection(student('stu1'), 'classes'), where('joinOpen', '==', true))));
+    await assertFails(getDocs(query(collection(student('stu1'), 'classes'), where('handinsOpen', '==', true))));
   });
-  it('R3.4 the owner edits name, roster, joining, hand-ins switch, tasks, current task, retention', async () => {
-    await assertSucceeds(
-      updateDoc(doc(teacher('tA'), `classes/${CODE}`), {
-        name: '8B',
-        roster: { [S1]: 'ali.k2', [S2]: 'sara.m' },
-        joinOpen: false,
-        handinsOpen: false,
-        tasks: { [T1]: 'Traffic light', tsk002: 'Servo sweep' },
-        currentTaskId: 'tsk002',
-        keepWeeks: 20,
-        updatedAt: serverTimestamp(),
-      }),
-    );
+  it('R3.4 the owner edits the name, the hand-ins switch and the retention', async () => {
+    await assertSucceeds(updateDoc(doc(teacher('tA'), `classes/${CODE}`), { name: '8B', handinsOpen: false, keepWeeks: 20, updatedAt: serverTimestamp() }));
   });
-  it('R3.5 the owner cannot change ownerUid, createdAt, schema, add fields or skip updatedAt', async () => {
+  it('R3.5 the owner cannot change ownerUid, createdAt, schema, add fields (old roster fields included) or skip updatedAt', async () => {
     const db = teacher('tA');
     const at = doc(db, `classes/${CODE}`);
     await assertFails(updateDoc(at, { ownerUid: 'tB', updatedAt: serverTimestamp() }));
     await assertFails(updateDoc(at, { createdAt: serverTimestamp(), updatedAt: serverTimestamp() }));
-    await assertFails(updateDoc(at, { schema: 2, updatedAt: serverTimestamp() }));
+    await assertFails(updateDoc(at, { schema: 3, updatedAt: serverTimestamp() }));
     await assertFails(updateDoc(at, { extra: 1, updatedAt: serverTimestamp() }));
-    await assertFails(updateDoc(at, { joinOpen: false }));
-  });
-  it('R3.6 a join window starts at the server time only', async () => {
-    const at = doc(teacher('tA'), `classes/${CODE}`);
-    await assertSucceeds(updateDoc(at, { joinOpen: false, joinWindowAt: serverTimestamp(), updatedAt: serverTimestamp() }));
-    await assertFails(updateDoc(at, { joinWindowAt: Timestamp.fromMillis(Date.now() + 3_600_000), updatedAt: serverTimestamp() }));
-    await assertSucceeds(updateDoc(at, { joinWindowAt: null, updatedAt: serverTimestamp() }));
-  });
-  it('R3.7 "Let ali.k join again": rejoin keys must be roster ids; removing a student also removes the rejoin entry', async () => {
-    const at = doc(teacher('tA'), `classes/${CODE}`);
-    await assertSucceeds(updateDoc(at, { [`rejoin.${S1}`]: serverTimestamp(), updatedAt: serverTimestamp() }));
-    await assertFails(updateDoc(at, { 'rejoin.zzzzzzz9': serverTimestamp(), updatedAt: serverTimestamp() }));
-    await assertFails(updateDoc(at, { [`roster.${S1}`]: deleteField(), updatedAt: serverTimestamp() }));
-    await assertSucceeds(updateDoc(at, { [`roster.${S1}`]: deleteField(), [`rejoin.${S1}`]: deleteField(), updatedAt: serverTimestamp() }));
-  });
-  it('R3.8 deleting a task also needs currentTaskId cleared', async () => {
-    const at = doc(teacher('tA'), `classes/${CODE}`);
-    await assertFails(updateDoc(at, { [`tasks.${T1}`]: deleteField(), updatedAt: serverTimestamp() }));
-    await assertSucceeds(updateDoc(at, { [`tasks.${T1}`]: deleteField(), currentTaskId: '', updatedAt: serverTimestamp() }));
-  });
-  it('R3.9 field-path roster edits work; a duplicate via field path is refused', async () => {
-    const db = teacher('tA');
-    await assertSucceeds(updateDoc(doc(db, `classes/${CODE}`), { 'roster.ddddddd4': 'nour.h', updatedAt: serverTimestamp() }));
-    await assertSucceeds(updateDoc(doc(db, `classes/${CODE}`), { [`roster.${S1}`]: 'ali.kh', updatedAt: serverTimestamp() }));
-    await assertFails(updateDoc(doc(db, `classes/${CODE}`), { 'roster.eeeeeee5': 'sara.m', updatedAt: serverTimestamp() }));
+    await assertFails(updateDoc(at, { roster: { aaaaaaa1: 'ali.k' }, updatedAt: serverTimestamp() }));
+    await assertFails(updateDoc(at, { handinsOpen: false }));
+    await assertFails(updateDoc(at, { name: '', updatedAt: serverTimestamp() }));
   });
   it('R3.10 other teachers and students cannot update or delete the class; the owner can', async () => {
-    await assertFails(updateDoc(doc(teacher('tB'), `classes/${CODE}`), { joinOpen: false, updatedAt: serverTimestamp() }));
-    await assertFails(updateDoc(doc(student('stu1'), `classes/${CODE}`), { joinOpen: true, updatedAt: serverTimestamp() }));
-    await assertFails(updateDoc(doc(student('stu1'), `classes/${CODE}`), { [`rejoin.${S1}`]: serverTimestamp(), updatedAt: serverTimestamp() }));
-    await assertFails(updateDoc(doc(student('stu1'), `classes/${CODE}`), { roster: { [S1]: 'hacker' }, updatedAt: serverTimestamp() }));
+    await assertFails(updateDoc(doc(teacher('tB'), `classes/${CODE}`), { handinsOpen: false, updatedAt: serverTimestamp() }));
+    await assertFails(updateDoc(doc(student('stu1'), `classes/${CODE}`), { handinsOpen: true, updatedAt: serverTimestamp() }));
+    await assertFails(updateDoc(doc(student('stu1'), `classes/${CODE}`), { name: 'hacked', updatedAt: serverTimestamp() }));
     await assertFails(deleteDoc(doc(teacher('tB'), `classes/${CODE}`)));
     await assertFails(deleteDoc(doc(student('stu1'), `classes/${CODE}`)));
     await assertSucceeds(deleteDoc(doc(teacher('tA'), `classes/${CODE}`)));
@@ -345,64 +252,87 @@ describe('R3 classes: read, list, update, delete', () => {
 
 // ======================================================================= members
 
-describe('R4 members: join', () => {
+describe('R4 members: enter a name', () => {
   beforeEach(() => seedClass());
-  const joinAs = (uid = 'stu1', studentId = S1, username = 'ali.k', over: Record<string, unknown> = {}) =>
-    setDoc(doc(student(uid), `classes/${CODE}/members/${uid}`), join(studentId, username, over));
-  it('R4.1 a student joins an open class as a roster username', async () => {
+  const joinAs = (uid = 'stu1', name = ALI, over: Record<string, unknown> = {}) => setDoc(doc(student(uid), `classes/${CODE}/members/${uid}`), member(name, over));
+  it('R4.1 anyone signed in who knows the code creates their member doc with a name', async () => {
     await assertSucceeds(joinAs());
+    await assertSucceeds(joinAs('stu2', SARA));
+    await assertSucceeds(joinAs('stu3', ALI)); // the same name from another computer is allowed (documented)
   });
-  it('R4.2 closed joining refuses; a 15-minute class window allows; an expired window refuses', async () => {
-    await seedClass({ joinOpen: false });
-    await assertFails(joinAs());
-    await seedClass({ joinOpen: false, joinWindowAt: minutesAgo(5) });
-    await assertSucceeds(joinAs());
-    await seedClass({ joinOpen: false, joinWindowAt: minutesAgo(16) });
-    await assertFails(joinAs('stu2', S2, 'sara.m'));
+  it('R4.2 names: letters of any alphabet with spaces, apostrophes, dots and hyphens; 1-30 characters', async () => {
+    await assertSucceeds(joinAs('a1', { firstName: 'Élise', lastName: "O'Neil-Dupont", nameKey: "élise o'neil-dupont" }));
+    await assertSucceeds(joinAs('a2', { firstName: 'محمد', lastName: 'حسن', nameKey: 'محمد حسن' }));
+    await assertSucceeds(joinAs('a3', { firstName: 'Jean Luc', lastName: 'Jr.', nameKey: 'jean luc jr.' }));
+    await assertSucceeds(joinAs('a4', { firstName: 'x'.repeat(30), lastName: 'y'.repeat(30), nameKey: `${'x'.repeat(30)} ${'y'.repeat(30)}` }));
+    await assertFails(joinAs('b1', { firstName: '', lastName: 'Khoury', nameKey: ' khoury' }));
+    await assertFails(joinAs('b2', { firstName: 'Ali', lastName: '', nameKey: 'ali ' }));
+    await assertFails(joinAs('b3', { firstName: 'x'.repeat(31), lastName: 'Khoury', nameKey: `${'x'.repeat(31)} khoury` }));
+    await assertFails(joinAs('b4', { firstName: 'Ali2', lastName: 'Khoury', nameKey: 'ali2 khoury' }));
+    await assertFails(joinAs('b5', { firstName: '-Ali', lastName: 'Khoury', nameKey: '-ali khoury' }));
+    await assertFails(joinAs('b6', { firstName: '<b>Ali</b>', lastName: 'Khoury', nameKey: '<b>ali</b> khoury' }));
+    await assertFails(joinAs('b7', { firstName: 'Ali', lastName: 'Kh\nury', nameKey: 'ali kh\nury' }));
+    await assertFails(joinAs('b8', { firstName: 7 as unknown as string, lastName: 'Khoury', nameKey: '7 khoury' }));
   });
-  it('R4.3 "Let ali.k join again" opens joining for that student only, for 15 minutes', async () => {
-    await seedClass({ joinOpen: false, rejoin: { [S1]: minutesAgo(3) } });
-    await assertFails(joinAs('stu2', S2, 'sara.m'));
-    await assertSucceeds(joinAs('stu1', S1, 'ali.k'));
-    await seedClass({ joinOpen: false, rejoin: { [S1]: minutesAgo(20) } });
-    await assertFails(joinAs('stu3', S1, 'ali.k'));
+  it('R4.3 nameKey: a non-empty lower-case string of at most 61 characters', async () => {
+    await assertFails(joinAs('c1', { ...ALI, nameKey: 'Ali Khoury' }));
+    await assertFails(joinAs('c2', { ...ALI, nameKey: '' }));
+    await assertFails(joinAs('c3', { ...ALI, nameKey: 'x'.repeat(62) }));
+    await assertFails(joinAs('c4', { ...ALI, nameKey: 12 as unknown as string }));
   });
-  it('R4.4 cannot join when hand-ins are closed, while deleting, or a missing class', async () => {
+  it('R4.4 cannot enter a class whose hand-ins are closed, that is deleting, or that is missing', async () => {
     await seedClass({ handinsOpen: false });
     await assertFails(joinAs());
     await seedClass({ deleting: true });
     await assertFails(joinAs());
-    await assertFails(setDoc(doc(student('stu1'), 'classes/ZZZZZZ/members/stu1'), join()));
+    await assertFails(setDoc(doc(student('stu1'), 'classes/ZZZZZZ/members/stu1'), member()));
   });
-  it('R4.5 the username must be the roster name of that studentId; own doc only', async () => {
-    await assertFails(joinAs('stu1', S1, 'sara.m'));
-    await assertFails(joinAs('stu1', 'zzzzzzz9', 'ali.k'));
-    await assertFails(setDoc(doc(student('stu1'), `classes/${CODE}/members/stu2`), join()));
+  it('R4.5 own doc only; the ownerUid must be the class owner', async () => {
+    await assertFails(setDoc(doc(student('stu1'), `classes/${CODE}/members/stu2`), member()));
+    await assertFails(joinAs('stu1', ALI, { ownerUid: 'stu1' }));
+    await assertFails(joinAs('stu1', ALI, { ownerUid: 'tB' }));
   });
-  it('R4.6 refuses a forged counter, owner, time, long device or extra field', async () => {
-    await assertFails(joinAs('stu1', S1, 'ali.k', { handinCount: 5 }));
-    await assertFails(joinAs('stu1', S1, 'ali.k', { lastHandinAt: Timestamp.fromMillis(0) }));
-    await assertFails(joinAs('stu1', S1, 'ali.k', { lastHandinId: newId() }));
-    await assertFails(joinAs('stu1', S1, 'ali.k', { ownerUid: 'stu1' }));
-    await assertFails(joinAs('stu1', S1, 'ali.k', { joinedAt: Timestamp.fromMillis(0) }));
-    await assertFails(joinAs('stu1', S1, 'ali.k', { device: 'x'.repeat(41) }));
-    await assertFails(joinAs('stu1', S1, 'ali.k', { pin: '1234' }));
+  it('R4.6 refuses a forged counter, time, long device, missing or extra field', async () => {
+    await assertFails(joinAs('stu1', ALI, { handinCount: 5 }));
+    await assertFails(joinAs('stu1', ALI, { lastHandinAt: Timestamp.fromMillis(0) }));
+    await assertFails(joinAs('stu1', ALI, { lastHandinId: newId() }));
+    await assertFails(joinAs('stu1', ALI, { joinedAt: Timestamp.fromMillis(0) }));
+    await assertFails(joinAs('stu1', ALI, { device: 'x'.repeat(41) }));
+    await assertFails(joinAs('stu1', ALI, { pin: '1234' }));
+    await assertFails(joinAs('stu1', ALI, { studentId: 'aaaaaaa1', username: 'ali.k' }));
+    const missing: Record<string, unknown> = member();
+    delete missing.device;
+    await assertFails(setDoc(doc(student('stu1'), `classes/${CODE}/members/stu1`), missing));
   });
   it('R4.7 the device label is free text up to 40 chars (rendered with textContent only)', async () => {
-    await assertSucceeds(joinAs('devC', S1, 'ali.k', { device: '</script><img src=x onerror=alert(1)>' }));
+    await assertSucceeds(joinAs('devC', ALI, { device: '</script><img src=x onerror=alert(1)>' }));
   });
-  it('R4.8 a joined device cannot re-bind itself; the counter cannot move without a new hand-in', async () => {
+  it('R4.8 "Change": the owner uid renames its member doc (the three name fields only, same validation); the counter stays', async () => {
+    await seedMember('stu1', ALI, { handinCount: 3, lastHandinAt: minutesAgo(5), lastHandinId: newId() });
+    const at = doc(student('stu1'), `classes/${CODE}/members/stu1`);
+    await assertSucceeds(updateDoc(at, { ...SARA }));
+    const after = (await getDoc(at)).data()!;
+    expect(after).toMatchObject({ ...SARA, handinCount: 3 });
+    await assertSucceeds(updateDoc(at, { firstName: 'Omar' })); // the rules cannot tie nameKey to the names (ASCII-only lower()): grouping only, no security value
+    await assertFails(updateDoc(at, { ...ALI, nameKey: 'Ali Khoury' }));
+    await assertFails(updateDoc(at, { firstName: 'Omar2', lastName: 'Haddad', nameKey: 'omar2 haddad' }));
+    await assertFails(updateDoc(at, { ...SARA, device: 'other' }));
+    await assertFails(updateDoc(at, { ...SARA, handinCount: 0 }));
+    await assertFails(updateDoc(at, { ...SARA, ownerUid: 'stu1' }));
+    await assertFails(updateDoc(doc(student('stu2'), `classes/${CODE}/members/stu1`), { ...SARA }));
+    await assertFails(updateDoc(doc(teacher('tA'), `classes/${CODE}/members/stu1`), { ...SARA }));
+  });
+  it('R4.9 a member doc cannot be re-created over itself; the counter cannot move without a new hand-in', async () => {
     await seedMember('stu1');
-    await assertFails(joinAs('stu1', S2, 'sara.m'));
-    await assertFails(updateDoc(doc(student('stu1'), `classes/${CODE}/members/stu1`), { studentId: S2, username: 'sara.m' }));
+    await assertFails(joinAs('stu1', SARA));
     await assertFails(
       updateDoc(doc(student('stu1'), `classes/${CODE}/members/stu1`), { handinCount: 1, lastHandinAt: serverTimestamp(), lastHandinId: newId() }),
     );
   });
-  it('R4.9 the counter cannot be ticked against an OLD hand-in of this device', async () => {
-    await seedMember('stu1', S1, 'ali.k', { handinCount: 1, lastHandinAt: minutesAgo(5) });
+  it('R4.10 the counter cannot be ticked against an OLD hand-in of this device', async () => {
+    await seedMember('stu1', ALI, { handinCount: 1, lastHandinAt: minutesAgo(5) });
     const old = newId();
-    await seed(`classes/${CODE}/handins/${old}`, storedHandin('stu1', S1, 'ali.k', { createdAt: minutesAgo(5) }));
+    await seed(`classes/${CODE}/handins/${old}`, storedHandin('stu1', ALI, { createdAt: minutesAgo(5) }));
     await assertFails(
       updateDoc(doc(student('stu1'), `classes/${CODE}/members/stu1`), { handinCount: increment(1), lastHandinAt: serverTimestamp(), lastHandinId: old }),
     );
@@ -413,9 +343,9 @@ describe('R5 members: read and remove', () => {
   beforeEach(async () => {
     await seedClass();
     await seedMember('stu1');
-    await seedMember('stu2', S2, 'sara.m');
+    await seedMember('stu2', SARA);
   });
-  it('R5.1 a student reads only their own member doc (also before joining)', async () => {
+  it('R5.1 a student reads only their own member doc (also before entering a name)', async () => {
     await assertSucceeds(getDoc(doc(student('stu1'), `classes/${CODE}/members/stu1`)));
     await assertSucceeds(getDoc(doc(student('stu3'), `classes/${CODE}/members/stu3`)));
     await assertFails(getDoc(doc(student('stu1'), `classes/${CODE}/members/stu2`)));
@@ -424,7 +354,6 @@ describe('R5 members: read and remove', () => {
   it('R5.2 the owner lists (bounded, newest first) and removes computers; other teachers cannot', async () => {
     const list = await assertSucceeds(getDocs(query(collection(teacher('tA'), `classes/${CODE}/members`), orderBy('joinedAt', 'desc'), limit(150))));
     expect(list.size).toBe(2);
-    await assertSucceeds(getDocs(query(collection(teacher('tA'), `classes/${CODE}/members`), where('studentId', '==', S1))));
     await assertFails(getDocs(collection(teacher('tB'), `classes/${CODE}/members`)));
     await assertFails(getDoc(doc(teacher('tB'), `classes/${CODE}/members/stu1`)));
     await assertFails(deleteDoc(doc(teacher('tB'), `classes/${CODE}/members/stu1`)));
@@ -451,7 +380,7 @@ describe('R6 hand-ins: create', () => {
     await seedClass();
     await seedMember('stu1');
   });
-  it('R6.1 a joined student hands in (hand-in + counter tick with increment(1), no read first)', async () => {
+  it('R6.1 a member hands in (hand-in + counter tick with increment(1), no read first)', async () => {
     await assertSucceeds(handIn(student('stu1')).commit());
     const m = await getDoc(doc(student('stu1'), `classes/${CODE}/members/stu1`));
     expect(m.data()?.handinCount).toBe(1);
@@ -479,26 +408,29 @@ describe('R6 hand-ins: create', () => {
     await assertFails(handIn(db, { tick: null }).commit());
     await assertFails(handIn(db, { tickHid: newId() }).commit());
   });
-  it('R6.5 a student who has not joined cannot hand in; nor as another username; nor into another class', async () => {
-    await assertFails(handIn(student('stu9'), { uid: 'stu9' }).commit());
-    await assertFails(handIn(student('stu1'), { data: { studentId: S2, username: 'sara.m' } }).commit());
+  it('R6.5 a hand-in requires a member doc with the SAME name; no member doc, another name, another class: refused', async () => {
+    await assertFails(handIn(student('stu9'), { uid: 'stu9' }).commit()); // no member doc
+    await assertFails(handIn(student('stu1'), { data: { ...SARA } }).commit()); // the member doc says Ali Khoury
+    await assertFails(handIn(student('stu1'), { data: { firstName: 'Ali', lastName: 'Khouri', nameKey: 'ali khouri' } }).commit());
+    await assertFails(handIn(student('stu1'), { data: { nameKey: 'someone else' } }).commit());
     await seedClass({}, CODE2, 'tB');
-    await assertFails(handIn(student('stu1'), { code: CODE2, data: { ownerUid: 'tB' } }).commit());
+    await assertFails(handIn(student('stu1'), { code: CODE2, data: { ownerUid: 'tB' } }).commit()); // no member doc in the other class
     await assertFails(handIn(teacher('tB'), { uid: 'tB' }).commit());
   });
-  it('R6.6 refuses forged username, uid, ownerUid, createdAt, kind, extra fields', async () => {
+  it('R6.6 refuses a forged uid, ownerUid, createdAt, kind, extra or missing fields', async () => {
     const db = student('stu1');
-    await assertFails(handIn(db, { data: { username: 'someone' } }).commit());
     await assertFails(handIn(db, { data: { uid: 'stu2' } }).commit());
     await assertFails(handIn(db, { data: { ownerUid: 'stu1' } }).commit());
     await assertFails(handIn(db, { data: { createdAt: Timestamp.fromMillis(0) } }).commit());
     await assertFails(handIn(db, { data: { kind: 'python' } }).commit());
     await assertFails(handIn(db, { data: { grade: 20 } }).commit());
+    await assertFails(handIn(db, { data: { title: 'Mine', note: '' } }).commit()); // the old optional fields are gone
+    await assertFails(handIn(db, { data: { taskId: '' } }).commit());
   });
   it('R6.7 refuses an id that is not a 20-character auto id', async () => {
     await assertFails(handIn(student('stu1'), { hid: 'short' }).commit());
   });
-  it('R6.8 sizes: code 50 000 B, workspace 100 000 B (UTF-8 or gzip bytes), title 80, note 500, no empty sketch', async () => {
+  it('R6.8 sizes: code 50 000 B, workspace 100 000 B (UTF-8 or gzip bytes), no empty sketch', async () => {
     const db = student('stu1');
     await assertSucceeds(handIn(db, { data: { code: 'x'.repeat(50000) } }).commit());
     await seedMember('stu1');
@@ -506,10 +438,7 @@ describe('R6 hand-ins: create', () => {
     await assertFails(handIn(db, { data: { code: 'é'.repeat(25001) } }).commit());
     await assertFails(handIn(db, { data: { kind: 'blocks', workspace: 'x'.repeat(100001) } }).commit());
     await assertFails(handIn(db, { data: { enc: 'gzip', code: Bytes.fromUint8Array(new Uint8Array(50001)), workspace: EMPTY_BYTES } }).commit());
-    await assertFails(handIn(db, { data: { title: 'x'.repeat(81) } }).commit());
-    await assertFails(handIn(db, { data: { note: 'x'.repeat(501) } }).commit());
     await assertFails(handIn(db, { data: { code: '' } }).commit());
-    await assertSucceeds(handIn(db, { data: { title: 'x'.repeat(80), note: 'y'.repeat(500) } }).commit());
   });
   it('R6.9 a Code hand-in has no workspace; a Blocks hand-in must have one', async () => {
     const db = student('stu1');
@@ -520,42 +449,42 @@ describe('R6 hand-ins: create', () => {
     const db = student('stu1');
     await assertSucceeds(handIn(db).commit());
     await assertFails(handIn(db).commit());
-    await seedMember('stu1', S1, 'ali.k', { handinCount: 1, lastHandinAt: Timestamp.fromMillis(Date.now() - 11000) });
+    await seedMember('stu1', ALI, { handinCount: 1, lastHandinAt: Timestamp.fromMillis(Date.now() - 11000) });
     await assertSucceeds(handIn(db).commit());
   });
   it('R6.11 stops at 300 hand-ins per device', async () => {
-    await seedMember('stu1', S1, 'ali.k', { handinCount: 300, lastHandinAt: Timestamp.fromMillis(0) });
+    await seedMember('stu1', ALI, { handinCount: 300, lastHandinAt: Timestamp.fromMillis(0) });
     await assertFails(handIn(student('stu1')).commit());
-    await seedMember('stu1', S1, 'ali.k', { handinCount: 299, lastHandinAt: Timestamp.fromMillis(0) });
+    await seedMember('stu1', ALI, { handinCount: 299, lastHandinAt: Timestamp.fromMillis(0) });
     await assertSucceeds(handIn(student('stu1')).commit());
   });
-  it('R6.12 removed from the roster: refused; renamed: old name refused, new name accepted', async () => {
-    await seedClass({ roster: { [S2]: 'sara.m' } });
-    await assertFails(handIn(student('stu1')).commit());
-    await seedClass({ roster: { [S1]: 'ali.kh', [S2]: 'sara.m' } });
-    await assertFails(handIn(student('stu1')).commit());
-    await assertSucceeds(handIn(student('stu1'), { data: { username: 'ali.kh' } }).commit());
-  });
-  it('R6.13 task: none or an existing task only', async () => {
+  it('R6.12 after a "Change" of name, the old name is refused and the new one accepted (the counter carries on)', async () => {
     const db = student('stu1');
-    await assertFails(handIn(db, { data: { taskId: 'zzzzzz' } }).commit());
-    await assertSucceeds(handIn(db, { data: { taskId: '' } }).commit());
+    await assertSucceeds(updateDoc(doc(db, `classes/${CODE}/members/stu1`), { ...SARA }));
+    await assertFails(handIn(db).commit()); // still Ali Khoury
+    await assertSucceeds(handIn(db, { data: { ...SARA } }).commit());
+    expect((await getDoc(doc(db, `classes/${CODE}/members/stu1`))).data()?.handinCount).toBe(1);
   });
-  it('R6.14 closed joining keeps hand-ins open; "Stop hand-ins" and deleting refuse them', async () => {
-    await seedClass({ joinOpen: false });
-    await assertSucceeds(handIn(student('stu1')).commit());
-    await seedMember('stu1');
+  it('R6.13 a rename and a hand-in in ONE batch are refused', async () => {
+    const db = student('stu1');
+    const hid = newId();
+    const b = writeBatch(db);
+    b.set(doc(db, `classes/${CODE}/handins/${hid}`), { ...storedHandin('stu1', SARA), createdAt: serverTimestamp() });
+    b.update(doc(db, `classes/${CODE}/members/stu1`), { ...SARA, handinCount: increment(1), lastHandinAt: serverTimestamp(), lastHandinId: hid });
+    await assertFails(b.commit());
+  });
+  it('R6.14 "Stop hand-ins" and deleting refuse hand-ins', async () => {
     await seedClass({ handinsOpen: false });
     await assertFails(handIn(student('stu1')).commit());
     await seedClass({ deleting: true });
     await assertFails(handIn(student('stu1')).commit());
   });
-  it('R6.15 joining and handing in inside ONE batch is refused (a fresh member cannot carry the tick)', async () => {
+  it('R6.15 entering a name and handing in inside ONE batch is refused (a fresh member cannot carry the tick)', async () => {
     const db = student('stu5');
     const hid = newId();
     const b = writeBatch(db);
-    b.set(doc(db, `classes/${CODE}/members/stu5`), join(S1, 'ali.k'));
-    b.set(doc(db, `classes/${CODE}/handins/${hid}`), { ...storedHandin('stu5', S1, 'ali.k'), createdAt: serverTimestamp() });
+    b.set(doc(db, `classes/${CODE}/members/stu5`), member());
+    b.set(doc(db, `classes/${CODE}/handins/${hid}`), { ...storedHandin('stu5'), createdAt: serverTimestamp() });
     b.update(doc(db, `classes/${CODE}/members/stu5`), { handinCount: increment(1), lastHandinAt: serverTimestamp(), lastHandinId: hid });
     await assertFails(b.commit());
   });
@@ -569,17 +498,17 @@ describe('R6 hand-ins: create', () => {
   });
 });
 
-describe('R7 hand-ins: read, re-file, delete, prune', () => {
+describe('R7 hand-ins: read, delete, prune', () => {
   let mine: string;
   let theirs: string;
   beforeEach(async () => {
     await seedClass();
     await seedMember('stu1');
-    await seedMember('stu2', S2, 'sara.m');
+    await seedMember('stu2', SARA);
     mine = newId();
     theirs = newId();
-    await seed(`classes/${CODE}/handins/${mine}`, storedHandin('stu1', S1, 'ali.k'));
-    await seed(`classes/${CODE}/handins/${theirs}`, storedHandin('stu2', S2, 'sara.m', { createdAt: minutesAgo(60 * 24 * 90) }));
+    await seed(`classes/${CODE}/handins/${mine}`, storedHandin('stu1'));
+    await seed(`classes/${CODE}/handins/${theirs}`, storedHandin('stu2', SARA, { createdAt: minutesAgo(60 * 24 * 90) }));
   });
   it("R7.1 a student reads their own hand-ins (query by uid), never another student's", async () => {
     const db = student('stu1');
@@ -587,22 +516,25 @@ describe('R7 hand-ins: read, re-file, delete, prune', () => {
     expect(own.size).toBe(1);
     await assertSucceeds(getDoc(doc(db, `classes/${CODE}/handins/${mine}`)));
     await assertFails(getDocs(collection(db, `classes/${CODE}/handins`)));
-    await assertFails(getDocs(query(collection(db, `classes/${CODE}/handins`), where('studentId', '==', S2))));
+    await assertFails(getDocs(query(collection(db, `classes/${CODE}/handins`), where('nameKey', '==', SARA.nameKey))));
     await assertFails(getDoc(doc(db, `classes/${CODE}/handins/${theirs}`)));
   });
-  it('R7.2 a student cannot edit, re-file or delete a hand-in after submitting it', async () => {
+  it('R7.2 nobody edits a hand-in: not the student, not the owner (immutable)', async () => {
     const db = student('stu1');
-    await assertFails(updateDoc(doc(db, `classes/${CODE}/handins/${mine}`), { title: 'changed' }));
-    await assertFails(updateDoc(doc(db, `classes/${CODE}/handins/${mine}`), { studentId: S2, username: 'sara.m' }));
+    await assertFails(updateDoc(doc(db, `classes/${CODE}/handins/${mine}`), { code: 'changed' }));
+    await assertFails(updateDoc(doc(db, `classes/${CODE}/handins/${mine}`), { ...SARA }));
     await assertFails(deleteDoc(doc(db, `classes/${CODE}/handins/${mine}`)));
+    await assertFails(updateDoc(doc(teacher('tA'), `classes/${CODE}/handins/${mine}`), { ...SARA }));
+    await assertFails(updateDoc(doc(teacher('tA'), `classes/${CODE}/handins/${mine}`), { code: 'changed' }));
   });
-  it('R7.3 the owner lists (newest first, window, per student), counts and reads', async () => {
+  it('R7.3 the owner lists (newest first, window, per student by nameKey), counts and reads', async () => {
     const db = teacher('tA');
     const col = collection(db, `classes/${CODE}/handins`);
     const list = await assertSucceeds(getDocs(query(col, orderBy('createdAt', 'desc'), limit(200))));
     expect(list.size).toBe(2);
     await assertSucceeds(getDocs(query(col, where('createdAt', '>=', minutesAgo(60)), orderBy('createdAt', 'desc'))));
-    await assertSucceeds(getDocs(query(col, where('studentId', '==', S2), orderBy('createdAt', 'desc'), limit(10))));
+    const sara = await assertSucceeds(getDocs(query(col, where('nameKey', '==', SARA.nameKey), orderBy('createdAt', 'desc'), limit(10))));
+    expect(sara.size).toBe(1);
     const n = await assertSucceeds(getCountFromServer(query(col, where('createdAt', '<', minutesAgo(60 * 24 * 70)))));
     expect(n.data().count).toBe(1);
     await assertSucceeds(getDoc(doc(db, `classes/${CODE}/handins/${theirs}`)));
@@ -612,22 +544,10 @@ describe('R7 hand-ins: read, re-file, delete, prune', () => {
     await assertFails(getDocs(collection(db, `classes/${CODE}/handins`)));
     await assertFails(getDoc(doc(db, `classes/${CODE}/handins/${mine}`)));
     await assertFails(deleteDoc(doc(db, `classes/${CODE}/handins/${mine}`)));
-    await assertFails(updateDoc(doc(db, `classes/${CODE}/handins/${mine}`), { studentId: S2, username: 'sara.m' }));
   });
   it('R7.5 collection-group queries are closed, even to the owner', async () => {
     await assertFails(getDocs(query(collectionGroup(teacher('tA'), 'handins'), where('ownerUid', '==', 'tA'))));
     await assertFails(getDocs(query(collectionGroup(student('stu1'), 'handins'), where('uid', '==', 'stu1'))));
-  });
-  it('R7.6 the owner re-files a hand-in to another roster student / task; nothing else may change', async () => {
-    const at = doc(teacher('tA'), `classes/${CODE}/handins/${mine}`);
-    await assertSucceeds(updateDoc(at, { studentId: S2, username: 'sara.m' }));
-    await assertFails(updateDoc(at, { studentId: S1, username: 'sara.m' }));
-    await assertFails(updateDoc(at, { studentId: 'zzzzzzz9', username: 'ghost' }));
-    await assertFails(updateDoc(at, { title: 'changed' }));
-    await assertFails(updateDoc(at, { uid: 'stu2' }));
-    await assertFails(updateDoc(at, { createdAt: serverTimestamp() }));
-    await assertSucceeds(updateDoc(at, { taskId: '' }));
-    await assertFails(updateDoc(at, { taskId: 'zzzzzz' }));
   });
   it('R7.7 the owner deletes a hand-in; deleting it again (retry, second tab) still succeeds', async () => {
     const db = teacher('tA');
@@ -649,10 +569,10 @@ describe('R7 hand-ins: read, re-file, delete, prune', () => {
 describe('R8 deleting a whole class and everything else', () => {
   it('R8.1 the owner marks the class deleting, deletes members and hand-ins in batches, then the class', async () => {
     await seedClass();
-    for (let i = 0; i < 60; i++) await seed(`classes/${CODE}/handins/${newId()}`, storedHandin('stu1', S1, 'ali.k'));
+    for (let i = 0; i < 60; i++) await seed(`classes/${CODE}/handins/${newId()}`, storedHandin('stu1'));
     await seedMember('stu1');
     const db = teacher('tA');
-    await assertSucceeds(updateDoc(doc(db, `classes/${CODE}`), { deleting: true, joinOpen: false, updatedAt: serverTimestamp() }));
+    await assertSucceeds(updateDoc(doc(db, `classes/${CODE}`), { deleting: true, handinsOpen: false, updatedAt: serverTimestamp() }));
     await assertFails(handIn(student('stu1')).commit());
     const members = await getDocs(collection(db, `classes/${CODE}/members`));
     const handins = await getDocs(query(collection(db, `classes/${CODE}/handins`), limit(400)));
@@ -662,7 +582,7 @@ describe('R8 deleting a whole class and everything else', () => {
     await assertSucceeds(batch.commit()); // 61 deletes, no document reads in the rules
     await assertSucceeds(deleteDoc(doc(db, `classes/${CODE}`)));
   });
-  it('R8.2 unknown collections, sub-collections and the old handinCode collection are denied', async () => {
+  it('R8.2 unknown collections and sub-collections are denied', async () => {
     await seedClass();
     await assertFails(setDoc(doc(teacher('tA'), `classes/${CODE}/notes/x`), { a: 1 }));
     await assertFails(setDoc(doc(teacher('tA'), 'teachers/tA'), { a: 1 }));

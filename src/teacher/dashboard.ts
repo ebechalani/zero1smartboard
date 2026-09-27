@@ -6,14 +6,13 @@
  * switches class. Imports no Firebase: the API arrives through `loadApi` at page load.
  */
 import { ClassroomError, TEACHER_ERROR_TEXT } from '../classroom/errors';
-import { LIMITS, cleanLine, formatClassCode, joinStatus, type RandomBytes } from '../classroom/model';
+import { LIMITS, cleanLine, formatClassCode } from '../classroom/model';
 import type { ClassSummary, TeacherApi, TeacherUser, Unsubscribe } from '../classroom/teacher';
 import { REVIEW_HANDOFF_PREFIX } from '../share-link';
 import { downloadTextFile } from '../ui/sketch-file';
 import { createClassPage, type ClassPage } from './class-page';
 import { asClassroomError, trackSave, type DashboardContext } from './context';
-import { LAST_CLASS_KEY, button, el, keysWithPrefix, minutesLeftText, plural, readItem, writeItem } from './format';
-import { createRosterForm, createTasksForm } from './roster-form';
+import { LAST_CLASS_KEY, button, el, keysWithPrefix, readItem, writeItem } from './format';
 import { ClassSession, PARK_MS } from './session';
 
 export interface DashboardOptions {
@@ -25,7 +24,6 @@ export interface DashboardOptions {
   now?: () => Date;
   storage?: Storage | null;
   tabStorage?: Storage | null;
-  randomBytes?: RandomBytes;
   /** The GitHub page of src/firebase-config.ts, for the not-configured card. */
   configUrl?: string;
 }
@@ -40,8 +38,9 @@ export const SIGNED_OUT_INTRO = 'Create a class, give your students the class co
 export const SIGNIN_HELP_1 = 'You stay signed in in this tab until you close it or sign out. On a shared computer, always sign out.';
 export const SIGNIN_HELP_2 = 'If Google says your school blocks this app, ask your IT admin to allow it, or use another Google account.';
 export const EMPTY_CLASSES_TEXT = 'No classes yet. Create your first class.';
+export const CREATE_HELP = 'You get a class code to give your students. They press Hand in, type the code and their name: no class list to prepare.';
 export const DELETE_ALL_HELP =
-  'Deletes every class with its class list, hand-ins and joined computers. A big account may need more than one day: the free daily limit stops the run, and you continue it the next day.';
+  'Deletes every class with its hand-ins and joined computers. A big account may need more than one day: the free daily limit stops the run, and you continue it the next day.';
 const DEFAULT_CONFIG_URL = 'https://github.com/ebechalani/zero1smartboard/blob/main/src/firebase-config.ts';
 
 function defaultCopyText(text: string): Promise<void> {
@@ -175,6 +174,8 @@ export function mountDashboard(root: HTMLElement, options: DashboardOptions): Da
   let openCode: string | null = null;
   let page: ClassPage | null = null;
   let pendingCreated = false;
+  /** The last opened class (z1.teacher.lastClass), re-opened once the class list confirms it is this teacher's. */
+  let pendingLastClass: string | null = null;
 
   // ------------------------------------------------------------- render
   function renderNotConfigured(): void {
@@ -267,16 +268,10 @@ export function mountDashboard(root: HTMLElement, options: DashboardOptions): Da
 
   function classCard(c: ClassSummary): HTMLElement {
     const card = el('button', { className: 'z1t-class-card', attrs: { type: 'button', 'data-code': c.code } });
-    const status = joinStatus({ joinOpen: c.joinOpen, joinWindowAt: c.joinWindowAt, rejoin: {} }, null, now().getTime());
-    const badgeText = c.joinOpen ? 'Joining open' : status.open && status.until ? `Joining open · ${minutesLeftText(status.until, now())}` : 'Joining closed';
-    card.append(
-      el('span', { className: 'z1t-class-card-name', text: c.name }),
-      el('span', { className: 'z1t-class-card-code', text: formatClassCode(c.code) }),
-      el('span', { className: 'z1-muted', text: plural(c.studentCount, 'student') }),
-      el('span', { className: `z1t-badge ${c.joinOpen || status.open ? 'z1t-badge-ok' : ''}`, text: badgeText }),
-    );
+    card.append(el('span', { className: 'z1t-class-card-name', text: c.name }), el('span', { className: 'z1t-class-card-code', text: formatClassCode(c.code) }));
     if (c.deleting) card.append(el('span', { className: 'z1t-badge z1t-badge-warn', text: 'Deletion not finished' }));
     else if (!c.handinsOpen) card.append(el('span', { className: 'z1t-badge', text: 'Hand-ins stopped' }));
+    else card.append(el('span', { className: 'z1t-badge z1t-badge-ok', text: 'Hand-ins open' }));
     card.addEventListener('click', () => openClass(c.code));
     return card;
   }
@@ -379,12 +374,6 @@ export function mountDashboard(root: HTMLElement, options: DashboardOptions): Da
     const dialog = el('dialog', { className: 'z1-dialog z1t-create', attrs: { 'aria-labelledby': 'z1t-create-title' } });
     const form = el('form', { className: 'z1-dialog-form', attrs: { novalidate: '' } });
     const nameInput = el('input', { attrs: { type: 'text', id: 'z1t-new-name', maxlength: String(LIMITS.classNameMax), required: '', placeholder: '8B Robotics' } });
-    const teacherInput = el('input', { attrs: { type: 'text', id: 'z1t-new-teacher', maxlength: String(LIMITS.teacherNameMax) } });
-    teacherInput.value = cleanLine(user?.name ?? '', LIMITS.teacherNameMax);
-    const roster = createRosterForm({ existing: {}, idPrefix: 'z1t-new', randomBytes: options.randomBytes });
-    const tasks = createTasksForm({ existing: {}, idPrefix: 'z1t-new', randomBytes: options.randomBytes });
-    const joinSelect = el('select', { attrs: { id: 'z1t-new-join' } });
-    joinSelect.append(el('option', { text: 'Always, until I close it', attrs: { value: 'open' } }), el('option', { text: 'Not yet', attrs: { value: 'closed' } }));
     const error = el('p', { className: 'z1t-error', attrs: { role: 'alert' } });
     const status = el('span', { className: 'z1t-status', attrs: { role: 'status' } });
     const create = button('Create', () => void submit(), 'z1-btn z1-btn-primary');
@@ -393,38 +382,25 @@ export function mountDashboard(root: HTMLElement, options: DashboardOptions): Da
     form.append(
       el('h2', { text: 'New class', attrs: { id: 'z1t-create-title' } }),
       el('div', { className: 'z1-setting' }, [el('label', { text: 'Class name', attrs: { for: nameInput.id } }), nameInput]),
-      el('div', { className: 'z1-setting' }, [el('label', { text: 'Your name as students see it', attrs: { for: teacherInput.id } }), teacherInput]),
-      roster.element,
-      tasks.element,
-      el('div', { className: 'z1-setting' }, [el('label', { text: 'Students can join', attrs: { for: joinSelect.id } }), joinSelect]),
+      el('p', { className: 'z1-setting-help', text: CREATE_HELP }),
       error,
       el('div', { className: 'z1-dialog-actions' }, [status, el('span', { className: 'z1-spacer' }), cancel, create]),
     );
     dialog.append(form);
     let submitting = false;
     const update = () => {
-      create.disabled = submitting || cleanLine(nameInput.value, LIMITS.classNameMax) === '' || roster.entries() === null || tasks.entries() === null;
+      create.disabled = submitting || cleanLine(nameInput.value, LIMITS.classNameMax) === '';
     };
     nameInput.addEventListener('input', update);
-    roster.onChange(update);
-    tasks.onChange(update);
     update();
     async function submit(): Promise<void> {
       const name = cleanLine(nameInput.value, LIMITS.classNameMax);
-      const students = roster.entries();
-      const taskEntries = tasks.entries();
-      if (name === '' || !students || !taskEntries || submitting) return;
+      if (name === '' || submitting) return;
       submitting = true;
       update();
       status.textContent = 'Creating…';
       try {
-        const detail = await api!.createClass({
-          name,
-          teacherName: cleanLine(teacherInput.value, LIMITS.teacherNameMax),
-          students,
-          tasks: taskEntries.map((t) => t.title),
-          joinOpen: joinSelect.value === 'open',
-        });
+        const detail = await api!.createClass({ name });
         dialog.close();
         pendingCreated = true;
         openClass(detail.code);
@@ -491,7 +467,6 @@ export function mountDashboard(root: HTMLElement, options: DashboardOptions): Da
           sessions.delete(code);
           openClass(null);
         },
-        randomBytes: options.randomBytes,
       });
       if (pendingCreated) {
         pendingCreated = false;
@@ -527,19 +502,15 @@ export function mountDashboard(root: HTMLElement, options: DashboardOptions): Da
     const wasSignedIn = user !== null;
     user = next;
     if (next) {
+      // z1.teacher.lastClass is per browser: on a shared PC it may name another teacher's class.
+      if (!wasSignedIn && openCode === null) pendingLastClass = readItem(storage, LAST_CLASS_KEY);
       if (!classesUnsub) subscribeClasses();
-      if (!wasSignedIn) {
-        const last = readItem(storage, LAST_CLASS_KEY);
-        if (last && openCode === null) {
-          openClass(last);
-          return;
-        }
-      }
     } else {
       classesUnsub?.();
       classesUnsub = null;
       classes = null;
       classesError = null;
+      pendingLastClass = null;
       if (page) {
         page.destroy();
         page = null;
@@ -556,6 +527,15 @@ export function mountDashboard(root: HTMLElement, options: DashboardOptions): Da
       (list) => {
         classes = list;
         classesError = null;
+        if (pendingLastClass !== null) {
+          const last = pendingLastClass;
+          pendingLastClass = null;
+          if (openCode === null && list.some((c) => c.code === last)) {
+            openClass(last);
+            return;
+          }
+          writeItem(storage, LAST_CLASS_KEY, null);
+        }
         if (openCode !== null && !list.some((c) => c.code === openCode) && page) {
           // The open class is gone (deleted elsewhere): back to the list once its session says so.
           const session = sessions.get(openCode);

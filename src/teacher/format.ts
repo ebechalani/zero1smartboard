@@ -42,18 +42,6 @@ export function fullWhenText(date: Date | null, now: Date): string {
   return `${shortDate(date)} ${clockTime(date)}`;
 }
 
-/** "12:34 left" for a window that ends at `until`; "0:00 left" once it is over. */
-export function countdownText(until: Date, now: Date): string {
-  const left = Math.max(0, Math.round((until.getTime() - now.getTime()) / 1000));
-  return `${Math.floor(left / 60)}:${pad(left % 60)} left`;
-}
-
-/** Minutes left, rounded up: "12 min". */
-export function minutesLeftText(until: Date, now: Date): string {
-  const minutes = Math.max(0, Math.ceil((until.getTime() - now.getTime()) / 60_000));
-  return `${minutes} min`;
-}
-
 /** `yyyy-mm-dd-hhmm` of `date` in local time, for the file names of older versions. */
 export function fileStamp(date: Date): string {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}-${pad(date.getHours())}${pad(date.getMinutes())}`;

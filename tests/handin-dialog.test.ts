@@ -1,15 +1,16 @@
 // @vitest-environment happy-dom
 /**
- * Hand in dialog tests (happy-dom, docs/CLASSROOM.md §7.3): the student flows
- * S0-S7 against an in-memory fake StudentApi whose methods are spies. No
- * Firebase is loaded: `loadApi` resolves to the fake.
+ * Hand in dialog tests (happy-dom, docs/CLASSROOM.md §7.3): the student flow (code → name →
+ * Hand in), the remembered "Hand in as … / Change" view, the success view and the errors,
+ * against an in-memory fake StudentApi whose methods are spies. No Firebase is loaded:
+ * `loadApi` resolves to the fake.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ClassroomError, STUDENT_ERROR_TEXT, errorText, type ClassroomErrorCode } from '../src/classroom/errors';
 import { LIMITS, formatClassCode, type HandinRecord } from '../src/classroom/model';
 import { CLASSROOM_STORAGE_KEY, LAST_CODE_STORAGE_KEY, saveSession, type SavedSession } from '../src/classroom/session-store';
-import type { FoundClass, PublicClass, RestoreResult, StudentApi, StudentSession } from '../src/classroom/student';
-import { FILTER_ABOVE, HANDIN_TEXT, createHandinDialog, type HandinDialogOptions, type HandinView, type HandinWork } from '../src/ui/handin-dialog';
+import type { FoundClass, PublicClass, RestoreResult, StudentApi, StudentName, StudentSession } from '../src/classroom/student';
+import { HANDIN_TEXT, createHandinDialog, type HandinDialogOptions, type HandinView, type HandinWork } from '../src/ui/handin-dialog';
 import { settle } from './helpers';
 
 // ---------------------------------------------------------------------------
@@ -17,35 +18,15 @@ import { settle } from './helpers';
 // ---------------------------------------------------------------------------
 
 const CODE = 'BKT4M9';
-const OTHER_CODE = 'XPW7RT';
-const NOW = new Date(2026, 8, 28, 10, 42, 0);
+const NOW = new Date(2026, 8, 28, 14, 32, 0);
+const TIME = NOW.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
 function publicClass(over: Partial<PublicClass> = {}): PublicClass {
-  return {
-    code: CODE,
-    name: '8B Robotics',
-    teacherName: 'Mr. B',
-    ownerUid: 'teacher-1',
-    handinsOpen: true,
-    joinOpen: true,
-    joinWindowAt: null,
-    rejoin: {},
-    students: [
-      { studentId: 'ali00001', username: 'ali.k' },
-      { studentId: 'sara0002', username: 'sara.m' },
-      { studentId: 'zed00003', username: 'zed.z' },
-    ],
-    tasks: [
-      { taskId: 'blink1', title: 'Blink' },
-      { taskId: 'traff1', title: 'Traffic light' },
-    ],
-    currentTaskId: 'traff1',
-    ...over,
-  };
+  return { code: CODE, name: '8B Robotics', ownerUid: 'teacher-1', handinsOpen: true, ...over };
 }
 
 function session(over: Partial<StudentSession> = {}): StudentSession {
-  return { code: CODE, className: '8B Robotics', teacherName: 'Mr. B', studentId: 'ali00001', username: 'ali.k', uid: 'uid-1', ...over };
+  return { code: CODE, className: '8B Robotics', firstName: 'Ali', lastName: 'Khoury', uid: 'uid-1', ...over };
 }
 
 function work(over: Partial<HandinWork> = {}): HandinWork {
@@ -57,12 +38,10 @@ function record(over: Partial<HandinRecord> = {}): HandinRecord {
     id: 'h1',
     classCode: CODE,
     uid: 'uid-1',
-    studentId: 'ali00001',
-    username: 'ali.k',
+    firstName: 'Ali',
+    lastName: 'Khoury',
+    nameKey: 'ali khoury',
     kind: 'code',
-    taskId: 'traff1',
-    title: '',
-    note: '',
     createdAt: NOW,
     content: { enc: 'plain', code: 'void setup() {}', workspace: '' },
     ...over,
@@ -70,21 +49,10 @@ function record(over: Partial<HandinRecord> = {}): HandinRecord {
 }
 
 function saved(over: Partial<SavedSession> = {}): SavedSession {
-  return {
-    v: 1,
-    code: CODE,
-    className: '8B Robotics',
-    teacherName: 'Mr. B',
-    studentId: 'ali00001',
-    username: 'ali.k',
-    uid: 'uid-1',
-    lastUsedAt: NOW.getTime(),
-    lastHandinAt: 0,
-    lastHandinTitle: '',
-    ...over,
-  };
+  return { v: 2, code: CODE, className: '8B Robotics', firstName: 'Ali', lastName: 'Khoury', uid: 'uid-1', lastUsedAt: NOW.getTime(), lastHandinAt: 0, ...over };
 }
 
+const restored = (over: Partial<RestoreResult> = {}): RestoreResult => ({ session: session(), info: publicClass(), lastHandinAt: null, ...over });
 const fail = (code: ClassroomErrorCode, message?: string) => new ClassroomError(code, message);
 
 /** An in-memory StudentApi whose methods are spies with sensible defaults. */
@@ -92,16 +60,9 @@ function fakeApi(over: Partial<StudentApi> = {}) {
   const api: StudentApi = {
     restore: vi.fn(async (): Promise<RestoreResult | null> => null),
     findClass: vi.fn(async (): Promise<FoundClass> => ({ info: publicClass(), existing: null })),
-    refreshClass: vi.fn(async () => publicClass()),
-    join: vi.fn(async (cls: PublicClass, studentId: string) => {
-      const entry = cls.students.find((s) => s.studentId === studentId)!;
-      return session({ code: cls.code, className: cls.name, teacherName: cls.teacherName, studentId, username: entry.username });
-    }),
-    continueAs: vi.fn(async (found: FoundClass) => session({ studentId: found.existing!.studentId, username: found.existing!.username })),
-    confirm: vi.fn(),
-    handIn: vi.fn(async (_s: StudentSession, draft, id: string) => record({ id, kind: draft.kind, taskId: draft.taskId, title: draft.title, note: draft.note })),
-    myHandins: vi.fn(async () => ({ items: [] as HandinRecord[], hasMore: false })),
-    leave: vi.fn(async () => undefined),
+    join: vi.fn(async (found: FoundClass, name: StudentName) => session({ code: found.info.code, className: found.info.name, firstName: name.firstName.trim(), lastName: name.lastName.trim() })),
+    handIn: vi.fn(async (s: StudentSession, draft, id: string) => record({ id, kind: draft.kind, firstName: s.firstName, lastName: s.lastName })),
+    forget: vi.fn(),
     ...over,
   };
   return api;
@@ -119,24 +80,22 @@ interface Mounted {
   text(): string;
   status(): string;
   open(w?: HandinWork, joinCode?: string): Promise<void>;
-  spies: { openWork: ReturnType<typeof vi.fn>; onSessionChange: ReturnType<typeof vi.fn>; confirm: ReturnType<typeof vi.fn>; toast: ReturnType<typeof vi.fn> };
+  /** Type the code and press Next (the name view follows). */
+  toName(code?: string): Promise<void>;
+  typeName(first: string, last: string): void;
+  spies: { onSessionChange: ReturnType<typeof vi.fn>; confirm: ReturnType<typeof vi.fn>; toast: ReturnType<typeof vi.fn> };
 }
 
 function mount(apiOver: Partial<StudentApi> = {}, options: Partial<HandinDialogOptions> = {}): Mounted {
   const api = fakeApi(apiOver);
   const parent = document.createElement('div');
   document.body.appendChild(parent);
-  const spies = {
-    openWork: vi.fn(),
-    onSessionChange: vi.fn(),
-    confirm: vi.fn(() => true),
-    toast: vi.fn(),
-  };
+  const spies = { onSessionChange: vi.fn(), confirm: vi.fn(() => true), toast: vi.fn() };
   const dialog = createHandinDialog(parent, { loadApi: async () => api, now: () => NOW, isOnline: () => true, ...spies, ...options });
   const el = dialog.element;
   const q = <T extends HTMLElement>(selector: string) => el.querySelector<T>(selector)!;
   const visible = () => [...el.querySelectorAll<HTMLElement>('[data-view]')].filter((v) => !v.hidden);
-  return {
+  const m: Mounted = {
     api,
     el,
     dialog,
@@ -157,17 +116,18 @@ function mount(apiOver: Partial<StudentApi> = {}, options: Partial<HandinDialogO
       dialog.open(w, joinCode === undefined ? undefined : { joinCode });
       await settle();
     },
+    async toName(code = CODE) {
+      q<HTMLInputElement>('#z1-handin-code').value = code;
+      m.click('next');
+      await settle();
+    },
+    typeName(first, last) {
+      q<HTMLInputElement>('#z1-handin-first').value = first;
+      q<HTMLInputElement>('#z1-handin-last').value = last;
+    },
   };
+  return m;
 }
-
-function pickName(m: Mounted, username: string): void {
-  const label = [...m.el.querySelectorAll<HTMLElement>('[data-role="names"] label')].find((l) => l.dataset.username === username)!;
-  const input = label.querySelector('input')!;
-  input.checked = true;
-  input.dispatchEvent(new Event('change', { bubbles: true }));
-}
-
-const listedNames = (m: Mounted) => [...m.el.querySelectorAll<HTMLElement>('[data-role="names"] label')].filter((l) => !l.hidden).map((l) => l.dataset.username);
 
 afterEach(() => {
   document.body.innerHTML = '';
@@ -178,7 +138,7 @@ afterEach(() => {
 });
 
 // ---------------------------------------------------------------------------
-// S1 Code view
+// Code view
 // ---------------------------------------------------------------------------
 
 describe('Code view', () => {
@@ -190,14 +150,15 @@ describe('Code view', () => {
     expect(m.dialog.isOpen()).toBe(true);
     expect(m.api.restore).toHaveBeenCalledTimes(1);
     expect(m.view()).toBe('code');
-    expect(m.q('h2').textContent).toBe('Hand in your work to your teacher');
+    expect(m.q('h2').textContent).toBe(HANDIN_TEXT.title);
     const input = m.q<HTMLInputElement>('#z1-handin-code');
     expect(input.value).toBe('BKT-4M9');
     expect(input.getAttribute('autocapitalize')).toBe('characters');
     expect(input.placeholder).toBe('BKT-4M9');
     expect(document.activeElement).toBe(input);
-    // The footer has Close only.
+    // The footer has Close only; the work block is hidden here.
     expect([...m.q('.z1-dialog-actions').querySelectorAll('button')].map((b) => b.textContent)).toEqual(['Close']);
+    expect(m.role('work-block').hidden).toBe(true);
   });
 
   it('refuses an invalid code inline, with the detail, and makes no request', async () => {
@@ -217,7 +178,7 @@ describe('Code view', () => {
     input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
     await settle();
     expect(m.api.findClass).toHaveBeenCalledWith(CODE);
-    expect(m.view()).toBe('pick');
+    expect(m.view()).toBe('name');
   });
 
   it('shows class_not_found with the code', async () => {
@@ -227,9 +188,7 @@ describe('Code view', () => {
       }),
     });
     await m.open();
-    m.q<HTMLInputElement>('#z1-handin-code').value = 'XPW7RT';
-    m.click('next');
-    await settle();
+    await m.toName('XPW7RT');
     expect(m.view()).toBe('code');
     expect(m.role('code-error').textContent).toBe(errorText(STUDENT_ERROR_TEXT, 'class_not_found', { code: 'XPW-7RT' }));
     expect(m.q<HTMLInputElement>('#z1-handin-code').value).toBe('XPW-7RT');
@@ -243,9 +202,7 @@ describe('Code view', () => {
         }),
       });
       await m.open();
-      m.q<HTMLInputElement>('#z1-handin-code').value = CODE;
-      m.click('next');
-      await settle();
+      await m.toName();
       expect(m.role('code-error').textContent, code).toBe(errorText(STUDENT_ERROR_TEXT, code, { class: 'This class', code: formatClassCode(CODE) }));
       document.body.innerHTML = '';
     }
@@ -258,384 +215,168 @@ describe('Code view', () => {
     expect(m.role('error-text').textContent).toBe(STUDENT_ERROR_TEXT.load_failed);
     expect(m.button('retry-open').textContent).toBe('Try again');
   });
+
+  it('a #class= link prefills the code without a restore; the remembered class of that link opens Ready', async () => {
+    const m = mount();
+    await m.open(work(), CODE);
+    expect(m.api.restore).not.toHaveBeenCalled();
+    expect(m.view()).toBe('code');
+    expect(m.q<HTMLInputElement>('#z1-handin-code').value).toBe('BKT-4M9');
+
+    saveSession(saved());
+    const n = mount({ restore: vi.fn(async () => restored()) });
+    await n.open(work(), CODE);
+    expect(n.api.restore).toHaveBeenCalledTimes(1);
+    expect(n.view()).toBe('ready');
+  });
 });
 
 // ---------------------------------------------------------------------------
-// S2 Pick your name
+// Name view
 // ---------------------------------------------------------------------------
 
-describe('Pick view', () => {
-  async function toPick(m: Mounted): Promise<void> {
+describe('Name view', () => {
+  it('shows the class, the work and two name fields; Back returns to the code', async () => {
+    const m = mount();
+    await m.open(work({ kind: 'blocks', workspaceJson: '{"blocks":{}}' }));
+    await m.toName();
+    expect(m.role('name-heading').textContent).toBe('Class 8B Robotics');
+    expect(m.text()).toContain(HANDIN_TEXT.nameHelp);
+    expect(m.role('work-block').hidden).toBe(false);
+    expect(m.role('work').textContent).toBe('Your blocks program and the Arduino sketch made from it');
+    expect(document.activeElement).toBe(m.q('#z1-handin-first'));
+    expect(m.q<HTMLInputElement>('#z1-handin-first').getAttribute('maxlength')).toBe(String(LIMITS.nameMax));
+    expect(m.button('handin-name').textContent).toBe('Hand in');
+    m.click('back');
+    expect(m.view()).toBe('code');
+    expect(m.q<HTMLInputElement>('#z1-handin-code').value).toBe('BKT-4M9');
+  });
+
+  it('prefills the name this computer gave before (member doc first, then the saved session)', async () => {
+    const m = mount({ findClass: vi.fn(async () => ({ info: publicClass(), existing: { firstName: 'Sara', lastName: 'Mansour' } })) });
     await m.open();
-    m.q<HTMLInputElement>('#z1-handin-code').value = CODE;
-    m.click('next');
-    await settle();
-    expect(m.view()).toBe('pick');
-  }
+    await m.toName();
+    expect(m.q<HTMLInputElement>('#z1-handin-first').value).toBe('Sara');
+    expect(m.q<HTMLInputElement>('#z1-handin-last').value).toBe('Mansour');
+    saveSession(saved({ code: 'XPW7RT' }));
+    const n = mount();
+    await n.open(work(), CODE);
+    await n.toName();
+    expect(n.q<HTMLInputElement>('#z1-handin-first').value).toBe('Ali');
+    expect(n.q<HTMLInputElement>('#z1-handin-last').value).toBe('Khoury');
+  });
 
-  it('lists the names in order with the class heading, and enables This is me once a name is picked', async () => {
+  it('Hand in joins with the typed name, then sends, and shows the success view', async () => {
     const m = mount();
-    await toPick(m);
-    expect(m.role('pick-heading').textContent).toBe('Class 8B Robotics · Mr. B');
-    expect(listedNames(m)).toEqual(['ali.k', 'sara.m', 'zed.z']);
-    expect(m.role('filter-setting').hidden).toBe(true);
-    expect(m.text()).toContain(HANDIN_TEXT.finePrint);
-    expect(m.button('pick').disabled).toBe(true);
-    expect(document.activeElement).toBe(m.el.querySelector('[data-role="names"] input'));
-    pickName(m, 'sara.m');
-    expect(m.button('pick').disabled).toBe(false);
-  });
-
-  it('adds a filter above 12 names', async () => {
-    const students = Array.from({ length: FILTER_ABOVE + 1 }, (_, i) => ({ studentId: `stud000${i}`.slice(0, 8), username: `student.${String.fromCharCode(97 + i)}` }));
-    const m = mount({ findClass: vi.fn(async () => ({ info: publicClass({ students }), existing: null })) });
-    await toPick(m);
-    const filter = m.q<HTMLInputElement>('#z1-handin-filter');
-    expect(m.role('filter-setting').hidden).toBe(false);
-    expect(document.activeElement).toBe(filter);
-    filter.value = 'student.c';
-    filter.dispatchEvent(new Event('input'));
-    expect(listedNames(m)).toEqual(['student.c']);
-  });
-
-  it('Refresh the list re-reads the class and keeps the picked name', async () => {
-    const m = mount();
-    await toPick(m);
-    pickName(m, 'sara.m');
-    (m.api.refreshClass as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
-      publicClass({ students: [...publicClass().students, { studentId: 'new00004', username: 'new.n' }] }),
-    );
-    m.click('refresh');
-    await settle();
-    expect(m.api.refreshClass).toHaveBeenCalledWith(CODE);
-    expect(listedNames(m)).toEqual(['ali.k', 'sara.m', 'zed.z', 'new.n']);
-    expect(m.el.querySelector<HTMLInputElement>('[data-role="names"] input:checked')!.value).toBe('sara0002');
-  });
-
-  it('explains an empty roster', async () => {
-    const m = mount({ findClass: vi.fn(async () => ({ info: publicClass({ students: [] }), existing: null })) });
-    await toPick(m);
-    expect(m.role('pick-empty').hidden).toBe(false);
-    expect(m.role('pick-empty').textContent).toBe(HANDIN_TEXT.emptyRoster);
-  });
-
-  it('sees closed joining locally and makes no join request', async () => {
-    const m = mount({ findClass: vi.fn(async () => ({ info: publicClass({ joinOpen: false }), existing: null })) });
-    await toPick(m);
-    pickName(m, 'ali.k');
-    m.click('pick');
-    await settle();
-    expect(m.api.join).not.toHaveBeenCalled();
-    expect(m.role('pick-error').textContent).toBe(errorText(STUDENT_ERROR_TEXT, 'class_closed', { class: '8B Robotics' }));
-    expect(m.view()).toBe('pick');
-  });
-
-  it('This is me joins and lands on Ready', async () => {
-    const m = mount();
-    await toPick(m);
-    pickName(m, 'ali.k');
-    m.click('pick');
+    await m.open();
+    await m.toName();
+    m.typeName(' Élise ', "O'Neil");
+    m.click('handin-name');
     await settle();
     expect(m.api.join).toHaveBeenCalledTimes(1);
-    expect((m.api.join as ReturnType<typeof vi.fn>).mock.calls[0][1]).toBe('ali00001');
-    expect(m.view()).toBe('ready');
-    expect(m.role('ready-heading').textContent).toBe('Hand in to 8B Robotics as ali.k');
-    expect(m.button('handin').textContent).toBe('Hand in as ali.k');
-    expect(m.button('handin').getAttribute('aria-label')).toBe('Hand in as ali.k');
-    expect(m.spies.onSessionChange).toHaveBeenLastCalledWith('ali.k');
-    expect(m.role('history').hidden).toBe(false);
+    const [found, name] = (m.api.join as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(found).toEqual({ info: publicClass(), existing: null });
+    expect(name).toEqual({ firstName: ' Élise ', lastName: "O'Neil" });
+    expect(m.api.handIn).toHaveBeenCalledTimes(1);
+    const [s, draft, id] = (m.api.handIn as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(s).toEqual(session({ firstName: 'Élise', lastName: "O'Neil" }));
+    expect(draft).toEqual({ kind: 'code', code: work().code, workspaceJson: '' });
+    expect(id).toMatch(/^[A-Za-z0-9]{20}$/);
+    expect(m.spies.onSessionChange).toHaveBeenLastCalledWith("Élise O'Neil");
+    expect(m.view()).toBe('success');
+    expect(m.role('success-text').textContent).toBe(`✓ Handed in · ${TIME} · Your teacher can see it now.`);
+    expect([...m.el.querySelectorAll<HTMLButtonElement>('button')].filter((b) => !b.closest('[hidden]')).map((b) => b.textContent)).toEqual(['Close']);
+    expect(document.activeElement).toBe(m.button('close'));
   });
 
-  it('Enter on a name is This is me; Back returns to the code', async () => {
+  it('Enter in a name field hands in', async () => {
     const m = mount();
-    await toPick(m);
-    pickName(m, 'zed.z');
-    m.el.querySelector<HTMLInputElement>('[data-role="names"] input:checked')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+    await m.open();
+    await m.toName();
+    m.typeName('Ali', 'Khoury');
+    m.q('#z1-handin-last').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
     await settle();
     expect(m.api.join).toHaveBeenCalledTimes(1);
-    const again = mount();
-    await toPick(again);
-    again.click('back');
-    expect(again.view()).toBe('code');
-    expect(again.q<HTMLInputElement>('#z1-handin-code').value).toBe('BKT-4M9');
+    expect(m.view()).toBe('success');
   });
 
-  it('reloads the list when the name was removed meanwhile, and shows the other join errors', async () => {
+  it('shows bad_name and the other join errors inline, and stays on the name view', async () => {
     const m = mount({
       join: vi.fn(async () => {
-        throw fail('not_on_roster');
+        throw fail('bad_name');
       }),
     });
-    await toPick(m);
-    pickName(m, 'ali.k');
-    m.click('pick');
+    await m.open();
+    await m.toName();
+    m.click('handin-name');
     await settle();
-    expect(m.api.refreshClass).toHaveBeenCalledTimes(1);
-    expect(m.role('pick-error').textContent).toBe(STUDENT_ERROR_TEXT.not_on_roster);
-    for (const code of ['class_closed', 'handins_closed', 'offline', 'timeout', 'quota', 'permission', 'unknown'] as const) {
+    expect(m.view()).toBe('name');
+    expect(m.role('name-error').textContent).toBe(STUDENT_ERROR_TEXT.bad_name);
+    expect(document.activeElement).toBe(m.q('#z1-handin-first'));
+    expect(m.api.handIn).not.toHaveBeenCalled();
+    for (const code of ['handins_closed', 'class_not_found', 'offline', 'timeout', 'quota', 'permission', 'unknown'] as const) {
       (m.api.join as ReturnType<typeof vi.fn>).mockRejectedValueOnce(fail(code));
-      m.click('pick');
+      m.click('handin-name');
       await settle();
-      expect(m.role('pick-error').textContent, code).toBe(errorText(STUDENT_ERROR_TEXT, code, { class: '8B Robotics' }));
+      expect(m.role('name-error').textContent, code).toBe(errorText(STUDENT_ERROR_TEXT, code, { class: '8B Robotics', code: 'BKT-4M9' }));
     }
+    // Typing clears the message.
+    m.q('#z1-handin-first').dispatchEvent(new Event('input'));
+    expect(m.role('name-error').textContent).toBe('');
   });
 
-  it('S2b: a computer that already joined can continue or sign out', async () => {
-    const m = mount({ findClass: vi.fn(async () => ({ info: publicClass(), existing: { studentId: 'sara0002', username: 'sara.m' } })) });
-    await m.open();
-    m.q<HTMLInputElement>('#z1-handin-code').value = CODE;
-    m.click('next');
-    await settle();
-    expect(m.view()).toBe('already');
-    expect(m.role('already-text').textContent).toBe('This computer already joined 8B Robotics as sara.m.');
-    expect(m.button('continue').textContent).toBe('Continue as sara.m');
-    expect(m.button('signout').textContent).toBe('Not sara.m? Sign out');
-    m.click('continue');
-    await settle();
-    expect(m.api.continueAs).toHaveBeenCalledTimes(1);
-    expect(m.view()).toBe('ready');
-    expect(m.role('ready-heading').textContent).toBe('Hand in to 8B Robotics as sara.m');
-  });
-});
-
-// ---------------------------------------------------------------------------
-// S0 Class link (join mode)
-// ---------------------------------------------------------------------------
-
-describe('#class= join mode', () => {
-  it('looks the class up straight away and ends with the joined text', async () => {
+  it('runs the local checks before joining: empty sketch, too large, offline, and the untouched-example confirm', async () => {
     const m = mount();
-    await m.open(work(), CODE);
-    expect(m.api.findClass).toHaveBeenCalledWith(CODE);
-    expect(m.view()).toBe('pick');
-    pickName(m, 'ali.k');
-    m.click('pick');
+    await m.open(work({ code: '   ' }));
+    await m.toName();
+    m.click('handin-name');
     await settle();
-    expect(m.view()).toBe('joined');
-    expect(m.role('joined-text').textContent).toBe("You're in 8B Robotics as ali.k. Work as usual and press Hand in when you're done.");
-    m.click('ok');
-    expect(m.dialog.isOpen()).toBe(false);
-  });
+    expect(m.status()).toBe(STUDENT_ERROR_TEXT.empty_sketch);
+    expect(m.api.join).not.toHaveBeenCalled();
 
-  it('goes to Confirm when this computer is already in that class', async () => {
-    const m = mount({ restore: vi.fn(async () => ({ session: session(), info: publicClass(), confirm: null, lastHandin: null })) });
-    await m.open(work(), CODE);
-    expect(m.api.findClass).not.toHaveBeenCalled();
-    expect(m.view()).toBe('confirm');
-    expect(m.role('confirm-text').textContent).toBe('Hand in to 8B Robotics (Mr. B) as ali.k?');
-  });
-
-  it('asks before switching from another class', async () => {
-    const m = mount({
-      restore: vi.fn(async () => ({ session: session({ code: OTHER_CODE, className: '7B Robotics' }), info: publicClass({ code: OTHER_CODE, name: '7B Robotics' }), confirm: null, lastHandin: null })),
-    });
-    await m.open(work(), CODE);
-    expect(m.view()).toBe('switch');
-    expect(m.role('switch-text').textContent).toBe('This computer is in 7B Robotics as ali.k. Switch to 8B Robotics?');
-    m.click('switch');
+    const example = mount();
+    await example.open(work({ unchanged: { kind: 'example', title: 'Blink' } }));
+    await example.toName();
+    expect(example.role('warning').textContent).toBe("This is still the example 'Blink'. Hand it in anyway?");
+    example.spies.confirm.mockReturnValueOnce(false);
+    example.click('handin-name');
     await settle();
-    expect(m.api.leave).toHaveBeenCalledTimes(1);
-    expect(m.spies.onSessionChange).toHaveBeenLastCalledWith('');
-    expect(m.view()).toBe('pick');
-    expect(m.role('pick-heading').textContent).toBe('Class 8B Robotics · Mr. B');
-  });
-
-  it('Cancel keeps the current class', async () => {
-    const m = mount({
-      restore: vi.fn(async () => ({ session: session({ code: OTHER_CODE, className: '7B Robotics' }), info: publicClass({ code: OTHER_CODE, name: '7B Robotics' }), confirm: null, lastHandin: null })),
-    });
-    await m.open(work(), CODE);
-    m.click('cancel');
-    expect(m.api.leave).not.toHaveBeenCalled();
-    expect(m.view()).toBe('ready');
-    expect(m.role('ready-heading').textContent).toBe('Hand in to 7B Robotics as ali.k');
-  });
-
-  it('shows a bad link code on the code view', async () => {
-    const m = mount({
-      findClass: vi.fn(async () => {
-        throw fail('class_not_found');
-      }),
-    });
-    await m.open(work(), 'XPW7RT');
-    expect(m.view()).toBe('code');
-    expect(m.q<HTMLInputElement>('#z1-handin-code').value).toBe('XPW-7RT');
-    expect(m.role('code-error').textContent).toContain('XPW-7RT');
+    expect(example.spies.confirm).toHaveBeenCalledWith("This is still the example 'Blink'. Hand it in anyway?");
+    expect(example.api.join).not.toHaveBeenCalled();
+    example.click('handin-name');
+    await settle();
+    expect(example.api.join).toHaveBeenCalledTimes(1);
+    expect(example.view()).toBe('success');
   });
 });
 
 // ---------------------------------------------------------------------------
-// S5 Confirm, S6 Sign out
-// ---------------------------------------------------------------------------
-
-describe('Confirm view', () => {
-  const restoring = (confirm: RestoreResult['confirm']) => ({
-    restore: vi.fn(async () => ({ session: session(), info: publicClass(), confirm, lastHandin: null })),
-  });
-
-  it('is shown for a new tab and a stale session, with My hand-ins hidden until confirmed', async () => {
-    for (const reason of ['new_tab', 'stale'] as const) {
-      const m = mount(restoring(reason));
-      await m.open();
-      expect(m.view(), reason).toBe('confirm');
-      expect(m.role('history').hidden, reason).toBe(true);
-      expect(m.button('yes').textContent).toBe("Yes, I'm ali.k");
-      expect(m.spies.onSessionChange).toHaveBeenLastCalledWith('ali.k');
-      document.body.innerHTML = '';
-    }
-    const m = mount(restoring(null));
-    await m.open();
-    expect(m.view()).toBe('ready');
-    expect(m.role('history').hidden).toBe(false);
-  });
-
-  it('Yes confirms and opens Ready', async () => {
-    const m = mount(restoring('new_tab'));
-    await m.open();
-    m.click('yes');
-    expect(m.api.confirm).toHaveBeenCalledWith(session());
-    expect(m.view()).toBe('ready');
-    expect(m.role('history').hidden).toBe(false);
-  });
-
-  it('someone else keeps the code, Different class forgets it', async () => {
-    const m = mount(restoring('new_tab'));
-    await m.open();
-    m.click('other');
-    await settle();
-    expect(m.api.leave).toHaveBeenLastCalledWith({ forgetCode: false });
-    expect(m.view()).toBe('code');
-    expect(m.q<HTMLInputElement>('#z1-handin-code').value).toBe('BKT-4M9');
-    expect(m.spies.onSessionChange).toHaveBeenLastCalledWith('');
-
-    const n = mount(restoring('stale'));
-    await n.open();
-    n.click('different');
-    await settle();
-    expect(n.api.leave).toHaveBeenLastCalledWith({ forgetCode: true });
-    expect(n.view()).toBe('code');
-    expect(n.q<HTMLInputElement>('#z1-handin-code').value).toBe('');
-  });
-
-  it('Sign out asks first, then returns to the code view', async () => {
-    const m = mount(restoring(null));
-    await m.open();
-    m.spies.confirm.mockReturnValueOnce(false);
-    m.click('signout');
-    await settle();
-    expect(m.spies.confirm).toHaveBeenCalledWith(HANDIN_TEXT.signOut('8B Robotics'));
-    expect(m.api.leave).not.toHaveBeenCalled();
-    expect(m.view()).toBe('ready');
-    m.click('signout');
-    await settle();
-    expect(m.api.leave).toHaveBeenCalledWith({ forgetCode: false });
-    expect(m.view()).toBe('code');
-  });
-
-  it('shows the restore errors with their buttons', async () => {
-    const cases: [ClassroomErrorCode, string, string][] = [
-      ['device_removed', 'rejoin', 'Join again'],
-      ['not_on_roster', 'pick-again', 'Pick your name again'],
-      ['class_deleted', 'ok', 'OK'],
-      ['handins_closed', 'different', 'Different class'],
-      ['offline', 'retry-open', 'Try again'],
-    ];
-    for (const [code, action, label] of cases) {
-      const m = mount({
-        restore: vi.fn(async () => {
-          throw fail(code);
-        }),
-      });
-      await m.open();
-      expect(m.view(), code).toBe('error');
-      expect(m.role('error-text').textContent, code).toBe(errorText(STUDENT_ERROR_TEXT, code, { class: 'This class' }));
-      expect(m.button(action).textContent, code).toBe(label);
-      document.body.innerHTML = '';
-    }
-  });
-
-  it('lost_identity goes to the code view with the code prefilled', async () => {
-    localStorage.setItem(LAST_CODE_STORAGE_KEY, CODE);
-    const m = mount({
-      restore: vi.fn(async () => {
-        throw fail('lost_identity');
-      }),
-    });
-    await m.open();
-    expect(m.view()).toBe('code');
-    expect(m.q<HTMLInputElement>('#z1-handin-code').value).toBe('BKT-4M9');
-    expect(m.role('code-error').textContent).toBe(STUDENT_ERROR_TEXT.lost_identity);
-  });
-
-  it('Join again after the computer was removed picks a name with the same sign-in', async () => {
-    localStorage.setItem(LAST_CODE_STORAGE_KEY, CODE);
-    const m = mount({
-      restore: vi.fn(async () => {
-        throw fail('device_removed');
-      }),
-    });
-    await m.open();
-    m.click('rejoin');
-    await settle();
-    expect(m.api.leave).not.toHaveBeenCalled();
-    expect(m.api.findClass).toHaveBeenCalledWith(CODE);
-    expect(m.view()).toBe('pick');
-  });
-
-  it('Try again retries the opening', async () => {
-    const restore = vi.fn(async (): Promise<RestoreResult | null> => {
-      throw fail('offline');
-    });
-    const m = mount({ restore });
-    await m.open();
-    restore.mockResolvedValueOnce(null);
-    m.click('retry-open');
-    await settle();
-    expect(restore).toHaveBeenCalledTimes(2);
-    expect(m.view()).toBe('code');
-  });
-});
-
-// ---------------------------------------------------------------------------
-// S3 Ready, S4 Success
+// Ready view (remembered), Change, Success
 // ---------------------------------------------------------------------------
 
 describe('Ready view', () => {
   const ready = (over: Partial<StudentApi> = {}, w: HandinWork = work(), restore: Partial<RestoreResult> = {}) => {
-    const m = mount({
-      restore: vi.fn(async () => ({ session: session(), info: publicClass(), confirm: null, lastHandin: null, ...restore })),
-      ...over,
-    });
+    const m = mount({ restore: vi.fn(async () => restored(restore)), ...over });
     return m.open(w).then(() => m);
   };
 
-  it('describes the work, preselects the current task and focuses it', async () => {
-    const m = await ready();
+  it('shows "Hand in as … to class …" with Hand in, Change and the work, and reports the header name', async () => {
+    const m = await ready({}, work(), { lastHandinAt: NOW.getTime() - 60_000 });
     expect(m.view()).toBe('ready');
+    expect(m.role('ready-heading').textContent).toBe('Hand in as Ali Khoury to class BKT-4M9 · 8B Robotics');
+    expect(m.button('handin').textContent).toBe('Hand in');
+    expect(m.button('change').textContent).toBe('Change');
     expect(m.role('work').textContent).toBe('Your Arduino sketch, 3 lines');
-    const task = m.q<HTMLSelectElement>('#z1-handin-task');
-    expect(m.role('task-setting').hidden).toBe(false);
-    expect([...task.options].map((o) => o.textContent)).toEqual(['(no task)', 'Blink', 'Traffic light']);
-    expect(task.value).toBe('traff1');
-    expect(document.activeElement).toBe(task);
-    expect(m.role('last').hidden).toBe(true);
-    expect(m.q<HTMLInputElement>('#z1-handin-work-title').getAttribute('maxlength')).toBe(String(LIMITS.titleMax));
-    expect(m.q<HTMLTextAreaElement>('#z1-handin-note').getAttribute('maxlength')).toBe(String(LIMITS.noteMax));
-    expect(m.q('[data-role="ready-signout"]').textContent).toBe('Not ali.k? Sign out');
+    expect(m.role('last').textContent).toBe(`Last handed in: today ${new Date(NOW.getTime() - 60_000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`);
+    expect(m.spies.onSessionChange).toHaveBeenLastCalledWith('Ali Khoury');
+    expect(document.activeElement).toBe(m.button('handin'));
+    const plain = await ready();
+    expect(plain.role('last').hidden).toBe(true);
+    expect(plain.role('warning').hidden).toBe(true);
+    expect(plain.role('errors-note').hidden).toBe(true);
   });
 
-  it('describes a blocks program, hides the task select without tasks and shows the last hand-in', async () => {
-    const m = await ready({}, work({ kind: 'blocks', workspaceJson: '{"blocks":{}}' }), {
-      info: publicClass({ tasks: [], currentTaskId: '' }),
-      lastHandin: { at: NOW.getTime() - 60_000, title: 'Traffic light' },
-    });
-    expect(m.role('work').textContent).toBe('Your blocks program and the Arduino sketch made from it');
-    expect(m.role('task-setting').hidden).toBe(true);
-    expect(document.activeElement).toBe(m.q('#z1-handin-work-title'));
-    expect(m.role('last').textContent).toBe(`Last handed in: today ${new Date(NOW.getTime() - 60_000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} · Traffic light`);
-  });
-
-  it('refuses an empty sketch, too large work and an offline browser without a request', async () => {
+  it('refuses an empty sketch, too large work, too soon and an offline browser without a request', async () => {
     const m = await ready({}, work({ code: '   ' }));
     m.click('handin');
     await settle();
@@ -646,13 +387,13 @@ describe('Ready view', () => {
     await settle();
     expect(big.status()).toBe(STUDENT_ERROR_TEXT.too_large);
 
-    const off = mount({ restore: vi.fn(async () => ({ session: session(), info: publicClass(), confirm: null, lastHandin: null })) }, { isOnline: () => false });
+    const off = mount({ restore: vi.fn(async () => restored()) }, { isOnline: () => false });
     await off.open();
     off.click('handin');
     await settle();
     expect(off.status()).toBe(STUDENT_ERROR_TEXT.offline);
 
-    const soon = await ready({}, work(), { lastHandin: { at: NOW.getTime() - 3_000, title: '' } });
+    const soon = await ready({}, work(), { lastHandinAt: NOW.getTime() - 3_000 });
     soon.click('handin');
     await settle();
     expect(soon.status()).toBe(STUDENT_ERROR_TEXT.too_soon);
@@ -660,31 +401,30 @@ describe('Ready view', () => {
     for (const x of [m, big, off, soon]) expect(x.api.handIn, 'no request').not.toHaveBeenCalled();
   });
 
-  it('needs a second click for an untouched example or the blank sketch, and notes the errors', async () => {
+  it('asks once (confirm) for an untouched example or the blank sketch, and notes the errors', async () => {
     const m = await ready({}, work({ unchanged: { kind: 'example', title: 'Blink' }, errorCount: 2 }));
     expect(m.role('warning').textContent).toBe("This is still the example 'Blink'. Hand it in anyway?");
     expect(m.role('errors-note').textContent).toBe('Your sketch has 2 errors. Your teacher will see them.');
+    m.spies.confirm.mockReturnValueOnce(false);
     m.click('handin');
     await settle();
     expect(m.api.handIn).not.toHaveBeenCalled();
-    expect(m.button('handin').textContent).toBe('Hand in anyway');
     m.click('handin');
     await settle();
+    expect(m.spies.confirm).toHaveBeenCalledTimes(2);
     expect(m.api.handIn).toHaveBeenCalledTimes(1);
     expect(m.view()).toBe('success');
 
     const blank = await ready({}, work({ unchanged: { kind: 'blank' }, errorCount: 1 }));
     expect(blank.role('warning').textContent).toBe(HANDIN_TEXT.blank);
     expect(blank.role('errors-note').textContent).toBe('Your sketch has 1 error. Your teacher will see them.');
-    const plain = await ready();
-    expect(plain.role('warning').hidden).toBe(true);
-    expect(plain.role('errors-note').hidden).toBe(true);
+    blank.click('handin');
+    await settle();
+    expect(blank.spies.confirm).toHaveBeenLastCalledWith(HANDIN_TEXT.blank);
   });
 
-  it('hands in with the fields, shows the success view and sends once on a double click', async () => {
+  it('hands in, shows the success view, sends once on a double click, and uses a new id next time', async () => {
     const m = await ready({}, work({ kind: 'blocks', workspaceJson: '{"blocks":{}}' }));
-    m.q<HTMLInputElement>('#z1-handin-work-title').value = 'My lights';
-    m.q<HTMLTextAreaElement>('#z1-handin-note').value = 'Please check';
     m.click('handin');
     m.click('handin');
     expect(m.button('handin').disabled).toBe(true);
@@ -693,38 +433,27 @@ describe('Ready view', () => {
     expect(m.api.handIn).toHaveBeenCalledTimes(1);
     const [s, draft, id] = (m.api.handIn as ReturnType<typeof vi.fn>).mock.calls[0];
     expect(s).toEqual(session());
-    expect(draft).toEqual({ kind: 'blocks', code: work().code, workspaceJson: '{"blocks":{}}', taskId: 'traff1', title: 'My lights', note: 'Please check' });
-    expect(id).toMatch(/^[A-Za-z0-9]{20}$/);
+    expect(draft).toEqual({ kind: 'blocks', code: work().code, workspaceJson: '{"blocks":{}}' });
     expect(m.view()).toBe('success');
-    const time = NOW.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    expect(m.role('success-text').textContent).toBe(`✓ Handed in · Traffic light · Blocks · ${time}. Your teacher can see it now.`);
-    expect([...m.el.querySelectorAll<HTMLButtonElement>('button')].filter((b) => !b.closest('[hidden]')).map((b) => b.textContent)).toEqual([
-      'My hand-ins',
-      'Leaving? Sign out of the class on this computer',
-      'My hand-ins from this computer',
-      'Close',
-    ].filter((t) => t !== 'My hand-ins from this computer'));
-    expect(document.activeElement).toBe(m.button('close'));
-
-    // The next Hand in keeps the title and task, clears the note, and uses a new id.
+    expect(m.role('success-text').textContent).toBe(HANDIN_TEXT.success(TIME));
     m.dialog.close();
-    await m.open(work({ kind: 'blocks', workspaceJson: '{"blocks":{}}' }));
+    (m.api.restore as ReturnType<typeof vi.fn>).mockResolvedValueOnce(restored({ lastHandinAt: NOW.getTime() - 60_000 }));
+    await m.open(work());
     expect(m.view()).toBe('ready');
-    expect(m.q<HTMLInputElement>('#z1-handin-work-title').value).toBe('My lights');
-    expect(m.q<HTMLTextAreaElement>('#z1-handin-note').value).toBe('');
-    expect(m.q<HTMLSelectElement>('#z1-handin-task').value).toBe('traff1');
-    expect(m.status()).toBe(HANDIN_TEXT.again);
     m.click('handin');
     await settle();
     expect((m.api.handIn as ReturnType<typeof vi.fn>).mock.calls[1][2]).not.toBe(id);
   });
 
-  it('uses the title when there is no task', async () => {
-    const m = await ready({}, work(), { info: publicClass({ tasks: [], currentTaskId: '' }) });
-    m.q<HTMLInputElement>('#z1-handin-work-title').value = 'Disco';
-    m.click('handin');
-    await settle();
-    expect(m.role('success-text').textContent).toMatch(/^✓ Handed in · Disco · Code · /);
+  it('Change forgets the remembered name and goes to the code view with the code prefilled', async () => {
+    const m = await ready();
+    m.click('change');
+    expect(m.api.forget).toHaveBeenCalledWith({ forgetCode: false });
+    expect(m.view()).toBe('code');
+    expect(m.q<HTMLInputElement>('#z1-handin-code').value).toBe('BKT-4M9');
+    expect(m.spies.onSessionChange).toHaveBeenLastCalledWith('');
+    await m.toName();
+    expect(m.view()).toBe('name');
   });
 
   it('says "Checking whether it arrived…" after the request timeout, then success when it did arrive', async () => {
@@ -759,7 +488,7 @@ describe('Ready view', () => {
   });
 
   it('shows every hand-in error with its §1.5 text', async () => {
-    const inline: ClassroomErrorCode[] = ['too_soon', 'limit_reached', 'offline', 'timeout', 'quota', 'permission', 'index_missing', 'unknown'];
+    const inline: ClassroomErrorCode[] = ['too_soon', 'limit_reached', 'offline', 'timeout', 'quota', 'permission', 'unknown'];
     for (const code of inline) {
       const m = await ready({
         handIn: vi.fn(async () => {
@@ -774,8 +503,7 @@ describe('Ready view', () => {
       document.body.innerHTML = '';
     }
     const withButton: [ClassroomErrorCode, string, string][] = [
-      ['not_on_roster', 'pick-again', 'Pick your name again'],
-      ['device_removed', 'rejoin', 'Join again'],
+      ['device_removed', 'change', 'Enter your name again'],
       ['class_deleted', 'different', 'Different class'],
       ['handins_closed', 'different', 'Different class'],
     ];
@@ -794,44 +522,37 @@ describe('Ready view', () => {
     }
   });
 
-  it('Pick your name again signs out with the code kept; Different class forgets it', async () => {
+  it('"Enter your name again" keeps the code; "Different class" forgets it', async () => {
     const m = await ready({
       handIn: vi.fn(async () => {
-        throw fail('not_on_roster');
+        throw fail('device_removed');
       }),
     });
     m.click('handin');
     await settle();
-    m.click('pick-again');
-    await settle();
-    expect(m.api.leave).toHaveBeenCalledWith({ forgetCode: false });
+    m.click('change');
+    expect(m.api.forget).toHaveBeenCalledWith({ forgetCode: false });
     expect(m.view()).toBe('code');
     expect(m.q<HTMLInputElement>('#z1-handin-code').value).toBe('BKT-4M9');
-  });
 
-  it('asks to pick the task again when it was deleted meanwhile', async () => {
-    const m = await ready({
+    const n = await ready({
       handIn: vi.fn(async () => {
-        throw fail('permission', 'task');
+        throw fail('handins_closed');
       }),
-      refreshClass: vi.fn(async () => publicClass({ tasks: [{ taskId: 'blink1', title: 'Blink' }], currentTaskId: '' })),
     });
-    m.click('handin');
+    n.click('handin');
     await settle();
-    expect(m.status()).toBe(HANDIN_TEXT.taskGone);
-    expect([...m.q<HTMLSelectElement>('#z1-handin-task').options].map((o) => o.textContent)).toEqual(['(no task)', 'Blink']);
+    n.click('different');
+    expect(n.api.forget).toHaveBeenCalledWith({ forgetCode: true });
+    expect(n.view()).toBe('code');
+    expect(n.q<HTMLInputElement>('#z1-handin-code').value).toBe('');
   });
 
-  it('takes a rename by the teacher from the returned record', async () => {
-    const m = await ready({ handIn: vi.fn(async (_s, _d, id: string) => record({ id, username: 'ali.kh' })) });
+  it('takes a name changed from another tab from the returned record', async () => {
+    const m = await ready({ handIn: vi.fn(async (_s, _d, id: string) => record({ id, firstName: 'Sara', lastName: 'Mansour' })) });
     m.click('handin');
     await settle();
-    expect(m.spies.onSessionChange).toHaveBeenLastCalledWith('ali.kh');
-    // The next opening (restore() refreshes the name from the class) shows it in the heading.
-    (m.api.restore as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ session: session({ username: 'ali.kh' }), info: publicClass(), confirm: null, lastHandin: null });
-    m.dialog.close();
-    await m.open();
-    expect(m.role('ready-heading').textContent).toBe('Hand in to 8B Robotics as ali.kh');
+    expect(m.spies.onSessionChange).toHaveBeenLastCalledWith('Sara Mansour');
   });
 
   it('ignores an answer that arrives after the dialog was closed', async () => {
@@ -849,77 +570,65 @@ describe('Ready view', () => {
 });
 
 // ---------------------------------------------------------------------------
-// S7 My hand-ins
+// restore() errors
 // ---------------------------------------------------------------------------
 
-describe('My hand-ins', () => {
-  const restored = { restore: vi.fn(async () => ({ session: session(), info: publicClass(), confirm: null, lastHandin: null })) };
-
-  it('loads lazily when opened, pages with Show more, and Open hands the work to the app', async () => {
-    const page1 = Array.from({ length: 20 }, (_, i) => record({ id: `h${i}`, title: `v${i}`, taskId: '', createdAt: new Date(NOW.getTime() - i * 60_000) }));
-    const page2 = [record({ id: 'old', kind: 'blocks', taskId: 'blink1', content: { enc: 'plain', code: 'void setup() {}', workspace: '{"blocks":{}}' } })];
-    const myHandins = vi.fn(async (_s: StudentSession, page?: { before?: Date }) => (page ? { items: page2, hasMore: false } : { items: page1, hasMore: true }));
-    const m = mount({ ...restored, myHandins });
-    await m.open();
-    expect(myHandins).not.toHaveBeenCalled();
-    const history = m.role<HTMLDetailsElement>('history');
-    expect(history.open).toBe(false);
-    expect(history.querySelector('summary')!.textContent).toBe('My hand-ins from this computer');
-    history.open = true;
-    history.dispatchEvent(new Event('toggle'));
-    await settle();
-    expect(myHandins).toHaveBeenCalledTimes(1);
-    const rows = () => [...m.el.querySelectorAll('[data-role="history-rows"] li')];
-    expect(rows()).toHaveLength(20);
-    expect(rows()[0].textContent).toContain('v0');
-    expect(rows()[0].querySelector('.z1-handin-kind')!.textContent).toBe('Code');
-    expect(m.button('more').hidden).toBe(false);
-    m.click('more');
-    await settle();
-    expect(myHandins.mock.calls[1][1]).toEqual({ before: page1[19].createdAt });
-    expect(rows()).toHaveLength(21);
-    expect(rows()[20].textContent).toContain('Blink');
-    expect(rows()[20].querySelector('.z1-handin-kind')!.textContent).toBe('Blocks');
-    expect(m.button('more').hidden).toBe(true);
-
-    rows()[20].querySelector<HTMLButtonElement>('[data-action="open"]')!.click();
-    await settle();
-    expect(m.spies.openWork).toHaveBeenCalledWith({ kind: 'blocks', code: 'void setup() {}', workspaceJson: '{"blocks":{}}' });
-    expect(m.dialog.isOpen()).toBe(false);
+describe('restore errors', () => {
+  it('shows the restore errors with their buttons', async () => {
+    const cases: [ClassroomErrorCode, string, string][] = [
+      ['device_removed', 'change', 'Enter your name again'],
+      ['class_deleted', 'ok', 'OK'],
+      ['handins_closed', 'different', 'Different class'],
+      ['offline', 'retry-open', 'Try again'],
+    ];
+    for (const [code, action, label] of cases) {
+      const m = mount({
+        restore: vi.fn(async () => {
+          throw fail(code);
+        }),
+      });
+      await m.open();
+      expect(m.view(), code).toBe('error');
+      expect(m.role('error-text').textContent, code).toBe(errorText(STUDENT_ERROR_TEXT, code, { class: 'This class' }));
+      expect(m.button(action).textContent, code).toBe(label);
+      document.body.innerHTML = '';
+    }
   });
 
-  it('says when nothing was handed in yet, and the success button opens it', async () => {
-    const m = mount(restored);
-    await m.open();
-    m.click('handin');
-    await settle();
-    expect(m.view()).toBe('success');
-    m.click('history');
-    await settle();
-    expect(m.role<HTMLDetailsElement>('history').open).toBe(true);
-    expect(m.api.myHandins).toHaveBeenCalledTimes(1);
-    expect(m.role('history-status').textContent).toBe(HANDIN_TEXT.noHistory);
-  });
-
-  it('shows "(no title)" and the history error text', async () => {
+  it('lost_identity goes to the code view with the code prefilled', async () => {
+    localStorage.setItem(LAST_CODE_STORAGE_KEY, CODE);
     const m = mount({
-      ...restored,
-      myHandins: vi.fn(async () => ({ items: [record({ taskId: '', title: '' })], hasMore: false })),
-    });
-    await m.open();
-    m.click('history');
-    await settle();
-    expect(m.el.querySelector('.z1-handin-what')!.textContent).toBe('(no title)');
-    const n = mount({
-      ...restored,
-      myHandins: vi.fn(async () => {
-        throw fail('index_missing');
+      restore: vi.fn(async () => {
+        throw fail('lost_identity');
       }),
     });
-    await n.open();
-    n.click('history');
+    await m.open();
+    expect(m.view()).toBe('code');
+    expect(m.q<HTMLInputElement>('#z1-handin-code').value).toBe('BKT-4M9');
+    expect(m.role('code-error').textContent).toBe(STUDENT_ERROR_TEXT.lost_identity);
+  });
+
+  it('OK after class_deleted returns to an empty code view; Try again retries the opening', async () => {
+    const gone = mount({
+      restore: vi.fn(async () => {
+        throw fail('class_deleted');
+      }),
+    });
+    await gone.open();
+    gone.click('ok');
+    expect(gone.view()).toBe('code');
+    expect(gone.spies.onSessionChange).toHaveBeenLastCalledWith('');
+
+    const restore = vi.fn(async (): Promise<RestoreResult | null> => {
+      throw fail('offline');
+    });
+    const m = mount({ restore });
+    await m.open();
+    restore.mockResolvedValueOnce(null);
+    m.click('retry-open');
     await settle();
-    expect(n.role('history-status').textContent).toBe(STUDENT_ERROR_TEXT.index_missing);
+    expect(restore).toHaveBeenCalledTimes(2);
+    expect(m.view()).toBe('code');
   });
 });
 
@@ -930,41 +639,36 @@ describe('My hand-ins', () => {
 describe('rendering', () => {
   const payloads = ['<img src=x onerror=alert(1)>', '</script><b>x</b>'];
 
-  it('renders class, teacher, task, user names and titles as text', async () => {
+  it('renders class names and student names as text', async () => {
     for (const p of payloads) {
-      const cls = publicClass({ name: p, teacherName: p, students: [{ studentId: 'ali00001', username: p }], tasks: [{ taskId: 'task01', title: p }], currentTaskId: 'task01' });
       const m = mount({
-        findClass: vi.fn(async () => ({ info: cls, existing: null })),
-        join: vi.fn(async () => session({ className: p, teacherName: p, username: p })),
-        myHandins: vi.fn(async () => ({ items: [record({ title: p, taskId: '' })], hasMore: false })),
+        findClass: vi.fn(async () => ({ info: publicClass({ name: p }), existing: null })),
+        join: vi.fn(async () => session({ className: p, firstName: p, lastName: p })),
+        handIn: vi.fn(async () => {
+          throw fail('too_soon');
+        }),
       });
       await m.open();
-      m.q<HTMLInputElement>('#z1-handin-code').value = CODE;
-      m.click('next');
+      await m.toName();
+      expect(m.role('name-heading').textContent).toBe(`Class ${p}`);
+      m.typeName(p, p);
+      m.click('handin-name');
       await settle();
-      expect(m.role('pick-heading').textContent).toBe(`Class ${p} · ${p}`);
-      pickName(m, p);
-      m.click('pick');
-      await settle();
-      expect(m.role('ready-heading').textContent).toBe(`Hand in to ${p} as ${p}`);
-      expect(m.q<HTMLSelectElement>('#z1-handin-task').options[1].textContent).toBe(p);
-      m.click('history');
-      await settle();
-      expect(m.el.querySelector('.z1-handin-what')!.textContent).toBe(p);
+      expect(m.view()).toBe('ready');
+      expect(m.role('ready-heading').textContent).toBe(`Hand in as ${p} ${p} to class BKT-4M9 · ${p}`);
       expect(m.el.querySelector('img')).toBeNull();
       // The only <b>s are the dialog's own emphasis; the payload's <b>x</b> never becomes an element.
-      for (const b of m.el.querySelectorAll('b')) expect([p, 'Hand in']).toContain(b.textContent);
+      for (const b of m.el.querySelectorAll('b')) expect([p, `${p} ${p}`, 'BKT-4M9']).toContain(b.textContent);
       document.body.innerHTML = '';
     }
   });
 
-  it('reads nothing from the class session store itself while restore() says who is signed in', async () => {
-    saveSession(saved({ lastHandinAt: NOW.getTime() - 120_000, lastHandinTitle: 'Blink' }));
-    const m = mount({
-      restore: vi.fn(async () => ({ session: session(), info: publicClass(), confirm: null, lastHandin: { at: NOW.getTime() - 120_000, title: 'Blink' } })),
-    });
+  it('reads nothing from the class session store itself while restore() says who is remembered', async () => {
+    saveSession(saved({ firstName: 'Someone', lastName: 'Else', lastHandinAt: NOW.getTime() - 120_000 }));
+    const m = mount({ restore: vi.fn(async () => restored({ lastHandinAt: NOW.getTime() - 120_000 })) });
     await m.open();
-    expect(m.role('last').textContent).toContain('Blink');
+    expect(m.role('ready-heading').textContent).toContain('Ali Khoury');
+    expect(m.role('last').textContent).toContain('Last handed in');
     expect(localStorage.getItem(CLASSROOM_STORAGE_KEY)).not.toBeNull();
   });
 });

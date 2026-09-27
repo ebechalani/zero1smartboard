@@ -1,33 +1,22 @@
 /**
  * Hand in dialog (docs/CLASSROOM.md §1.2, §4.10): the student side of the
- * class platform inside the simulator. Joining a class (code → pick your
- * name), the confirmation on shared computers, handing the current work in,
- * the history of this computer's hand-ins, and signing out.
+ * class platform inside the simulator. One short flow: class code → first
+ * name and last name → Hand in. The device remembers the code and the name,
+ * so the next time the dialog opens on "Hand in as Ali Khoury to class
+ * BKT-4M9" with a Hand in button and a small Change link.
  *
  * The data layer (`src/classroom/student.ts`) is loaded with `import()` the
  * first time the dialog opens, so the simulator never downloads Firebase for
  * students who do not use classes. Every string that comes from the class
- * (names, titles, notes) is rendered with `textContent`.
+ * (names) is rendered with `textContent`.
  *
- * Views (`data-view`): loading | code | pick | already | confirm | ready |
- * success | switch | joined | error. Buttons carry `data-action`.
+ * Views (`data-view`): loading | code | name | ready | success | error.
+ * Buttons carry `data-action`.
  */
-import { decodeContent } from '../classroom/codec';
 import { ClassroomError, STUDENT_ERROR_TEXT, errorText, toClassroomError, type ClassroomErrorCode } from '../classroom/errors';
-import {
-  LIMITS,
-  codeProblem,
-  draftProblem,
-  formatClassCode,
-  joinStatus,
-  newHandinId,
-  normalizeClassCode,
-  type HandinContent,
-  type HandinDraft,
-  type HandinRecord,
-} from '../classroom/model';
+import { LIMITS, codeProblem, draftProblem, formatClassCode, fullName, newHandinId, normalizeClassCode, type HandinDraft, type HandinRecord } from '../classroom/model';
 import { loadLastCode, loadSavedSession } from '../classroom/session-store';
-import type { FoundClass, PublicClass, RestoreResult, StudentApi, StudentSession } from '../classroom/student';
+import type { FoundClass, PublicClass, RestoreResult, StudentApi, StudentName, StudentSession } from '../classroom/student';
 
 export interface HandinWork {
   kind: 'code' | 'blocks';
@@ -42,54 +31,43 @@ export interface HandinWork {
 export interface HandinDialogOptions {
   /** Default: () => import('../classroom/student').then((m) => m.createStudentApi()). */
   loadApi?: () => Promise<StudentApi>;
-  /** "Open" in My hand-ins: the App sets location.hash to handinHash(content).hash. */
-  openWork?(content: HandinContent): void;
-  /** The App updates the header label ('' = not joined). */
-  onSessionChange?(username: string): void;
+  /** The App updates the header label ('' = no remembered name). */
+  onSessionChange?(studentName: string): void;
   toast?(text: string): void;
   /** The site was redeployed under this tab (an 'app_updated' error): the App shows its reload prompt. */
   onAppUpdated?(): void;
-  /** Default window.confirm. */
+  /** Default window.confirm (the untouched-example question). */
   confirm?(text: string): boolean;
   now?: () => Date;
   isOnline?: () => boolean;
 }
 
 export interface HandinDialog {
-  /** Show the dialog for this work; `joinCode` opens it in join mode (a `#class=` link). */
+  /** Show the dialog for this work; `joinCode` (a `#class=` link) prefills the code. */
   open(work: HandinWork, options?: { joinCode?: string }): void;
   close(): void;
   isOpen(): boolean;
   readonly element: HTMLDialogElement;
 }
 
-export type HandinView = 'loading' | 'code' | 'pick' | 'already' | 'confirm' | 'ready' | 'success' | 'switch' | 'joined' | 'error';
-
-/** Above this many names the Pick view gets a filter box. */
-export const FILTER_ABOVE = 12;
+export type HandinView = 'loading' | 'code' | 'name' | 'ready' | 'success' | 'error';
 
 /** Texts of the dialog that are not in the §1.5 error table (tests reuse them). */
 export const HANDIN_TEXT = {
+  title: 'Hand in your work to your teacher',
   loading: 'Connecting to your class…',
-  finePrint: 'Only pick your own name. Your teacher can see which computer joined as which name.',
-  emptyRoster: 'Your teacher has not added any names yet. Ask them to add you.',
-  noHistory: 'Nothing handed in from this computer yet.',
-  again: 'Hand in again to send a newer version.',
+  nameHelp: 'Type your name so your teacher knows whose work this is.',
   handingIn: 'Handing in…',
   checking: 'Checking whether it arrived…',
   notArrived: 'It did not arrive.',
-  taskGone: 'That task no longer exists. Pick a task again and hand in.',
-  cannotOpen: 'This hand-in could not be opened.',
   blank: 'Your sketch is still the empty starting sketch. Hand it in anyway?',
   example: (title: string) => `This is still the example '${title}'. Hand it in anyway?`,
   errors: (n: number) => `Your sketch has ${n} error${n === 1 ? '' : 's'}. Your teacher will see them.`,
-  signOut: (className: string) => `Sign out of ${className} on this computer? Your hand-ins stay with your teacher.`,
+  success: (time: string) => `✓ Handed in · ${time} · Your teacher can see it now.`,
 } as const;
 
 /** Errors after which the hand-in may have landed anyway: "Try again" reuses the same id. */
 const RETRY_CODES: readonly ClassroomErrorCode[] = ['timeout', 'offline', 'unknown'];
-/** Errors of restore() in join mode that mean "no usable session": the old one is dropped. */
-const CONNECTION_CODES: readonly ClassroomErrorCode[] = ['offline', 'timeout', 'quota', 'load_failed', 'app_updated', 'signup_limit'];
 
 function defaultLoadApi(): Promise<StudentApi> {
   return import('../classroom/student').then((m) => m.createStudentApi());
@@ -132,7 +110,7 @@ export function createHandinDialog(parent: HTMLElement, options: HandinDialogOpt
   dialog.setAttribute('aria-labelledby', 'z1-handin-title');
   dialog.innerHTML = `
     <form class="z1-dialog-form" novalidate>
-      <h2 id="z1-handin-title" data-role="title">Hand in your work to your teacher</h2>
+      <h2 id="z1-handin-title" data-role="title">${HANDIN_TEXT.title}</h2>
 
       <section class="z1-handin-view" data-view="loading" hidden>
         <p class="z1-muted" data-role="loading-text">${HANDIN_TEXT.loading}</p>
@@ -149,87 +127,38 @@ export function createHandinDialog(parent: HTMLElement, options: HandinDialogOpt
         </div>
       </section>
 
-      <section class="z1-handin-view" data-view="pick" hidden>
-        <p class="z1-handin-heading" data-role="pick-heading"></p>
-        <p>Pick your own name:</p>
-        <div class="z1-setting" data-role="filter-setting" hidden>
-          <label for="z1-handin-filter">Find your name</label>
-          <input type="text" id="z1-handin-filter" autocomplete="off" spellcheck="false" />
+      <section class="z1-handin-view" data-view="name" hidden>
+        <p class="z1-handin-heading" data-role="name-heading"></p>
+        <p class="z1-setting-help">${HANDIN_TEXT.nameHelp}</p>
+        <div class="z1-handin-names">
+          <div class="z1-setting">
+            <label for="z1-handin-first">First name</label>
+            <input type="text" id="z1-handin-first" autocomplete="given-name" autocapitalize="words" maxlength="${LIMITS.nameMax}" />
+          </div>
+          <div class="z1-setting">
+            <label for="z1-handin-last">Last name</label>
+            <input type="text" id="z1-handin-last" autocomplete="family-name" autocapitalize="words" maxlength="${LIMITS.nameMax}" />
+          </div>
         </div>
-        <div class="z1-handin-list" role="radiogroup" aria-label="Your name" data-role="names"></div>
-        <p class="z1-muted" data-role="pick-empty" hidden>${HANDIN_TEXT.emptyRoster}</p>
-        <p class="z1-setting-help">${HANDIN_TEXT.finePrint}</p>
-        <p class="z1-setting-help">Can't find your name? <button type="button" class="z1-linkbtn" data-action="refresh">Refresh the list</button>, or ask your teacher.</p>
-        <p class="z1-handin-error" data-role="pick-error" aria-live="polite"></p>
+        <p class="z1-handin-error" data-role="name-error" aria-live="polite"></p>
         <div class="z1-handin-buttons">
-          <button type="button" class="z1-btn z1-btn-primary" data-action="pick" disabled>This is me</button>
+          <button type="button" class="z1-btn z1-btn-primary" data-action="handin-name">Hand in</button>
           <button type="button" class="z1-btn" data-action="back">Back</button>
-        </div>
-      </section>
-
-      <section class="z1-handin-view" data-view="already" hidden>
-        <p data-role="already-text"></p>
-        <div class="z1-handin-buttons">
-          <button type="button" class="z1-btn z1-btn-primary" data-action="continue"></button>
-          <button type="button" class="z1-btn" data-action="signout"></button>
-        </div>
-      </section>
-
-      <section class="z1-handin-view" data-view="confirm" hidden>
-        <p class="z1-handin-heading" data-role="confirm-text"></p>
-        <div class="z1-handin-buttons">
-          <button type="button" class="z1-btn z1-btn-primary" data-action="yes"></button>
-          <button type="button" class="z1-btn" data-action="other">No, I'm someone else</button>
-          <button type="button" class="z1-btn" data-action="different">Different class</button>
-        </div>
-      </section>
-
-      <section class="z1-handin-view" data-view="switch" hidden>
-        <p data-role="switch-text"></p>
-        <div class="z1-handin-buttons">
-          <button type="button" class="z1-btn z1-btn-primary" data-action="switch">Switch</button>
-          <button type="button" class="z1-btn" data-action="cancel">Cancel</button>
-        </div>
-      </section>
-
-      <section class="z1-handin-view" data-view="joined" hidden>
-        <p data-role="joined-text"></p>
-        <div class="z1-handin-buttons">
-          <button type="button" class="z1-btn z1-btn-primary" data-action="ok">OK</button>
         </div>
       </section>
 
       <section class="z1-handin-view" data-view="ready" hidden>
         <p class="z1-handin-heading" data-role="ready-heading"></p>
-        <p class="z1-setting-help"><button type="button" class="z1-linkbtn" data-action="signout" data-role="ready-signout"></button></p>
         <p class="z1-muted" data-role="last" hidden></p>
-        <div class="z1-setting" data-role="task-setting" hidden>
-          <label for="z1-handin-task">Task</label>
-          <select id="z1-handin-task"></select>
-        </div>
-        <p data-role="work"></p>
-        <div class="z1-setting">
-          <label for="z1-handin-work-title">Title (optional)</label>
-          <input type="text" id="z1-handin-work-title" maxlength="${LIMITS.titleMax}" autocomplete="off" />
-        </div>
-        <div class="z1-setting">
-          <label for="z1-handin-note">Note for your teacher (optional)</label>
-          <textarea id="z1-handin-note" rows="2" maxlength="${LIMITS.noteMax}"></textarea>
-        </div>
-        <p class="z1-handin-warning" data-role="warning" hidden></p>
-        <p class="z1-handin-note" data-role="errors-note" hidden></p>
         <div class="z1-handin-buttons">
-          <button type="button" class="z1-btn z1-btn-primary z1-handin-submit" data-action="handin"></button>
+          <button type="button" class="z1-btn z1-btn-primary z1-handin-submit" data-action="handin">Hand in</button>
           <button type="button" class="z1-btn" data-action="retry" hidden>Try again</button>
+          <button type="button" class="z1-linkbtn" data-action="change">Change</button>
         </div>
       </section>
 
       <section class="z1-handin-view" data-view="success" hidden>
         <p class="z1-handin-success" data-role="success-text"></p>
-        <div class="z1-handin-buttons">
-          <button type="button" class="z1-btn" data-action="history">My hand-ins</button>
-          <button type="button" class="z1-btn" data-action="signout">Leaving? Sign out of the class on this computer</button>
-        </div>
       </section>
 
       <section class="z1-handin-view" data-view="error" hidden>
@@ -237,12 +166,11 @@ export function createHandinDialog(parent: HTMLElement, options: HandinDialogOpt
         <div class="z1-handin-buttons" data-role="error-actions"></div>
       </section>
 
-      <details class="z1-handin-history" data-role="history" hidden>
-        <summary>My hand-ins from this computer</summary>
-        <p class="z1-muted" data-role="history-status"></p>
-        <ul class="z1-handin-rows" data-role="history-rows"></ul>
-        <button type="button" class="z1-btn" data-action="more" hidden>Show more</button>
-      </details>
+      <div class="z1-handin-work" data-role="work-block" hidden>
+        <p data-role="work"></p>
+        <p class="z1-handin-warning" data-role="warning" hidden></p>
+        <p class="z1-handin-note" data-role="errors-note" hidden></p>
+      </div>
 
       <div class="z1-dialog-actions">
         <p class="z1-handin-status z1-spacer" data-role="status" role="status" aria-live="polite"></p>
@@ -256,23 +184,16 @@ export function createHandinDialog(parent: HTMLElement, options: HandinDialogOpt
   const views = new Map<HandinView, HTMLElement>();
   for (const section of dialog.querySelectorAll<HTMLElement>('[data-view]')) views.set(section.dataset.view as HandinView, section);
 
-  const title = role('title');
   const codeInput = dialog.querySelector<HTMLInputElement>('#z1-handin-code')!;
   const codeError = role('code-error');
-  const filterInput = dialog.querySelector<HTMLInputElement>('#z1-handin-filter')!;
-  const names = role('names');
-  const pickError = role('pick-error');
-  const taskSelect = dialog.querySelector<HTMLSelectElement>('#z1-handin-task')!;
-  const titleInput = dialog.querySelector<HTMLInputElement>('#z1-handin-work-title')!;
-  const noteInput = dialog.querySelector<HTMLTextAreaElement>('#z1-handin-note')!;
+  const firstInput = dialog.querySelector<HTMLInputElement>('#z1-handin-first')!;
+  const lastInput = dialog.querySelector<HTMLInputElement>('#z1-handin-last')!;
+  const nameError = role('name-error');
+  const workBlock = role('work-block');
   const warning = role('warning');
   const errorsNote = role('errors-note');
   const submit = action('handin');
   const retry = action('retry');
-  const history = role<HTMLDetailsElement>('history');
-  const historyStatus = role('history-status');
-  const historyRows = role<HTMLUListElement>('history-rows');
-  const more = action('more');
   const status = role('status');
 
   // --- state ------------------------------------------------------------
@@ -281,24 +202,17 @@ export function createHandinDialog(parent: HTMLElement, options: HandinDialogOpt
   let apiPromise: Promise<StudentApi> | null = null;
   let session: StudentSession | null = null;
   let info: PublicClass | null = null;
+  /** The class the code view found, while the name view is shown. */
   let found: FoundClass | null = null;
-  /** The restore result kept aside while a #class= link asks about switching class. */
-  let pending: RestoreResult | null = null;
-  let joinMode = false;
-  let confirmed = false;
-  let lastHandin: { at: number; title: string } | null = null;
+  /** ms of the last hand-in from this device, null when none. */
+  let lastHandin: number | null = null;
   /** The hand-in id of the current draft; a new one after every success (retries reuse it). */
   let handinId = newHandinId();
-  /** Title and task of the last hand-in of this session: kept for the next one (the note is not). */
-  let draftMemory: { title: string; taskId: string } | null = null;
-  /** The example / blank warning was shown: the next click hands in. */
-  let anyway = false;
   /** A request is running: one at a time. */
   let busy = false;
   /** Incremented by every open() and close(): an answer for an older opening is dropped. */
   let epoch = 0;
   let checkTimer: ReturnType<typeof setTimeout> | null = null;
-  const historyState = { loaded: false, loading: false, items: [] as HandinRecord[], hasMore: false };
   /** The code the student last asked about, for {code} in error texts. */
   let lastCodeTried = '';
 
@@ -308,7 +222,7 @@ export function createHandinDialog(parent: HTMLElement, options: HandinDialogOpt
     status.dataset.tone = tone;
   };
 
-  const notifySession = (): void => options.onSessionChange?.(session?.username ?? '');
+  const notifySession = (): void => options.onSessionChange?.(session ? fullName(session.firstName, session.lastName) : '');
 
   /** The §1.5 text of an error (the API fills the placeholders; fakes may pass the bare code). */
   const describe = (err: unknown): string => {
@@ -330,16 +244,12 @@ export function createHandinDialog(parent: HTMLElement, options: HandinDialogOpt
     return sameDay ? `today ${timeText(date)}` : `${date.toLocaleDateString()} ${timeText(date)}`;
   };
 
-  const savedLastHandin = (): { at: number; title: string } | null => {
-    const saved = loadSavedSession();
-    return saved && saved.uid === session?.uid && saved.lastHandinAt > 0 ? { at: saved.lastHandinAt, title: saved.lastHandinTitle } : null;
-  };
-
   const showView = (view: HandinView): void => {
     for (const [name, section] of views) section.hidden = name !== view;
-    // The history belongs to the Ready and Success views, once the student has confirmed who they are.
-    history.hidden = !(confirmed && session && (view === 'ready' || view === 'success'));
-    title.textContent = view === 'code' || view === 'loading' ? 'Hand in your work to your teacher' : 'Hand in';
+    // The work description and its warnings belong to the two views with a Hand in button.
+    const host = view === 'name' || view === 'ready' ? views.get(view)! : null;
+    workBlock.hidden = host === null;
+    if (host) host.insertBefore(workBlock, host.querySelector('.z1-handin-buttons'));
   };
 
   const focus = (element: HTMLElement | null): void => {
@@ -366,27 +276,23 @@ export function createHandinDialog(parent: HTMLElement, options: HandinDialogOpt
   };
   const stale = (token: number): boolean => token !== epoch;
 
-  const clearHistory = (): void => {
-    historyState.loaded = false;
-    historyState.loading = false;
-    historyState.items = [];
-    historyState.hasMore = false;
-    historyRows.replaceChildren();
-    historyStatus.textContent = '';
-    more.hidden = true;
-    history.open = false;
-  };
-
   const forgetSession = (): void => {
     session = null;
     info = null;
     found = null;
-    pending = null;
-    confirmed = false;
     lastHandin = null;
-    draftMemory = null;
-    clearHistory();
     notifySession();
+  };
+
+  const fillWork = (): void => {
+    if (!work) return;
+    const lines = work.code.split('\n').length;
+    role('work').textContent =
+      work.kind === 'blocks' ? 'Your blocks program and the Arduino sketch made from it' : `Your Arduino sketch, ${lines} line${lines === 1 ? '' : 's'}`;
+    warning.hidden = work.unchanged === null;
+    warning.textContent = work.unchanged === null ? '' : work.unchanged.kind === 'blank' ? HANDIN_TEXT.blank : HANDIN_TEXT.example(work.unchanged.title);
+    errorsNote.hidden = work.errorCount === 0;
+    errorsNote.textContent = work.errorCount > 0 ? HANDIN_TEXT.errors(work.errorCount) : '';
   };
 
   // --- views --------------------------------------------------------------
@@ -405,161 +311,39 @@ export function createHandinDialog(parent: HTMLElement, options: HandinDialogOpt
     focus(role('error-actions').querySelector('button'));
   };
 
-  const classHeading = (cls: PublicClass): (string | Node)[] => {
-    const parts: (string | Node)[] = ['Class ', bold(cls.name)];
-    if (cls.teacherName) parts.push(` · ${cls.teacherName}`);
-    return parts;
-  };
-
-  /** The Pick view for `cls`; the selected name stays selected when it is still there. */
-  const showPick = (cls: PublicClass): void => {
-    info = cls;
-    const selected = names.querySelector<HTMLInputElement>('input:checked')?.value ?? '';
-    role('pick-heading').replaceChildren(...classHeading(cls));
-    names.replaceChildren(
-      ...cls.students.map((student, i) => {
-        const input = document.createElement('input');
-        input.type = 'radio';
-        input.name = 'z1-handin-name';
-        input.value = student.studentId;
-        input.id = `z1-handin-name-${i}`;
-        input.checked = student.studentId === selected;
-        const label = el('label', 'z1-handin-pick', input, ' ', student.username);
-        label.dataset.username = student.username;
-        return label;
-      }),
-    );
-    const empty = cls.students.length === 0;
-    role('pick-empty').hidden = !empty;
-    names.hidden = empty;
-    const filtered = cls.students.length > FILTER_ABOVE;
-    role('filter-setting').hidden = !filtered;
-    if (!filtered) filterInput.value = '';
-    applyFilter();
-    action('pick').disabled = names.querySelector('input:checked') === null;
-    pickError.textContent = '';
-    showView('pick');
-    focus(filtered ? filterInput : (names.querySelector<HTMLInputElement>('input:checked') ?? names.querySelector<HTMLInputElement>('input')));
-  };
-
-  const applyFilter = (): void => {
-    const needle = filterInput.value.trim().toLowerCase();
-    for (const label of names.querySelectorAll<HTMLElement>('label')) {
-      label.hidden = needle !== '' && !(label.dataset.username ?? '').includes(needle);
-    }
-  };
-
-  const showAlready = (f: FoundClass): void => {
+  /** The name view for `f`, prefilled with the name this device gave before (member doc, then saved session). */
+  const showName = (f: FoundClass): void => {
     found = f;
     info = f.info;
-    const username = f.existing?.username ?? '';
-    role('already-text').replaceChildren('This computer already joined ', bold(f.info.name), ' as ', bold(username), '.');
-    action('continue').textContent = `Continue as ${username}`;
-    views.get('already')!.querySelector<HTMLButtonElement>('[data-action="signout"]')!.textContent = `Not ${username}? Sign out`;
-    showView('already');
-    focus(action('continue'));
-  };
-
-  const showFound = (f: FoundClass): void => {
-    if (f.existing) showAlready(f);
-    else showPick(f.info);
-  };
-
-  const showConfirm = (): void => {
-    if (!session) return;
-    const parts: (string | Node)[] = ['Hand in to ', bold(session.className)];
-    if (session.teacherName) parts.push(` (${session.teacherName})`);
-    parts.push(' as ', bold(session.username), '?');
-    role('confirm-text').replaceChildren(...parts);
-    action('yes').textContent = `Yes, I'm ${session.username}`;
-    showView('confirm');
-    focus(action('yes'));
-  };
-
-  const showSwitch = (current: StudentSession, target: PublicClass): void => {
-    role('switch-text').replaceChildren(
-      'This computer is in ',
-      bold(current.className),
-      ' as ',
-      bold(current.username),
-      '. Switch to ',
-      bold(target.name),
-      '?',
-    );
-    showView('switch');
-    focus(action('switch'));
-  };
-
-  const showJoined = (): void => {
-    if (!session) return;
-    role('joined-text').replaceChildren(
-      "You're in ",
-      bold(session.className),
-      ' as ',
-      bold(session.username),
-      '. Work as usual and press ',
-      bold('Hand in'),
-      " when you're done.",
-    );
-    showView('joined');
-    focus(action('ok'));
-  };
-
-  const fillTasks = (cls: PublicClass, taskId: string): void => {
-    const setting = role('task-setting');
-    setting.hidden = cls.tasks.length === 0;
-    const none = document.createElement('option');
-    none.value = '';
-    none.textContent = '(no task)';
-    taskSelect.replaceChildren(
-      none,
-      ...cls.tasks.map((task) => {
-        const option = document.createElement('option');
-        option.value = task.taskId;
-        option.textContent = task.title;
-        return option;
-      }),
-    );
-    taskSelect.value = cls.tasks.some((t) => t.taskId === taskId) ? taskId : '';
-  };
-
-  const submitLabel = (): void => {
-    if (!session) return;
-    const label = anyway ? 'Hand in anyway' : `Hand in as ${session.username}`;
-    submit.textContent = label;
-    submit.setAttribute('aria-label', label);
+    const saved = loadSavedSession();
+    const prefill: StudentName | null = f.existing ?? (saved ? { firstName: saved.firstName, lastName: saved.lastName } : null);
+    role('name-heading').replaceChildren('Class ', bold(f.info.name));
+    if (prefill) {
+      firstInput.value = prefill.firstName;
+      lastInput.value = prefill.lastName;
+    }
+    nameError.textContent = '';
+    fillWork();
+    showView('name');
+    focus(firstInput);
   };
 
   const showReady = (): void => {
-    if (!session || !info || !work) return;
-    role('ready-heading').replaceChildren('Hand in to ', bold(session.className), ' as ', bold(session.username));
-    role('ready-signout').textContent = `Not ${session.username}? Sign out`;
+    if (!session) return;
+    role('ready-heading').replaceChildren('Hand in as ', bold(fullName(session.firstName, session.lastName)), ' to class ', bold(formatClassCode(session.code)), ` · ${session.className}`);
     const last = role('last');
     last.hidden = lastHandin === null;
-    if (lastHandin) last.textContent = `Last handed in: ${whenText(lastHandin.at)}${lastHandin.title ? ` · ${lastHandin.title}` : ''}`;
-    fillTasks(info, draftMemory?.taskId ?? info.currentTaskId);
-    const lines = work.code.split('\n').length;
-    role('work').textContent =
-      work.kind === 'blocks' ? 'Your blocks program and the Arduino sketch made from it' : `Your Arduino sketch, ${lines} line${lines === 1 ? '' : 's'}`;
-    titleInput.value = draftMemory?.title ?? '';
-    noteInput.value = '';
-    anyway = false;
-    warning.hidden = work.unchanged === null;
-    warning.textContent = work.unchanged === null ? '' : work.unchanged.kind === 'blank' ? HANDIN_TEXT.blank : HANDIN_TEXT.example(work.unchanged.title);
-    errorsNote.hidden = work.errorCount === 0;
-    errorsNote.textContent = work.errorCount > 0 ? HANDIN_TEXT.errors(work.errorCount) : '';
-    submitLabel();
+    if (lastHandin !== null) last.textContent = `Last handed in: ${whenText(lastHandin)}`;
+    fillWork();
     submit.disabled = false;
+    submit.textContent = 'Hand in';
     retry.hidden = true;
-    setStatus(draftMemory ? HANDIN_TEXT.again : '');
     showView('ready');
-    focus(info.tasks.length > 0 ? taskSelect : titleInput);
+    focus(submit);
   };
 
   const showSuccess = (record: HandinRecord): void => {
-    const what = info?.tasks.find((t) => t.taskId === record.taskId)?.title || record.title;
-    const parts = ['✓ Handed in', what, record.kind === 'blocks' ? 'Blocks' : 'Code', timeText(record.createdAt ?? now())].filter((p) => p !== '');
-    role('success-text').textContent = `${parts.join(' · ')}. Your teacher can see it now.`;
+    role('success-text').textContent = HANDIN_TEXT.success(timeText(record.createdAt ?? now()));
     setStatus('');
     showView('success');
     focus(action('close'));
@@ -581,31 +365,18 @@ export function createHandinDialog(parent: HTMLElement, options: HandinDialogOpt
       showCode(loadLastCode());
       return;
     }
-    useRestored(result);
-  };
-
-  const useRestored = (result: RestoreResult): void => {
     session = result.session;
     info = result.info;
-    lastHandin = result.lastHandin;
+    lastHandin = result.lastHandinAt;
     notifySession();
-    if (result.confirm) {
-      confirmed = false;
-      showConfirm();
-    } else {
-      confirmed = true;
-      showReady();
-    }
+    showReady();
   };
 
   const restoreFailed = (err: unknown): void => {
     const text = describe(err);
     switch (codeOf(err)) {
       case 'device_removed':
-        showError(text, [{ action: 'rejoin', label: 'Join again' }]);
-        return;
-      case 'not_on_roster':
-        showError(text, [{ action: 'pick-again', label: 'Pick your name again' }]);
+        showError(text, [{ action: 'change', label: 'Enter your name again' }]);
         return;
       case 'class_deleted':
         forgetSession();
@@ -620,53 +391,6 @@ export function createHandinDialog(parent: HTMLElement, options: HandinDialogOpt
         return;
       default:
         showError(text, [{ action: 'retry-open', label: 'Try again' }]);
-    }
-  };
-
-  const startJoin = async (a: StudentApi, code: string): Promise<void> => {
-    const token = epoch;
-    lastCodeTried = code;
-    let result: RestoreResult | null = null;
-    try {
-      result = await a.restore();
-    } catch (err) {
-      if (stale(token)) return;
-      const errorCode = codeOf(err);
-      if (errorCode && CONNECTION_CODES.includes(errorCode)) {
-        restoreFailed(err);
-        return;
-      }
-      // The saved session is unusable (identity lost, class gone, removed): drop it and join afresh.
-      await a.leave();
-      if (stale(token)) return;
-      forgetSession();
-    }
-    if (stale(token)) return;
-    if (result && result.session.code === code) {
-      session = result.session;
-      info = result.info;
-      lastHandin = result.lastHandin;
-      confirmed = false;
-      notifySession();
-      showConfirm();
-      return;
-    }
-    let f: FoundClass;
-    try {
-      f = await a.findClass(code);
-    } catch (err) {
-      if (stale(token)) return;
-      joinMode = false;
-      showCode(code, describe(err));
-      return;
-    }
-    if (stale(token)) return;
-    if (result) {
-      pending = result;
-      found = f;
-      showSwitch(result.session, f.info);
-    } else {
-      showFound(f);
     }
   };
 
@@ -694,7 +418,7 @@ export function createHandinDialog(parent: HTMLElement, options: HandinDialogOpt
       const f = await a.findClass(code);
       if (stale(token)) return;
       setStatus('');
-      showFound(f);
+      showName(f);
     } catch (err) {
       if (stale(token)) return;
       setStatus('');
@@ -705,126 +429,69 @@ export function createHandinDialog(parent: HTMLElement, options: HandinDialogOpt
     }
   };
 
-  const pickName = async (): Promise<void> => {
-    if (busy || !info) return;
-    const id = names.querySelector<HTMLInputElement>('input:checked')?.value;
-    if (!id) return;
-    if (!joinStatus(info, id, now().getTime()).open) {
-      pickError.textContent = errorText(STUDENT_ERROR_TEXT, 'class_closed', { class: info.name });
-      return;
-    }
-    busy = true;
-    action('pick').disabled = true;
-    pickError.textContent = '';
-    const token = epoch;
-    try {
-      const a = await getApi();
-      session = await a.join(info, id);
-      if (stale(token)) return;
-      confirmed = true;
-      lastHandin = null;
-      draftMemory = null;
-      clearHistory();
-      notifySession();
-      if (joinMode) showJoined();
-      else showReady();
-    } catch (err) {
-      if (stale(token)) return;
-      pickError.textContent = describe(err);
-      if (codeOf(err) === 'not_on_roster') await refreshList(false);
-      focus(action('pick'));
-    } finally {
-      busy = false;
-      action('pick').disabled = names.querySelector('input:checked') === null;
-    }
-  };
-
-  const refreshList = async (clearError: boolean): Promise<void> => {
-    if (!info) return;
-    const token = epoch;
-    const error = pickError.textContent;
-    try {
-      const a = await getApi();
-      const cls = await a.refreshClass(info.code);
-      if (stale(token)) return;
-      showPick(cls);
-      if (!clearError) pickError.textContent = error;
-    } catch (err) {
-      if (stale(token)) return;
-      pickError.textContent = describe(err);
-    }
-  };
-
-  const continueAs = async (): Promise<void> => {
-    if (busy || !found) return;
-    busy = true;
-    const token = epoch;
-    try {
-      const a = await getApi();
-      session = await a.continueAs(found);
-      if (stale(token)) return;
-      confirmed = true;
-      lastHandin = savedLastHandin();
-      clearHistory();
-      notifySession();
-      if (joinMode) showJoined();
-      else showReady();
-    } catch (err) {
-      if (stale(token)) return;
-      showError(describe(err), [{ action: 'retry-open', label: 'Try again' }]);
-    } finally {
-      busy = false;
-    }
-  };
-
-  const signOut = async (forgetCode: boolean, prefill?: string): Promise<void> => {
-    if (busy) return;
-    busy = true;
-    joinMode = false;
-    const code = prefill ?? (forgetCode ? '' : (session?.code ?? loadLastCode()));
-    const token = epoch;
-    try {
-      const a = await getApi();
-      await a.leave({ forgetCode });
-    } catch {
-      // Not configured or offline: the local session is still cleared by the API.
-    } finally {
-      busy = false;
-    }
-    if (stale(token)) return;
-    forgetSession();
-    showCode(code);
-  };
-
-  const handIn = async (): Promise<void> => {
-    if (busy || !session || !work) return;
-    if (work.unchanged && !anyway) {
-      anyway = true;
-      submitLabel();
-      focus(submit);
-      return;
-    }
-    const draft: HandinDraft = {
-      kind: work.kind,
-      code: work.code,
-      workspaceJson: work.kind === 'blocks' ? work.workspaceJson : '',
-      taskId: taskSelect.value,
-      title: titleInput.value,
-      note: noteInput.value,
-    };
+  /** The checks that need no request; false = stop (the status line says why). */
+  const readyToSend = (draft: HandinDraft): boolean => {
+    if (!work) return false;
     const problem = draftProblem(draft);
     if (problem) {
       setStatus(errorText(STUDENT_ERROR_TEXT, problem), 'error');
-      return;
+      return false;
     }
-    if (lastHandin && now().getTime() - lastHandin.at < LIMITS.handinCooldownMs) {
+    if (lastHandin !== null && now().getTime() - lastHandin < LIMITS.handinCooldownMs) {
       setStatus(errorText(STUDENT_ERROR_TEXT, 'too_soon'), 'error');
-      return;
+      return false;
     }
     if (!isOnline()) {
       setStatus(errorText(STUDENT_ERROR_TEXT, 'offline'), 'error');
-      return;
+      return false;
     }
+    if (work.unchanged && !confirmDialog(work.unchanged.kind === 'blank' ? HANDIN_TEXT.blank : HANDIN_TEXT.example(work.unchanged.title))) return false;
+    return true;
+  };
+
+  const currentDraft = (): HandinDraft | null =>
+    work ? { kind: work.kind, code: work.code, workspaceJson: work.kind === 'blocks' ? work.workspaceJson : '' } : null;
+
+  /** Hand in from the name view: join (create or rename this device's member doc), then send. */
+  const handInAs = async (): Promise<void> => {
+    if (busy || !found || !work) return;
+    const draft = currentDraft()!;
+    nameError.textContent = '';
+    if (!readyToSend(draft)) return;
+    busy = true;
+    action('handin-name').disabled = true;
+    setStatus(HANDIN_TEXT.handingIn);
+    const token = epoch;
+    try {
+      const a = await getApi();
+      session = await a.join(found, { firstName: firstInput.value, lastName: lastInput.value });
+      if (stale(token)) return;
+      lastHandin = null;
+      notifySession();
+    } catch (err) {
+      if (stale(token)) return;
+      setStatus('');
+      nameError.textContent = describe(err);
+      focus(codeOf(err) === 'bad_name' ? firstInput : action('handin-name'));
+      return;
+    } finally {
+      busy = false;
+      action('handin-name').disabled = false;
+    }
+    showReady();
+    await send(draft);
+  };
+
+  /** Hand in from the Ready view (also Try again). */
+  const handIn = async (): Promise<void> => {
+    if (busy || !session || !work) return;
+    const draft = currentDraft()!;
+    if (!readyToSend(draft)) return;
+    await send(draft);
+  };
+
+  const send = async (draft: HandinDraft): Promise<void> => {
+    if (busy || !session) return;
     busy = true;
     submit.disabled = true;
     submit.textContent = HANDIN_TEXT.handingIn;
@@ -838,7 +505,7 @@ export function createHandinDialog(parent: HTMLElement, options: HandinDialogOpt
       const a = await getApi();
       const record = await a.handIn(current, draft, handinId);
       if (stale(token)) return;
-      handedIn(record, draft);
+      handedIn(record);
     } catch (err) {
       if (stale(token)) return;
       handinFailed(err);
@@ -847,22 +514,19 @@ export function createHandinDialog(parent: HTMLElement, options: HandinDialogOpt
       checkTimer = null;
       busy = false;
       submit.disabled = false;
-      submitLabel();
+      submit.textContent = 'Hand in';
       if (dialog.open && !dialog.contains(document.activeElement)) focus(dialog.querySelector<HTMLElement>('.z1-handin-view:not([hidden]) button'));
     }
   };
 
-  const handedIn = (record: HandinRecord, draft: HandinDraft): void => {
+  const handedIn = (record: HandinRecord): void => {
     if (!session) return;
-    if (record.username !== session.username) {
-      session = { ...session, username: record.username }; // renamed by the teacher meanwhile
+    if (record.firstName !== session.firstName || record.lastName !== session.lastName) {
+      session = { ...session, firstName: record.firstName, lastName: record.lastName }; // renamed from another tab meanwhile
       notifySession();
     }
-    const taskTitle = info?.tasks.find((t) => t.taskId === record.taskId)?.title ?? '';
-    lastHandin = { at: record.createdAt?.getTime() ?? now().getTime(), title: taskTitle || record.title };
-    draftMemory = { title: draft.title, taskId: draft.taskId };
+    lastHandin = record.createdAt?.getTime() ?? now().getTime();
     handinId = newHandinId();
-    clearHistory();
     showSuccess(record);
   };
 
@@ -876,11 +540,8 @@ export function createHandinDialog(parent: HTMLElement, options: HandinDialogOpt
       return;
     }
     switch (code) {
-      case 'not_on_roster':
-        showError(text, [{ action: 'pick-again', label: 'Pick your name again' }]);
-        return;
       case 'device_removed':
-        showError(text, [{ action: 'rejoin', label: 'Join again' }]);
+        showError(text, [{ action: 'change', label: 'Enter your name again' }]);
         return;
       case 'class_deleted':
         forgetSession();
@@ -893,185 +554,39 @@ export function createHandinDialog(parent: HTMLElement, options: HandinDialogOpt
         forgetSession();
         showCode(loadLastCode(), text);
         return;
-      case 'permission':
-        if (err instanceof ClassroomError && err.message === 'task') {
-          setStatus(HANDIN_TEXT.taskGone, 'error');
-          void refreshTasks();
-          return;
-        }
-        break;
     }
     setStatus(text, 'error');
   };
 
-  const refreshTasks = async (): Promise<void> => {
-    if (!info) return;
-    const token = epoch;
-    try {
-      const a = await getApi();
-      const cls = await a.refreshClass(info.code);
-      if (stale(token)) return;
-      info = cls;
-      fillTasks(cls, '');
-      focus(taskSelect);
-    } catch {
-      // The status already says what to do; the list simply stays as it was.
-    }
-  };
-
-  /** "Join again" after the teacher removed this computer: the same uid picks a name again. */
-  const rejoin = async (): Promise<void> => {
-    const code = session?.code ?? loadLastCode();
-    if (!code) {
-      showCode('');
-      return;
-    }
-    showView('loading');
-    const token = epoch;
-    try {
-      const a = await getApi();
-      const f = await a.findClass(code);
-      if (stale(token)) return;
-      forgetSession();
-      showFound(f);
-    } catch (err) {
-      if (stale(token)) return;
-      forgetSession();
-      showCode(code, describe(err));
-    }
-  };
-
-  const switchClass = async (): Promise<void> => {
-    if (busy || !found) return;
-    busy = true;
-    const target = found;
-    const token = epoch;
-    try {
-      const a = await getApi();
-      await a.leave();
-    } catch {
-      // The local session is cleared anyway.
-    } finally {
-      busy = false;
-    }
-    if (stale(token)) return;
+  /** "Change" / "Different class": forget the remembered name on this computer, back to the code view. */
+  const change = (forgetCode: boolean): void => {
+    const code = forgetCode ? '' : (session?.code ?? loadLastCode());
+    api?.forget({ forgetCode });
     forgetSession();
-    showPick(target.info);
-  };
-
-  const loadHistory = async (more: boolean): Promise<void> => {
-    if (!session || historyState.loading) return;
-    historyState.loading = true;
-    const token = epoch;
-    historyStatus.textContent = 'Loading…';
-    action('more').disabled = true;
-    try {
-      const a = await getApi();
-      const last = historyState.items[historyState.items.length - 1];
-      const page = more && last?.createdAt ? { before: last.createdAt } : undefined;
-      const result = await a.myHandins(session, page);
-      if (stale(token)) return;
-      historyState.loaded = true;
-      historyState.items = more ? [...historyState.items, ...result.items] : result.items;
-      historyState.hasMore = result.hasMore;
-      renderHistory();
-    } catch (err) {
-      if (stale(token)) return;
-      historyStatus.textContent = describe(err);
-    } finally {
-      historyState.loading = false;
-      action('more').disabled = false;
-    }
-  };
-
-  const renderHistory = (): void => {
-    historyStatus.textContent = historyState.items.length === 0 ? HANDIN_TEXT.noHistory : '';
-    historyRows.replaceChildren(
-      ...historyState.items.map((record) => {
-        const when = record.createdAt ? `${record.createdAt.toLocaleDateString()} ${timeText(record.createdAt)}` : '';
-        const what = info?.tasks.find((t) => t.taskId === record.taskId)?.title || record.title || '(no title)';
-        const open = button('open', 'Open');
-        open.dataset.id = record.id;
-        return el(
-          'li',
-          'z1-handin-row',
-          el('span', 'z1-handin-when', when),
-          el('span', 'z1-handin-what', what),
-          el('span', 'z1-handin-kind', record.kind === 'blocks' ? 'Blocks' : 'Code'),
-          open,
-        );
-      }),
-    );
-    more.hidden = !historyState.hasMore;
-  };
-
-  const openRecord = async (id: string): Promise<void> => {
-    const record = historyState.items.find((r) => r.id === id);
-    if (!record) return;
-    const decoded = await decodeContent(record.content);
-    if (!decoded.ok) {
-      historyStatus.textContent = HANDIN_TEXT.cannotOpen;
-      return;
-    }
-    dialog.close();
-    options.openWork?.({ kind: record.kind, code: decoded.code, workspaceJson: decoded.workspaceJson });
+    setStatus('');
+    showCode(code);
   };
 
   // --- events -------------------------------------------------------------
   const actions: Record<string, () => void> = {
     next: () => void lookUp(codeInput.value),
     back: () => showCode(codeInput.value || loadLastCode()),
-    refresh: () => void refreshList(true),
-    pick: () => void pickName(),
-    continue: () => void continueAs(),
-    yes: () => {
-      if (!session) return;
-      api?.confirm(session);
-      confirmed = true;
-      showReady();
-    },
-    other: () => void signOut(false),
-    different: () => void signOut(true),
-    signout: () => {
-      if (!session) return;
-      if (confirmDialog(HANDIN_TEXT.signOut(session.className))) void signOut(false);
-    },
-    'pick-again': () => void signOut(false),
-    switch: () => void switchClass(),
-    cancel: () => {
-      joinMode = false;
-      if (pending) useRestored(pending);
-      else showCode(loadLastCode());
-      pending = null;
-    },
-    ok: () => {
-      if (views.get('joined')!.hidden) showCode(loadLastCode()); // "OK" of the class_deleted error
-      else dialog.close();
-    },
+    'handin-name': () => void handInAs(),
     handin: () => void handIn(),
-    anyway: () => void handIn(),
     retry: () => void handIn(),
+    change: () => change(false),
+    different: () => change(true),
+    ok: () => showCode(loadLastCode()),
     'retry-open': () => reopen(),
-    rejoin: () => void rejoin(),
-    history: () => {
-      history.open = true;
-      if (!historyState.loaded) void loadHistory(false);
-    },
-    more: () => void loadHistory(true),
     close: () => dialog.close(),
   };
 
   dialog.addEventListener('click', (e) => {
     const target = (e.target as HTMLElement).closest<HTMLElement>('[data-action]');
     if (!target || !dialog.contains(target) || (target as HTMLButtonElement).disabled) return;
-    const name = target.dataset.action!;
-    if (name === 'open') {
-      void openRecord(target.dataset.id ?? '');
-      return;
-    }
-    actions[name]?.();
+    actions[target.dataset.action!]?.();
   });
-  // Enter in the code field = Next; on a name = This is me. Never a form submit (it would close the dialog).
+  // Enter in the code field = Next; in a name field = Hand in. Never a form submit (it would close the dialog).
   form.addEventListener('submit', (e) => e.preventDefault());
   codeInput.addEventListener('keydown', (e) => {
     if (e.key !== 'Enter' || e.isComposing) return;
@@ -1084,28 +599,16 @@ export function createHandinDialog(parent: HTMLElement, options: HandinDialogOpt
       codeInput.removeAttribute('aria-invalid');
     }
   });
-  names.addEventListener('change', () => {
-    action('pick').disabled = names.querySelector('input:checked') === null;
-  });
-  names.addEventListener('keydown', (e) => {
-    if (e.key !== 'Enter' || e.isComposing) return;
-    e.preventDefault();
-    void pickName();
-  });
-  filterInput.addEventListener('input', applyFilter);
-  filterInput.addEventListener('keydown', (e) => {
-    if (e.key !== 'Enter' || e.isComposing) return;
-    e.preventDefault();
-    const visible = [...names.querySelectorAll<HTMLInputElement>('label:not([hidden]) input')];
-    if (visible.length === 1) {
-      visible[0].checked = true;
-      action('pick').disabled = false;
-      void pickName();
-    }
-  });
-  history.addEventListener('toggle', () => {
-    if (history.open && !historyState.loaded) void loadHistory(false);
-  });
+  for (const input of [firstInput, lastInput]) {
+    input.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' || e.isComposing) return;
+      e.preventDefault();
+      void handInAs();
+    });
+    input.addEventListener('input', () => {
+      nameError.textContent = '';
+    });
+  }
   dialog.addEventListener('close', () => {
     epoch++;
     busy = false;
@@ -1127,17 +630,17 @@ export function createHandinDialog(parent: HTMLElement, options: HandinDialogOpt
     work = next;
     lastOpen = { work: next, joinCode: opts.joinCode };
     busy = false;
-    anyway = false;
-    pending = null;
-    joinMode = opts.joinCode !== undefined;
     setStatus('');
     showView('loading');
     if (!dialog.open) dialog.showModal();
-    run(async () => {
-      const a = await getApi();
-      if (opts.joinCode !== undefined) await startJoin(a, opts.joinCode);
-      else await startRestore(a);
-    });
+    const joinCode = opts.joinCode;
+    // A class link prefills the code, unless this computer already remembers that very class.
+    if (joinCode !== undefined && loadSavedSession()?.code !== joinCode) {
+      lastCodeTried = joinCode;
+      showCode(joinCode);
+      return;
+    }
+    run(async () => startRestore(await getApi()));
   };
 
   return {

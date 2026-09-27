@@ -9,27 +9,7 @@ import type { DocumentReference, QueryConstraint } from 'firebase/firestore';
 import { ClassroomError, TEACHER_ERROR_TEXT, errorText, toClassroomError, withTimeout, type ClassroomErrorCode } from './errors';
 import { loadTeacherFirebase, type TeacherFirebase } from './firebase';
 import { CLASSROOM_DEFAULTS } from '../firebase-config';
-import {
-  LIMITS,
-  cleanLine,
-  generateClassCode,
-  isStudentId,
-  isTaskId,
-  newTaskId,
-  readClassDoc,
-  readHandinDoc,
-  readMemberDoc,
-  sortedRoster,
-  sortedTasks,
-  usernameProblem,
-  type ClassDoc,
-  type HandinRecord,
-  type JoinState,
-  type RandomBytes,
-  type Roster,
-  type RosterEntry,
-  type TaskEntry,
-} from './model';
+import { CLASS_SCHEMA, LIMITS, cleanLine, generateClassCode, readClassDoc, readHandinDoc, readMemberDoc, type ClassDoc, type HandinRecord, type RandomBytes } from './model';
 
 export type Unsubscribe = () => void;
 export interface TeacherUser {
@@ -41,27 +21,20 @@ export interface TeacherUser {
 export interface ClassSummary {
   code: string;
   name: string;
-  teacherName: string;
-  joinOpen: boolean;
-  joinWindowAt: Date | null;
   handinsOpen: boolean;
   deleting: boolean;
-  studentCount: number;
   createdAt: Date | null;
   updatedAt: Date | null;
 }
-export interface ClassDetail extends ClassSummary, JoinState {
+export interface ClassDetail extends ClassSummary {
   ownerUid: string;
-  roster: Roster;
-  students: RosterEntry[];
-  tasks: TaskEntry[];
-  currentTaskId: string;
   keepWeeks: number;
 }
 export interface Member {
   uid: string;
-  studentId: string;
-  username: string;
+  firstName: string;
+  lastName: string;
+  nameKey: string;
   device: string;
   joinedAt: Date | null;
   handinCount: number;
@@ -75,13 +48,9 @@ export interface HandinsUpdate {
 }
 export interface NewClassInput {
   name: string;
-  teacherName: string;
-  students: RosterEntry[];
-  tasks: string[];
-  joinOpen: boolean;
   keepWeeks?: number;
 }
-export type ClassPatch = Partial<Pick<ClassDetail, 'name' | 'teacherName' | 'joinOpen' | 'handinsOpen' | 'keepWeeks' | 'currentTaskId'>>;
+export type ClassPatch = Partial<Pick<ClassDetail, 'name' | 'handinsOpen' | 'keepWeeks'>>;
 
 export interface TeacherApi {
   /** Resolves when the SDK is loaded and the tab's session restored. The Sign-in button stays disabled until then. */
@@ -96,25 +65,10 @@ export interface TeacherApi {
   signOut(): Promise<void>;
 
   watchClasses(onChange: (classes: ClassSummary[]) => void, onError: (e: ClassroomError) => void): Unsubscribe;
-  /** Transaction with up to 5 code attempts. Students/tasks already validated (else bad_roster). */
+  /** Transaction with up to 5 code attempts. */
   createClass(input: NewClassInput): Promise<ClassDetail>;
   watchClass(code: string, onChange: (cls: ClassDetail | null) => void, onError: (e: ClassroomError) => void): Unsubscribe;
   updateClass(code: string, patch: ClassPatch): Promise<void>;
-  /** joinWindowAt = serverTimestamp() (the window restarts). */
-  openJoinWindow(code: string): Promise<void>;
-  /** joinOpen false, joinWindowAt null. */
-  closeJoining(code: string): Promise<void>;
-  /** rejoin.<id> = serverTimestamp(). */
-  letRejoin(code: string, studentId: string): Promise<void>;
-
-  addStudents(code: string, entries: RosterEntry[]): Promise<void>;
-  renameStudent(code: string, studentId: string, username: string): Promise<void>;
-  /** Roster + rejoin entry in one update, then that student's member docs (query where studentId == id). */
-  removeStudent(code: string, studentId: string): Promise<void>;
-  addTasks(code: string, entries: TaskEntry[]): Promise<void>;
-  renameTask(code: string, taskId: string, title: string): Promise<void>;
-  /** Clears currentTaskId when it pointed at the task. */
-  deleteTask(code: string, taskId: string): Promise<void>;
 
   /** The newest 150, live. */
   watchMembers(code: string, onChange: (members: Member[]) => void, onError: (e: ClassroomError) => void): Unsubscribe;
@@ -126,9 +80,8 @@ export interface TeacherApi {
   watchTodayHandins(code: string, onChange: (u: HandinsUpdate) => void, onError: (e: ClassroomError) => void): Unsubscribe;
   /** One-off, 100 per page. */
   loadHandins(code: string, since: Date, page?: { before?: Date }): Promise<{ items: HandinRecord[]; hasMore: boolean }>;
-  /** 10 per page; composite index; rejects index_missing. */
-  studentHandins(code: string, studentId: string, page?: { before?: Date }): Promise<{ items: HandinRecord[]; hasMore: boolean }>;
-  refileHandin(code: string, id: string, patch: { studentId?: string; taskId?: string }): Promise<void>;
+  /** One student's hand-ins (by nameKey), 10 per page; composite index; rejects index_missing. */
+  studentHandins(code: string, nameKey: string, page?: { before?: Date }): Promise<{ items: HandinRecord[]; hasMore: boolean }>;
   deleteHandin(code: string, id: string): Promise<void>;
 
   /** count() aggregation. */
@@ -173,31 +126,11 @@ function toTeacherUser(user: User): TeacherUser {
 }
 
 function toSummary(code: string, cls: ClassDoc): ClassSummary {
-  return {
-    code,
-    name: cls.name,
-    teacherName: cls.teacherName,
-    joinOpen: cls.joinOpen,
-    joinWindowAt: cls.joinWindowAt,
-    handinsOpen: cls.handinsOpen,
-    deleting: cls.deleting,
-    studentCount: Object.keys(cls.roster).length,
-    createdAt: cls.createdAt,
-    updatedAt: cls.updatedAt,
-  };
+  return { code, name: cls.name, handinsOpen: cls.handinsOpen, deleting: cls.deleting, createdAt: cls.createdAt, updatedAt: cls.updatedAt };
 }
 
 function toDetail(code: string, cls: ClassDoc): ClassDetail {
-  return {
-    ...toSummary(code, cls),
-    ownerUid: cls.ownerUid,
-    roster: cls.roster,
-    rejoin: cls.rejoin,
-    students: sortedRoster(cls.roster),
-    tasks: sortedTasks(cls.tasks),
-    currentTaskId: cls.currentTaskId,
-    keepWeeks: cls.keepWeeks,
-  };
+  return { ...toSummary(code, cls), ownerUid: cls.ownerUid, keepWeeks: cls.keepWeeks };
 }
 
 /** Newest first; classes without a server time yet (pending writes) come first. */
@@ -225,8 +158,6 @@ export function createTeacherApi(deps: TeacherApiDeps = {}): TeacherApi {
   let fb: TeacherFirebase | null = null;
   /** The live class list, for deleteAccount's synchronous classes_left check. */
   let knownClasses: ClassSummary[] | null = null;
-  /** The classes currently watched, so re-filing and deleteTask need no extra read. */
-  const watched = new Map<string, ClassDoc>();
 
   const ready: Promise<void> = (async () => {
     try {
@@ -288,13 +219,6 @@ export function createTeacherApi(deps: TeacherApiDeps = {}): TeacherApi {
     };
   }
 
-  async function readClass(f: TeacherFirebase, code: string): Promise<ClassDoc | null> {
-    const cached = watched.get(code);
-    if (cached) return cached;
-    const snap = await net(f.sdk.getDoc(classRef(f, code)));
-    return snap.exists() ? readClassDoc(snap.data()) : null;
-  }
-
   async function updateClassDoc(code: string, fields: Record<string, unknown>): Promise<void> {
     const f = await loaded();
     await net(f.sdk.updateDoc(classRef(f, code), { ...fields, updatedAt: stamp(f) }));
@@ -332,8 +256,7 @@ export function createTeacherApi(deps: TeacherApiDeps = {}): TeacherApi {
   ): Promise<{ status: 'done' | 'more'; deleted: number }> {
     const f = await loaded();
     const { query, limit, getDocs, getCountFromServer, deleteDoc } = f.sdk;
-    watched.delete(code);
-    await updateClassDoc(code, { deleting: true, joinOpen: false, joinWindowAt: null });
+    await updateClassDoc(code, { deleting: true, handinsOpen: false });
     let total: number | null = null;
     try {
       const [members, handins] = await Promise.all([
@@ -438,40 +361,11 @@ export function createTeacherApi(deps: TeacherApiDeps = {}): TeacherApi {
       const uid = signedInUid(f);
       const name = cleanLine(input.name, LIMITS.classNameMax);
       if (name === '') throw new ClassroomError('unknown', 'The class needs a name.');
-      const roster: Record<string, string> = {};
-      const names = new Set<string>();
-      for (const { studentId, username } of input.students) {
-        if (!isStudentId(studentId) || studentId in roster || usernameProblem(username) !== null || names.has(username)) throw fail('bad_roster');
-        roster[studentId] = username;
-        names.add(username);
-      }
-      if (input.students.length > LIMITS.rosterMax) throw fail('bad_roster');
-      const tasks: Record<string, string> = {};
-      for (const raw of input.tasks) {
-        const title = cleanLine(raw, Number.MAX_SAFE_INTEGER);
-        if (title === '' || title.length > LIMITS.taskTitleMax || Object.values(tasks).includes(title)) throw fail('bad_roster');
-        if (Object.keys(tasks).length >= LIMITS.tasksMax) throw fail('bad_roster');
-        tasks[newTaskId(tasks, randomBytes)] = title;
-      }
       const { runTransaction } = f.sdk;
       for (let attempt = 0; attempt < 5; attempt++) {
         const code = generateClassCode(randomBytes);
         const ref = classRef(f, code);
-        const data = {
-          schema: 1,
-          ownerUid: uid,
-          name,
-          teacherName: cleanLine(input.teacherName, LIMITS.teacherNameMax),
-          roster,
-          joinOpen: input.joinOpen,
-          joinWindowAt: null,
-          rejoin: {},
-          handinsOpen: true,
-          tasks,
-          currentTaskId: '',
-          keepWeeks: validKeepWeeks(input.keepWeeks),
-          deleting: false,
-        };
+        const data = { schema: CLASS_SCHEMA, ownerUid: uid, name, handinsOpen: true, keepWeeks: validKeepWeeks(input.keepWeeks), deleting: false };
         try {
           await withTimeout(
             runTransaction(f.db, async (tx) => {
@@ -491,26 +385,13 @@ export function createTeacherApi(deps: TeacherApiDeps = {}): TeacherApi {
     },
 
     watchClass(code, onChange, onError) {
-      const unsub = watch(onError, (f) =>
+      return watch(onError, (f) =>
         f.sdk.onSnapshot(
           classRef(f, code),
-          (snap) => {
-            if (!snap.exists()) {
-              watched.delete(code);
-              onChange(null);
-              return;
-            }
-            const cls = readClassDoc(snap.data());
-            watched.set(code, cls);
-            onChange(toDetail(code, cls));
-          },
+          (snap) => onChange(snap.exists() ? toDetail(code, readClassDoc(snap.data())) : null),
           (err) => onError(toClassroomError(err, 'teacher')),
         ),
       );
-      return () => {
-        watched.delete(code);
-        unsub();
-      };
     },
 
     async updateClass(code, patch) {
@@ -520,77 +401,9 @@ export function createTeacherApi(deps: TeacherApiDeps = {}): TeacherApi {
         if (name === '') throw new ClassroomError('unknown', 'The class needs a name.');
         fields.name = name;
       }
-      if (patch.teacherName !== undefined) fields.teacherName = cleanLine(patch.teacherName, LIMITS.teacherNameMax);
-      if (patch.joinOpen !== undefined) {
-        fields.joinOpen = patch.joinOpen;
-        fields.joinWindowAt = null;
-      }
       if (patch.handinsOpen !== undefined) fields.handinsOpen = patch.handinsOpen;
       if (patch.keepWeeks !== undefined) fields.keepWeeks = validKeepWeeks(patch.keepWeeks);
-      if (patch.currentTaskId !== undefined) fields.currentTaskId = patch.currentTaskId;
       if (Object.keys(fields).length === 0) return;
-      await updateClassDoc(code, fields);
-    },
-
-    async openJoinWindow(code) {
-      const f = await loaded();
-      await updateClassDoc(code, { joinWindowAt: stamp(f) });
-    },
-
-    closeJoining(code) {
-      return updateClassDoc(code, { joinOpen: false, joinWindowAt: null });
-    },
-
-    async letRejoin(code, studentId) {
-      const f = await loaded();
-      await updateClassDoc(code, { [`rejoin.${studentId}`]: stamp(f) });
-    },
-
-    async addStudents(code, entries) {
-      if (entries.length === 0) return;
-      const fields: Record<string, unknown> = {};
-      for (const { studentId, username } of entries) {
-        if (!isStudentId(studentId) || usernameProblem(username) !== null) throw fail('bad_roster');
-        fields[`roster.${studentId}`] = username;
-      }
-      await updateClassDoc(code, fields);
-    },
-
-    async renameStudent(code, studentId, username) {
-      if (!isStudentId(studentId) || usernameProblem(username) !== null) throw fail('bad_roster');
-      await updateClassDoc(code, { [`roster.${studentId}`]: username });
-    },
-
-    async removeStudent(code, studentId) {
-      const f = await loaded();
-      const { deleteField, query, where, getDocs } = f.sdk;
-      await updateClassDoc(code, { [`roster.${studentId}`]: deleteField(), [`rejoin.${studentId}`]: deleteField() });
-      const members = await net(getDocs(query(membersCol(f, code), where('studentId', '==', studentId))));
-      await deleteRefs(f, members.docs.map((d) => d.ref));
-    },
-
-    async addTasks(code, entries) {
-      if (entries.length === 0) return;
-      const fields: Record<string, unknown> = {};
-      for (const { taskId, title } of entries) {
-        if (!isTaskId(taskId) || title === '' || title.length > LIMITS.taskTitleMax || title !== cleanLine(title, LIMITS.taskTitleMax)) throw fail('bad_roster');
-        fields[`tasks.${taskId}`] = title;
-      }
-      await updateClassDoc(code, fields);
-    },
-
-    async renameTask(code, taskId, title) {
-      const clean = cleanLine(title, LIMITS.taskTitleMax);
-      if (!isTaskId(taskId) || clean === '') throw fail('bad_roster');
-      await updateClassDoc(code, { [`tasks.${taskId}`]: clean });
-    },
-
-    async deleteTask(code, taskId) {
-      const f = await loaded();
-      const cls = await readClass(f, code);
-      if (!cls) throw fail('class_not_found');
-      const fields: Record<string, unknown> = { [`tasks.${taskId}`]: f.sdk.deleteField() };
-      if (cls.currentTaskId === taskId) fields.currentTaskId = '';
       await updateClassDoc(code, fields);
     },
 
@@ -668,30 +481,14 @@ export function createTeacherApi(deps: TeacherApiDeps = {}): TeacherApi {
       return pageOfHandins(f, code, [where('createdAt', '>=', Timestamp.fromDate(since))], LIMITS.periodPage, page.before);
     },
 
-    async studentHandins(code, studentId, page = {}) {
+    async studentHandins(code, nameKey, page = {}) {
       const f = await loaded();
       try {
-        return await pageOfHandins(f, code, [f.sdk.where('studentId', '==', studentId)], LIMITS.studentPage, page.before);
+        return await pageOfHandins(f, code, [f.sdk.where('nameKey', '==', nameKey)], LIMITS.studentPage, page.before);
       } catch (err) {
         if (err instanceof ClassroomError && err.code === 'index_missing') warnIndexOnce(err);
         throw err;
       }
-    },
-
-    async refileHandin(code, id, patch) {
-      const f = await loaded();
-      const fields: Record<string, unknown> = {};
-      if (patch.studentId !== undefined) {
-        const cls = await readClass(f, code);
-        if (!cls) throw fail('class_not_found');
-        const username = cls.roster[patch.studentId];
-        if (username === undefined) throw fail('not_on_roster');
-        fields.studentId = patch.studentId;
-        fields.username = username;
-      }
-      if (patch.taskId !== undefined) fields.taskId = patch.taskId;
-      if (Object.keys(fields).length === 0) return;
-      await net(f.sdk.updateDoc(f.sdk.doc(f.db, 'classes', code, 'handins', id), fields));
     },
 
     async deleteHandin(code, id) {

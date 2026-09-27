@@ -1,37 +1,32 @@
 /**
- * src/classroom/model.ts (docs/CLASSROOM.md §4.4, §7.2): class codes, usernames, rosters, tasks,
- * joining, text cleaning, device labels, and the sync of LIMITS with firestore.rules.
+ * src/classroom/model.ts (docs/CLASSROOM.md §4.4, §7.2): class codes, student names, text
+ * cleaning, device labels, the document readers, and the sync of LIMITS with firestore.rules.
  */
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
   CLASS_CODE_ALPHABET,
+  CLASS_SCHEMA,
   LIMITS,
-  USERNAME_PATTERN,
+  NAME_PATTERN,
   classLink,
   cleanLine,
-  cleanMultiline,
+  cleanName,
   codeProblem,
   deviceLabel,
   draftProblem,
   formatClassCode,
+  fullName,
   generateClassCode,
-  joinStatus,
-  nearDuplicates,
+  listName,
+  nameKeyOf,
+  nameProblem,
   newHandinId,
-  newStudentId,
-  newTaskId,
   normalizeClassCode,
-  normalizeUsername,
-  planRosterAdd,
-  planTasksAdd,
   readClassDoc,
   readHandinDoc,
   readMemberDoc,
   shortDeviceId,
-  sortedRoster,
-  sortedTasks,
-  usernameProblem,
   utf8Length,
 } from '../src/classroom/model';
 
@@ -92,18 +87,6 @@ describe('class codes', () => {
 });
 
 describe('ids', () => {
-  it('studentId: 8 × [a-z0-9], never an existing key', () => {
-    expect(newStudentId({})).toMatch(/^[a-z0-9]{8}$/);
-    let call = 0;
-    const source = (n: number) => Uint8Array.from({ length: n }, () => (call++ < 8 ? 0 : 1));
-    expect(newStudentId({ aaaaaaaa: 'taken' }, source)).toBe('bbbbbbbb');
-  });
-  it('taskId: 6 × [a-z0-9], never an existing key', () => {
-    expect(newTaskId({})).toMatch(/^[a-z0-9]{6}$/);
-    let call = 0;
-    const source = (n: number) => Uint8Array.from({ length: n }, () => (call++ < 6 ? 0 : 2));
-    expect(newTaskId({ aaaaaa: 'taken' }, source)).toBe('cccccc');
-  });
   it('handinId: 20 × [A-Za-z0-9]; bytes ≥ 248 are rejected', () => {
     expect(newHandinId()).toMatch(/^[A-Za-z0-9]{20}$/);
     expect(new Set(Array.from({ length: 50 }, () => newHandinId())).size).toBe(50);
@@ -111,118 +94,35 @@ describe('ids', () => {
   });
 });
 
-describe('usernames', () => {
+describe('student names', () => {
+  it('cleans a typed name: NFC, one line, single spaces, at most 30 characters', () => {
+    expect(cleanName('  Ali   Khoury ')).toBe('Ali Khoury');
+    expect(cleanName('Élise')).toBe('Élise'); // NFD → NFC
+    expect(cleanName('Ali\nKhoury')).toBe('Ali Khoury');
+    expect(cleanName('x'.repeat(40))).toHaveLength(30);
+  });
   it.each([
-    ['Ali Khalil', 'ali.khalil', 'ali.k'],
-    ['Élise Martin', 'elise.martin', 'elise.m'],
-    ['Ali Ben Salah', 'ali.ben.salah', 'ali.s'],
-    ['  sara__m ', 'sara_m', 'sara_m'],
-    ["O'Neil", 'oneil', 'oneil'],
-    ['محمد', '', ''],
-    ['Jean-Luc  Picard', 'jean-luc.picard', 'jean-luc.p'],
-    ['.ali.', 'ali', 'ali'],
-    ['ali._-k', 'ali.k', 'ali.k'],
-    ['x'.repeat(30), 'x'.repeat(24), 'x'.repeat(24)],
-    ['Ali (Khalil)', 'ali.khalil', 'ali'],
-  ])('normalizes %j → %j / %j (shortened)', (input, plain, short) => {
-    expect(normalizeUsername(input)).toBe(plain);
-    expect(normalizeUsername(input, { shortenLastName: true })).toBe(short);
+    ['Ali', null],
+    ['Élise', null],
+    ['محمد', null],
+    ["O'Neil-Dupont Jr.", null],
+    ['Ali Ben Salah', null],
+    ['x'.repeat(30), null],
+    ['', 'empty'],
+    ['x'.repeat(31), 'too_long'],
+    ['Ali2', 'invalid'],
+    ['-Ali', 'invalid'],
+    ['ali@k', 'invalid'],
+    ['<b>x</b>', 'invalid'],
+  ])('nameProblem(%j) = %j', (name, problem) => {
+    expect(nameProblem(name)).toBe(problem);
   });
-  it('finds the problem of a username', () => {
-    expect(usernameProblem('')).toBe('empty');
-    expect(usernameProblem('a')).toBe('too_short');
-    expect(usernameProblem('x'.repeat(25))).toBe('too_long');
-    expect(usernameProblem('Ali.K')).toBe('invalid');
-    expect(usernameProblem('.ali')).toBe('invalid');
-    expect(usernameProblem('ali k')).toBe('invalid');
-    expect(usernameProblem('ali.k')).toBeNull();
-    expect(usernameProblem('x'.repeat(24))).toBeNull();
-    expect(USERNAME_PATTERN.test('7ali_k-2')).toBe(true);
-  });
-  it('lists names that differ by one character', () => {
-    expect(nearDuplicates(['ali.k', 'ali.m', 'sara.m', 'ali.kh'])).toEqual([
-      ['ali.k', 'ali.m'],
-      ['ali.k', 'ali.kh'],
-    ]);
-    expect(nearDuplicates(['ali.k', 'ali.k'])).toEqual([]);
-    expect(nearDuplicates(['ab', 'ba'])).toEqual([]);
-  });
-});
-
-describe('roster and task plans', () => {
-  it('splits on newlines, commas and semicolons, shortens, and reports duplicates', () => {
-    const plan = planRosterAdd({}, 'Ali Khalil\nSara Mansour, Omar Haddad; Ali Karam\n\nali.k\n', { shortenLastName: true });
-    expect(plan.add.map((e) => e.username)).toEqual(['ali.k', 'sara.m', 'omar.h']);
-    for (const e of plan.add) expect(e.studentId).toMatch(/^[a-z0-9]{8}$/);
-    expect(new Set(plan.add.map((e) => e.studentId)).size).toBe(3);
-    expect(plan.problems).toEqual([
-      { line: 4, input: 'Ali Karam', normalized: 'ali.k', reason: 'duplicate' },
-      { line: 6, input: 'ali.k', normalized: 'ali.k', reason: 'duplicate' },
-    ]);
-    expect(plan.warnings).toEqual([]);
-  });
-  it('reports names already in the class, invalid names and the 100 limit', () => {
-    const plan = planRosterAdd({ s0000001: 'nour.h' }, 'Nour Haddad\nمحمد\na', { shortenLastName: true });
-    expect(plan.add).toEqual([]);
-    expect(plan.problems.map((p) => p.reason)).toEqual(['already_in_class', 'empty', 'too_short']);
-    const big: Record<string, string> = {};
-    for (let i = 0; i < 99; i++) big[`s${String(i).padStart(7, '0')}`] = `student.${i}`;
-    const full = planRosterAdd(big, 'one.more\ntwo.more');
-    expect(full.add.map((e) => e.username)).toEqual(['one.more']);
-    expect(full.problems).toEqual([{ line: 2, input: 'two.more', normalized: 'two.more', reason: 'too_many' }]);
-  });
-  it('warns about near duplicates involving a new name (not between two existing ones)', () => {
-    const plan = planRosterAdd({ a: 'ali.k', b: 'ali.m' }, 'ali.h\nsara.m');
-    expect(plan.warnings).toEqual([
-      { names: ['ali.k', 'ali.h'], reason: 'near_duplicate' },
-      { names: ['ali.m', 'ali.h'], reason: 'near_duplicate' },
-    ]);
-  });
-  it('plans tasks: cleaned titles, too long, duplicates, at most 30', () => {
-    const plan = planTasksAdd({ tsk001: 'Traffic light' }, `  Servo   sweep \n\nTraffic light\n${'x'.repeat(61)}\nBlink`);
-    expect(plan.add.map((t) => t.title)).toEqual(['Servo sweep', 'Blink']);
-    for (const t of plan.add) expect(t.taskId).toMatch(/^[a-z0-9]{6}$/);
-    expect(plan.problems).toEqual([
-      { line: 3, reason: 'duplicate' },
-      { line: 4, reason: 'too_long' },
-    ]);
-    const many: Record<string, string> = {};
-    for (let i = 0; i < 29; i++) many[`t${String(i).padStart(5, '0')}`] = `Task ${i}`;
-    expect(planTasksAdd(many, 'A\nB').problems).toEqual([{ line: 2, reason: 'too_many' }]);
-  });
-  it('sorts rosters and tasks with String() values', () => {
-    expect(sortedRoster({ b: 'zed', a: 'amy', c: 12 as unknown as string })).toEqual([
-      { studentId: 'c', username: '12' },
-      { studentId: 'a', username: 'amy' },
-      { studentId: 'b', username: 'zed' },
-    ]);
-    expect(sortedTasks({ t2: 'Servo', t1: 'Blink' })).toEqual([
-      { taskId: 't1', title: 'Blink' },
-      { taskId: 't2', title: 'Servo' },
-    ]);
-  });
-});
-
-describe('joinStatus', () => {
-  const now = Date.UTC(2026, 8, 27, 10, 0, 0);
-  const minutesAgo = (m: number) => new Date(now - m * 60_000);
-  it('always open', () => {
-    expect(joinStatus({ joinOpen: true, joinWindowAt: null, rejoin: {} }, 's1', now)).toEqual({ open: true, until: null });
-  });
-  it('class window: inside, within the skew, expired', () => {
-    const inside = joinStatus({ joinOpen: false, joinWindowAt: minutesAgo(5), rejoin: {} }, null, now);
-    expect(inside.open).toBe(true);
-    expect(inside.until?.getTime()).toBe(now + 10 * 60_000);
-    expect(joinStatus({ joinOpen: false, joinWindowAt: minutesAgo(15.5), rejoin: {} }, null, now).open).toBe(true);
-    expect(joinStatus({ joinOpen: false, joinWindowAt: minutesAgo(16), rejoin: {} }, null, now).open).toBe(false);
-    expect(joinStatus({ joinOpen: false, joinWindowAt: null, rejoin: {} }, 's1', now).open).toBe(false);
-  });
-  it('rejoin: this student only', () => {
-    const cls = { joinOpen: false, joinWindowAt: null, rejoin: { s1: minutesAgo(3) } };
-    expect(joinStatus(cls, 's1', now)).toEqual({ open: true, until: new Date(now + 12 * 60_000) });
-    expect(joinStatus(cls, 's2', now).open).toBe(false);
-    expect(joinStatus(cls, null, now).open).toBe(false);
-    expect(joinStatus({ ...cls, rejoin: { s1: minutesAgo(20) } }, 's1', now).open).toBe(false);
+  it('makes the grouping key and the display names', () => {
+    expect(nameKeyOf('Ali', 'Khoury')).toBe('ali khoury');
+    expect(nameKeyOf('Élise', "O'Neil")).toBe("élise o'neil");
+    expect(fullName('Ali', 'Khoury')).toBe('Ali Khoury');
+    expect(listName('Ali', 'Khoury')).toBe('Khoury, Ali');
+    expect(listName('Ali', '')).toBe('Ali');
   });
 });
 
@@ -234,12 +134,6 @@ describe('text cleaning', () => {
     expect(cleanLine('x'.repeat(80), 60)).toHaveLength(60);
     expect(cleanLine(`${'x'.repeat(59)}🙂`, 60)).toBe('x'.repeat(59));
     expect(cleanLine(`${'x'.repeat(58)}🙂`, 60)).toBe(`${'x'.repeat(58)}🙂`);
-  });
-  it('cleanMultiline: keeps line breaks, at most one empty line, cut', () => {
-    expect(cleanMultiline(' Hello Miss,\r\n\r\n\r\n\r\nHere it is.​\u0007 ', 500)).toBe('Hello Miss,\n\nHere it is.');
-    expect(cleanMultiline('a b\tc', 500)).toBe('a b c');
-    expect(cleanMultiline('x'.repeat(600), 500)).toHaveLength(500);
-    expect(cleanMultiline(`${' '.repeat(100000)}b \t\n c `, 500)).toBe('b\n c');
   });
   it('utf8Length counts bytes', () => {
     expect(utf8Length('abc')).toBe(3);
@@ -277,7 +171,7 @@ describe('devices', () => {
 });
 
 describe('draftProblem', () => {
-  const draft = { kind: 'code' as const, code: 'void setup() {}', workspaceJson: '', taskId: '', title: '', note: '' };
+  const draft = { kind: 'code' as const, code: 'void setup() {}', workspaceJson: '' };
   it('finds empty and oversize drafts', () => {
     expect(draftProblem(draft)).toBeNull();
     expect(draftProblem({ ...draft, code: '  \n' })).toBe('empty_sketch');
@@ -291,34 +185,16 @@ describe('draftProblem', () => {
 describe('document readers', () => {
   const ts = (ms: number) => ({ toDate: () => new Date(ms) });
   it('reads a class doc with tolerant types', () => {
-    const cls = readClassDoc({
-      ownerUid: 'tA',
-      name: '8B',
-      teacherName: 'Mr. B',
-      roster: { aaaaaaa1: 'ali.k', bbbbbbb2: 12 },
-      joinOpen: 'yes',
-      joinWindowAt: ts(1000),
-      rejoin: { aaaaaaa1: ts(2000), junk: 'x' },
-      handinsOpen: true,
-      tasks: { tsk001: 'Traffic light' },
-      currentTaskId: 'tsk001',
-      keepWeeks: 10,
-      deleting: false,
-      createdAt: ts(3000),
-      updatedAt: null,
-    });
-    expect(cls.roster).toEqual({ aaaaaaa1: 'ali.k', bbbbbbb2: '12' });
-    expect(cls.joinOpen).toBe(false);
-    expect(cls.joinWindowAt?.getTime()).toBe(1000);
-    expect(cls.rejoin).toEqual({ aaaaaaa1: new Date(2000) });
-    expect(cls.createdAt?.getTime()).toBe(3000);
-    expect(cls.updatedAt).toBeNull();
+    const cls = readClassDoc({ ownerUid: 'tA', name: '8B', handinsOpen: 'yes', keepWeeks: 10, deleting: false, createdAt: ts(3000), updatedAt: null });
+    expect(cls).toEqual({ ownerUid: 'tA', name: '8B', handinsOpen: false, keepWeeks: 10, deleting: false, createdAt: new Date(3000), updatedAt: null });
     expect(readClassDoc({}).keepWeeks).toBe(LIMITS.keepWeeksMin);
+    expect(readClassDoc({ name: 12 }).name).toBe('12');
   });
   it('reads member and hand-in docs, with Bytes as Uint8Array', () => {
-    expect(readMemberDoc({ studentId: 's', username: 'u', device: 'd', joinedAt: ts(5), handinCount: 2, lastHandinAt: null, lastHandinId: '' })).toEqual({
-      studentId: 's',
-      username: 'u',
+    expect(readMemberDoc({ firstName: 'Ali', lastName: 'Khoury', nameKey: 'ali khoury', device: 'd', joinedAt: ts(5), handinCount: 2, lastHandinAt: null, lastHandinId: '' })).toEqual({
+      firstName: 'Ali',
+      lastName: 'Khoury',
+      nameKey: 'ali khoury',
       device: 'd',
       joinedAt: new Date(5),
       handinCount: 2,
@@ -328,20 +204,18 @@ describe('document readers', () => {
     const bytes = new Uint8Array([1, 2, 3]);
     const record = readHandinDoc('H1', 'BKT4M9', {
       uid: 'u',
-      studentId: 's',
-      username: 'ali.k',
+      firstName: 'Ali',
+      lastName: 'Khoury',
+      nameKey: 'ali khoury',
       kind: 'blocks',
-      taskId: '',
-      title: 't',
-      note: 'n',
       createdAt: ts(7),
       enc: 'gzip',
       code: { toUint8Array: () => bytes },
       workspace: { toUint8Array: () => new Uint8Array(0) },
     });
+    expect(record).toMatchObject({ id: 'H1', classCode: 'BKT4M9', uid: 'u', firstName: 'Ali', lastName: 'Khoury', nameKey: 'ali khoury', kind: 'blocks' });
     expect(record.content).toEqual({ enc: 'gzip', code: bytes, workspace: new Uint8Array(0) });
     expect(record.createdAt?.getTime()).toBe(7);
-    expect(record.kind).toBe('blocks');
     expect(readHandinDoc('H2', 'BKT4M9', { enc: 'plain', code: 'x', workspace: '' }).content).toEqual({ enc: 'plain', code: 'x', workspace: '' });
   });
 });
@@ -349,25 +223,16 @@ describe('document readers', () => {
 describe('sync with firestore.rules', () => {
   const rules = readFileSync(new URL('../firestore.rules', import.meta.url), 'utf8');
   it('every limit the rules enforce appears in them', () => {
-    const numbers = [
-      LIMITS.classNameMax,
-      LIMITS.rosterMax,
-      LIMITS.tasksMax,
-      LIMITS.usernameMax - 1, // {1,23} after the first character
-      LIMITS.titleMax,
-      LIMITS.noteMax,
-      LIMITS.deviceMax,
-      LIMITS.codeMaxBytes,
-      LIMITS.workspaceMaxBytes,
-      LIMITS.handinsPerDevice,
-      LIMITS.keepWeeksMax,
-    ];
+    const numbers = [LIMITS.classNameMax, LIMITS.deviceMax, LIMITS.codeMaxBytes, LIMITS.workspaceMaxBytes, LIMITS.handinsPerDevice, LIMITS.keepWeeksMax];
     for (const n of numbers) expect(rules, String(n)).toMatch(new RegExp(`\\b${n}\\b`));
+    expect(rules).toContain(`{0,${LIMITS.nameMax - 1}}`); // the name regex: a letter, then up to 29 more characters
+    expect(rules).toContain(`textUpTo(d.nameKey, ${2 * LIMITS.nameMax + 1})`);
     expect(rules).toContain(`duration.value(${LIMITS.handinCooldownMs / 1000}, 's')`);
-    expect(rules).toContain(`duration.value(${LIMITS.joinWindowMs / 60_000}, 'm')`);
+    expect(rules).toContain(`request.resource.data.schema == ${CLASS_SCHEMA}`);
   });
-  it('the code alphabet and the username pattern are the same', () => {
+  it('the code alphabet and the name pattern are the same', () => {
     expect(rules).toContain(`[${CLASS_CODE_ALPHABET}]{6}`);
-    expect(rules).toContain(USERNAME_PATTERN.source.replace(/^\^|\$$/g, ''));
+    // The rules escape the backslashes inside their string literal.
+    expect(rules).toContain(NAME_PATTERN.source.replace(/\\/g, '\\\\'));
   });
 });

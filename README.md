@@ -32,8 +32,8 @@ No installation is needed for students: the simulator is a static web page.
   and DC Motor (the same groups exist as block programs in Blocks mode).
 - **Share** — copy a link to the work or download it as an `.ino` file.
 - **Classes** — teachers create a class on the teacher page and share the
-  class code or link. Students press *Hand in*, pick their name and hand in
-  their sketch or blocks. The teacher sees who handed in, runs each hand-in
+  class code or link. Students press *Hand in*, type the code and their first
+  and last name, and their sketch or blocks are handed in. The teacher sees who handed in, runs each hand-in
   safely in the simulator and downloads the `.ino`. See
   [docs/CLASSROOM.md](docs/CLASSROOM.md) (set up once by the site maintainer,
   free Firebase plan).

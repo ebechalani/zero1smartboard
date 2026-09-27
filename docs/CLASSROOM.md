@@ -1,9 +1,11 @@
 # ZERO1 Classes: class platform specification (FINAL)
 
-Status: final specification, 2026-09-26. It replaces the draft that three reviewers
-(security, classroom UX, feasibility) examined. Every blocker and major finding is
-resolved in the text. The [Decisions log](#11-decisions-log) says how each one was
-resolved.
+Status: final specification, 2026-09-26, **simplified by teacher decision on 2026-09-27**
+(see the last entry of the [Decisions log](#11-decisions-log)): there is no class list,
+no tasks and no joining window any more. A student types the class code, then their
+first name and last name, and the work is handed in. Sections that the simplification
+touched were rewritten briefly; the rest (security model, sandbox, quotas, setup) is
+unchanged.
 
 Audience:
 
@@ -27,16 +29,16 @@ A hand-in platform for the ZERO1 simulator, modelled on Tinkercad Classrooms.
 - **Teacher**
   - Signs in with Google on `teacher.html`.
   - Creates a class and gets a 6-character **class code** (`BKT-4M9`) and a **class
-    link** (`…/zero1smartboard/#class=BKT4M9`).
-  - Types the class list of **usernames** (`ali.k`, `sara.m`, …).
+    link** (`…/zero1smartboard/#class=BKT4M9`). There is nothing else to prepare.
 - **Student**
   - Opens the class link, or presses **Hand in** and types the code.
-  - **Picks their username** from the list. There is no email and no password: the
-    student uses Firebase Anonymous Authentication.
+  - **Types their first name and last name.** There is no email and no password: the
+    student uses Firebase Anonymous Authentication. The device remembers the code and
+    the name, so the next time it is one click ("Hand in as Ali Khoury to class BKT-4M9").
   - Hands in the current sketch (Code mode) or blocks program (Blocks mode, with the
-    sketch generated from it), with an optional task, title and note.
+    sketch generated from it).
 - **Dashboard**: the teacher checks the work there.
-  - The **Overview** has one row per student: who handed in, what is new, versions.
+  - The **Overview** has one row per student name: who handed in, what is new, versions.
   - The teacher reads the code and downloads the `.ino` (one file, or a `.zip`).
   - **Open** runs the hand-in in the simulator. It runs inside a **sandboxed review
     page**, so a student's sketch can never touch the teacher's session (§3.4).
@@ -50,7 +52,9 @@ A hand-in platform for the ZERO1 simulator, modelled on Tinkercad Classrooms.
 ### 0.2 Fixed decisions (from the teacher; not re-opened)
 
 - Teachers sign in with Google. Students use anonymous auth.
-- Usernames are created by the teacher; students pick theirs from the list.
+- **Hand in is very simple (2026-09-27):** the teacher creates a class code and gives it
+  to the students; a student enters the class code, then their first name and last name,
+  and the work is handed in. No class list, no tasks, no joining windows.
 - One Firebase project, owned by the maintainer, serves many schools.
 - Spark plan, no Cloud Functions.
 - Each teacher sees only their own classes.
@@ -63,19 +67,19 @@ A hand-in platform for the ZERO1 simulator, modelled on Tinkercad Classrooms.
 |---|---|---|
 | D1 | The **class code is the class document id** (`classes/BKT4M9`). | One read to join. There is no list query, so codes can only be found by guessing (§2.2). |
 | D2 | A code is 6 symbols from `BCDFGHJKLMNPQRSTVWXZ3479` (24 symbols). Typed `2 5 6 8` are read as `Z S G B`. | 24⁶ ≈ 191 M codes. No vowels, so no accidental words. No look-alikes on a projector (§2.2). |
-| D3 | The roster is a map `{ studentId: username }` on the class doc, with stable 8-char studentIds. | One read shows the list. A rename keeps the history. The rules check all names at once. |
-| D4 | One **member** doc per device (anonymous uid) per class. The student can only create it. | Binds a uid to a username. The teacher sees and removes computers. |
-| D5 | **Sign out = a new anonymous uid.** | A device's history stays private to that identity. No rules are needed for re-binding. |
+| D3 | ~~The roster is a map on the class doc~~ **Superseded (2026-09-27):** there is no roster. The student's name lives on the member doc and is copied onto each hand-in (`firstName`, `lastName`, `nameKey`). | One flow for students; nothing for the teacher to type. The dashboard groups hand-ins by `nameKey`. |
+| D4 | One **member** doc per device (anonymous uid) per class, created by the student with the typed name. The student may later change the name (the three name fields only); the counter stays. | Binds a uid to a name. The teacher sees and removes computers. |
+| D5 | **Change = the same anonymous uid**, renamed in place. | The 300-per-device cap and the cooldown survive a change of name; no accumulation of anonymous accounts on shared PCs. |
 | D6 | **One document per hand-in**: metadata plus content. The batch has **2 writes**: the hand-in and the member counter tick. | Spark is short of reads and writes, not bandwidth (Feasibility 2). The rules enforce a 10 s cooldown and 300 hand-ins per device. |
 | D7 | Content is **gzip bytes** (`CompressionStream`), with a plain-string fallback. Limits: sketch 50,000 B, workspace 100,000 B. | Storage lasts about 3× longer (§6.2). The dashboard inflates with a cap (gzip bombs). |
-| D8 | Students read only hand-ins with **their own uid**. The teacher reads the whole class. | A student cannot copy a classmate's work by picking their name. |
+| D8 | Students read only hand-ins with **their own uid** (kept in the rules; the dialog no longer lists them). The teacher reads the whole class. | A student cannot copy a classmate's work by typing their name. |
 | D9 | The teacher runs a hand-in on **`review.html`**. The simulator runs there in an `<iframe sandbox="allow-scripts">` (opaque origin). | A crafted sketch escapes the transpiler (proven). In the sandbox it cannot read the site's storage or the dashboard (verified in Chromium, §3.4). |
 | D10 | Two named Firebase apps: `z1-student` and `z1-teacher`. | A teacher session and a student session never replace each other. |
 | D11 | The student side uses **Firestore Lite** (REST), loaded with `import()` on first use. | About 62 KB gzip, against about 170 KB for the full SDK. |
 | D12 | The teacher side uses the full SDK. **Today** is a live listener; longer periods are one-off paged reads. **Memory cache only.** | Live lesson view at the lowest read cost. No student data is left on shared teacher PCs. |
 | D13 | Teacher sign-in: `signInWithPopup` called synchronously in the click. **Session persistence only** (the "Keep me signed in" option is removed). | Safari/iPad block a popup after an `await`. No teacher token sits in shared storage on the github.io origin. |
-| D14 | Joining has three controls: **always open**, a **15-minute class window**, and a **15-minute window for one student** ("Let ali.k join again"). All times come from the server. | Lab PCs lose their sign-in every lesson. A leaked code is useless while joining is closed. |
-| D15 | Classes have **tasks** (up to 30). A hand-in carries a `taskId`. | "Everyone's Traffic light" becomes one filter. |
+| D14 | ~~Joining windows~~ **Superseded (2026-09-27):** there is no joining control. Anyone with the code can hand in under any name while the class accepts hand-ins (`handinsOpen`). | The teacher asked for the simplest possible hand-in. The teacher deletes what does not belong (§3.5). |
+| D15 | ~~Tasks~~ **Superseded (2026-09-27):** no tasks, titles or notes on a hand-in. | Simplicity. The Overview shows the latest version per student. |
 | D16 | **Retention**: `keepWeeks` per class (default 10, set by the maintainer). The dashboard prunes older hand-ins when a class is opened, with a warning a week ahead and a `.zip` download. | 1 GiB of storage and the delete quota both need it at the stated load (§6.2). |
 | D17 | Deletions are client batches (at most 400 operations, at most 5,000 deletes per run), resumable through `deleting: true`. Deleting a doc that is already gone is allowed. | No Cloud Functions. Retries and two open tabs never fail a batch. |
 | D18 | App Check (reCAPTCHA Enterprise) is **wired in v1**, starts in monitoring mode, and is **enforced by the maintainer's decision** (§3.6). | It is free for only 10,000 assessments a month. Past that, requests fail without billing. |
@@ -86,7 +90,7 @@ A hand-in platform for the ZERO1 simulator, modelled on Tinkercad Classrooms.
 ```
  simulator (index.html)                    teacher.html                       review.html
  ┌────────────────────────────────┐        ┌────────────────────────────┐     ┌─────────────────────────────┐
- │ header: [Hand in · ali.k] [Share]│       │ src/teacher/* (vanilla DOM) │     │ trusted banner + Download   │
+ │ header: [Hand in · Ali Khoury]   │       │ src/teacher/* (vanilla DOM) │     │ trusted banner + Download   │
  │ src/ui/handin-dialog.ts         │        │  uses TeacherApi            │ ──► │ <iframe sandbox=allow-scripts│
  │  uses StudentApi (lazy)         │        │  <a href=review.html#review=│  a  │   src=index.html#review>     │
  │ review mode (#review, sandboxed)│◄───────┼──── postMessage payload ────┼─────│  simulator, opaque origin   │
@@ -134,6 +138,10 @@ Order of work:
    depends on them is merged (§6.1 step 7).
 
 ### 0.6 What was verified for this specification
+
+> Historical (2026-09-26, the roster model). The simplified platform was verified again on
+> 2026-09-27: 62 rules cases, 10 of 10 new mutations caught (§7.1), the API suites and the
+> end-to-end flow on the emulators, and a browser run of code → name → Hand in (§7.4).
 
 All files are in `scratchpad/classroom-design/final/`; the log is in Appendix B.
 
@@ -203,23 +211,21 @@ the tests. B and C may polish the wording later; the codes stay.
 
 ### 1.2 Student flows (simulator, Hand in dialog)
 
+One short flow: **class code → first name + last name → Hand in**. The device remembers
+the code and the name.
+
 **Header.**
-- While joined, the button reads **Hand in · ali.k**. Otherwise it reads **Hand in**.
+- While a name is remembered, the button reads **Hand in · Ali Khoury**. Otherwise **Hand in**.
 - The name comes from the saved session, read synchronously at start-up. So the next
-  student at a lab PC sees the previous student's name on arrival.
+  student at a lab PC sees the previous student's name until they press **Change**.
 - Clicking it builds the work like Share does (`exportSketch()`) and opens the dialog in
   **Loading** ("Connecting to your class…"), which calls `api.restore()`.
 - If the blocks are still loading, the app shows the toast "The blocks are still
   loading — try again in a moment" and opens no dialog.
 
-**S0 Class link** `…/#class=BKT4M9`.
-- At start-up the app takes the hash and removes it, as with `#code=`. It opens the
-  dialog in *join mode* with the code filled in.
-- Already joined to **this** class: go to Confirm (S5).
-- Joined to **another** class: "This computer is in **7B Robotics** as **ali.k**.
-  Switch to **8B Robotics**?" with **Switch** (runs `leave()`, then Pick) and **Cancel**.
-- After a successful join, join mode ends with: "You're in **8B Robotics** as **ali.k**.
-  Work as usual and press **Hand in** when you're done." and an **OK** button.
+**S0 Class link** `…/#class=BKT4M9`. At start-up the app takes the hash and removes it,
+as with `#code=`. It opens the dialog on the Code view with the code prefilled; when the
+device already remembers that very class, it opens the Ready view instead.
 
 **S1 Code view.**
 - Heading: "Hand in your work to your teacher".
@@ -228,142 +234,68 @@ the tests. B and C may polish the wording later; the codes stay.
 - **Next**, or Enter in the field.
 - The client checks the code with `normalizeClassCode`. An invalid code shows an inline
   message and makes no request: "A class code has 6 letters and digits, like BKT-4M9."
-  plus the detail from `codeProblem()`, for example "Class codes never contain the
-  letter A." It ends with "Check it with your teacher."
-- A valid code calls `api.findClass(code)`. This signs in anonymously if needed, so the
-  first Firebase download happens here.
-- Errors: `class_not_found`, `handins_closed`, `offline`, `timeout`, `signup_limit`,
-  `auth_disabled`, `storage_blocked`, `quota`, `load_failed`, `app_updated`, `unknown`.
+  plus the detail from `codeProblem()`, ending with "Check it with your teacher."
+- A valid code calls `api.findClass(code)` (anonymous sign-in if needed: the first
+  Firebase download happens here).
+- Errors (inline): `class_not_found`, `handins_closed`, `offline`, `timeout`,
+  `signup_limit`, `auth_disabled`, `storage_blocked`, `quota`, `load_failed`,
+  `app_updated`, `unknown`.
 
-**S2 Pick your name.**
-- Heading: "Class **8B Robotics** · Mr. B", then "Pick your own name:".
-- A radio list of usernames:
-  - sorted;
-  - in a scroll box with `max-height: 50vh`;
-  - with a filter input above it when there are more than 12 names;
-  - Enter on a radio = **This is me**.
-- Fine print: "Only pick your own name. Your teacher can see which computer joined as
-  which name."
-- Below the list: "Can't find your name? **Refresh the list**, or ask your teacher."
-  Refresh the list calls `api.refreshClass()` (1 read).
-- Buttons: **This is me** (disabled until a name is picked) and **Back**.
-- Empty roster: "Your teacher has not added any names yet. Ask them to add you."
-- **This is me** first checks `joinStatus(cls, studentId, now)` locally:
-  - closed: show the `class_closed` text on this view, with no write;
-  - open: `api.join(cls, studentId)` → Ready (or the join-mode end text).
-- Errors:
-  - `class_closed` (closed meanwhile);
-  - `not_on_roster` (the name was removed meanwhile: the list reloads);
-  - `renamed` is handled silently (the list reloads and the same studentId stays selected);
-  - `handins_closed`, `offline`, `timeout`, `quota`, `permission`, `unknown`.
+**S2 Name view.**
+- Heading: "Class **8B Robotics**", then "Type your name so your teacher knows whose
+  work this is."
+- Two inputs, *First name* and *Last name* (each 1-30 characters after `cleanName`;
+  letters of any alphabet, spaces, `'`, `.` and `-`; accents kept). They are prefilled
+  with the name this device gave before (its member doc, else the saved session).
+- The work line ("Your Arduino sketch, 42 lines" or "Your blocks program and the Arduino
+  sketch made from it") and the warnings of S3 are shown here too.
+- **Hand in** (or Enter in a field) runs the local checks of S3, then `api.join(found,
+  name)` (create or rename this device's member doc), then the Ready view and the send.
+- **Back** returns to the code.
+- Errors (inline, the view stays): `bad_name`, `handins_closed`, `class_not_found`,
+  `offline`, `timeout`, `quota`, `permission`, `unknown`.
 
-**S2b Already joined.** `findClass` reports that this device already has a member doc
-in the class.
-- The Pick view is replaced by: "This computer already joined **8B Robotics** as
-  **ali.k**."
-- Buttons: **Continue as ali.k** and **Not ali.k? Sign out** (S6).
-
-**S3 Ready view.**
-- Heading: "Hand in to **8B Robotics** as **ali.k**", with the link **Not ali.k? Sign
-  out**.
-- When the device has handed in before (m10): "Last handed in: today 10:42 · Traffic
-  light".
-- **Task**: a select, shown only when the class has tasks. It offers the tasks plus
-  "(no task)", with the class's `currentTaskId` preselected.
-- The work line: "Your Arduino sketch, 42 lines" or "Your blocks program and the Arduino
-  sketch made from it".
-- *Title (optional)* (≤ 80 characters) and *Note for your teacher (optional)* (≤ 500,
-  textarea).
-- Warnings from `HandinWork`:
+**S3 Ready view** (the remembered computer).
+- "Hand in as **Ali Khoury** to class **BKT-4M9** · 8B Robotics", with **Hand in** and a
+  small **Change** link.
+- "Last handed in: today 10:42" when this device has handed in before.
+- The work line and the warnings from `HandinWork`:
   - `unchanged: 'example'`: "This is still the example '{title}'. Hand it in anyway?"
-    The button then reads **Hand in anyway** and needs a second click.
-  - `unchanged: 'blank'`: "Your sketch is still the empty starting sketch. Hand it in
-    anyway?" Also needs a second click.
-  - `errorCount > 0`: "Your sketch has {n} errors. Your teacher will see them." This is
-    a note only; no second click.
-- **Hand in as ali.k** (primary). The label is truncated with an ellipsis; the
-  `aria-label` has the full name.
-- A status line (`role="status"`).
-- Client checks before any request:
-  - `empty_sketch`: `code.trim() === ''`;
-  - `too_large`: code over 50,000 UTF-8 bytes, or workspace over 100,000;
-  - `too_soon`: less than 10 s since the last hand-in from this device;
-  - `offline`: `navigator.onLine === false`.
+    and `unchanged: 'blank'`: "Your sketch is still the empty starting sketch. Hand it
+    in anyway?" are shown as a warning line, and **Hand in** asks the same question
+    once with a confirm dialog (`options.confirm`).
+  - `errorCount > 0`: "Your sketch has {n} errors. Your teacher will see them." (a note).
+- Client checks before any request: `empty_sketch`, `too_large` (50,000 / 100,000 UTF-8
+  bytes), `too_soon` (10 s since the last hand-in from this device), `offline`.
 - The dialog keeps one `handinId` (`newHandinId()`) per draft. Retries reuse it (§2.9).
-- The button shows "Handing in…" and is disabled: one request at a time.
+- The button shows "Handing in…" and is disabled: one request at a time. After the
+  request timeout the status reads "Checking whether it arrived…" (the API reads the
+  member doc).
+- **Change**: `api.forget()` (the saved session is cleared; the anonymous uid and the
+  last code are kept), then the Code view with the code prefilled. Next → Name view,
+  prefilled with the current member name, editable. This is also the shared-computer
+  protection: the Ready view always shows who the work will be handed in as.
 
-**S4 Success view.** It replaces the form, so nobody presses Hand in twice.
-- "✓ Handed in · Traffic light · Blocks · 10:42. Your teacher can see it now."
-- Buttons: **Close**, **My hand-ins**, and **Leaving? Sign out of the class on this
-  computer** (S6).
-- The next Hand in keeps the title and task, clears the note, and shows "Hand in again
-  to send a newer version."
-- **Timeout, `offline` after sending, or `unknown`**:
-  - The status line reads "Checking whether it arrived…". The API reads the member doc
-    (1 read).
-  - If `lastHandinId === handinId`, show success.
-  - Otherwise: "It did not arrive. **Try again**", which reuses the same id.
-- Other errors (after the data layer's diagnosis, §4.7):
-  - `too_soon`, `limit_reached`;
-  - `not_on_roster`: button **Pick your name again** = S6 with the code prefilled;
-  - `device_removed`: button **Join again** = Pick with the same uid;
-  - `class_deleted`: button **Different class**;
-  - `handins_closed`, `offline`, `timeout`, `quota`, `permission`, `index_missing`,
-    `unknown`.
-- A rename by the teacher is handled inside `handIn`: one automatic retry with the new
-  name, and the heading updates.
+**S4 Success view.** "✓ Handed in · 10:42 · Your teacher can see it now." with **Close**.
+The next opening shows the Ready view again with "Last handed in".
 
-**S5 Confirm view** (shared computers).
+**Errors after sending** (after the data layer's diagnosis, §4.7):
+- `timeout`, `offline` after sending, `unknown`: "It did not arrive. **Try again**"
+  (the same id);
+- `too_soon`, `limit_reached`, `quota`, `permission`, `unknown`: inline in the status line;
+- `device_removed`: button **Enter your name again** (= Change);
+- `class_deleted`: the session is cleared, button **Different class**;
+- `handins_closed`: button **Different class** (the code is forgotten too);
+- `lost_identity`: the Code view with the code prefilled and the text.
+- A name changed from another tab is handled inside `handIn`: one automatic retry with
+  the member doc's name, and the header updates.
 
-When it appears, when the dialog opens with a saved session and `restore()` returns
-`confirm` because:
-- this tab has not confirmed yet (`sessionStorage['z1.classroom.confirmed'] !== uid`), or
-- the session was last used more than **20 minutes** ago.
+`restore()` errors: `device_removed` → **Enter your name again**; `class_deleted` →
+**OK** (session cleared); `handins_closed` → **Different class**; `lost_identity` →
+Code view; `offline` → **Try again** (the saved session is kept).
 
-What it shows and does:
-- "Hand in to **8B Robotics** (Mr. B) as **ali.k**?"
-- Buttons:
-  - **Yes, I'm ali.k**: `api.confirm(session)`, then Ready.
-  - **No, I'm someone else**: S6 with the code kept.
-  - **Different class**: S6 with the code cleared.
-- **My hand-ins** stays hidden until the student has confirmed.
-
-`restore()` errors:
-- `device_removed`: "Your teacher removed this computer from the class." + **Join again**.
-- `not_on_roster`: "Your name is no longer on the class list." + **Pick your name again**.
-- `class_deleted`: "This class no longer exists." + **OK** (the session is cleared).
-- `handins_closed`: text + **Different class**.
-- `lost_identity`: the browser lost its anonymous sign-in (storage wiped, or SDK issue
-  #10402). "This computer lost its class sign-in. Pick your name again." The code is
-  prefilled.
-- `offline`: text + **Try again** (the saved session is kept).
-
-**S6 Sign out** (one action, which replaces the draft's Switch user and Leave).
-- Confirm: "Sign out of 8B Robotics on this computer? Your hand-ins stay with your teacher."
-- Then `api.leave({ forgetCode })`:
-  - the anonymous user is deleted when possible (errors ignored), then signed out;
-  - `z1.classroom` and the tab's confirm flag are cleared;
-  - `lastCode` is kept unless the student chose **Different class**.
-- Then the Code view, with the code prefilled and editable.
-- The previous student's history is no longer visible on this computer.
-
-**S7 My hand-ins.**
-- Shown only after the student has confirmed.
-- A disclosure, **My hand-ins from this computer**, closed by default. Opening it calls
-  `api.myHandins(session)`: the newest 20, then **Show more**.
-- Each row: date and time, task or title (or "(no title)"), and Code/Blocks.
-- **Open** closes the dialog and calls `openWork(content)`. That sets `location.hash`
-  to the `#code=` / `#blocks=` link, and the existing `hashchange` handler asks "Load
-  the sketch from this link?" when work would be lost. This is the student's own work,
-  on their own origin.
-- Empty list: "Nothing handed in from this computer yet."
-- Students never see other devices' or other students' hand-ins, and cannot edit or
-  delete a hand-in.
-
-The dialog footer has **Close** only. The teacher link is gone (m3).
-- Esc closes the dialog.
-- While the dialog is open, Ctrl+Enter and Esc do not run or stop the sketch (the App's
-  keyboard guard).
+The dialog footer has **Close** only. Esc closes the dialog; while it is open, Ctrl+Enter
+and Esc do not run or stop the sketch (the App's keyboard guard).
 
 ### 1.3 Teacher flows (teacher.html)
 
@@ -407,34 +339,21 @@ The dialog footer has **Close** only. The teacher link is gone (m3).
 
 **T2 Class list.**
 - **+ New class**.
-- Cards, newest first (sorted client-side by `createdAt`). Each card shows:
-  - the class name and the formatted code;
-  - "n students";
-  - a joining badge ("Joining open", "Joining closed", "Joining open · 12 min"), always
-    with text;
-  - "Hand-ins stopped" or "Deleting…" when relevant.
+- Cards, newest first (sorted client-side by `createdAt`). Each card shows the class
+  name, the formatted code and a badge: "Hand-ins open", "Hand-ins stopped" or
+  "Deletion not finished".
 - A section **Hand-ins stopped** collects old classes.
 - Empty state: "No classes yet. Create your first class."
 - Live through `watchClasses`. The last opened class (`z1.teacher.lastClass`) is
-  re-opened.
+  re-opened **only when it is in this teacher's class list** (the key is per browser: on
+  a shared PC it may name another teacher's class); otherwise the list shows and the key
+  is dropped.
 
 **T3 Create class** (dialog).
-- *Class name* (required, 1-60 characters after `cleanLine`).
-- *Your name as students see it* (prefilled from the Google display name, 0-60).
-- *Student usernames* (textarea; one per line; commas and semicolons also split).
-- Checkbox **Shorten last names to an initial** (on by default): "Ali Khalil" becomes
-  `ali.k`.
-- *Tasks (optional, one per line)*, for example "Traffic light".
-- *Students can join*: **Always, until I close it** (default) / **Not yet**.
-- A live preview from `planRosterAdd()` shows:
-  - the normalised names;
-  - the problems per line: invalid, duplicate, too short, too long, more than 100,
-    collision after shortening;
-  - **near-duplicate warnings** for names that differ by one character, for example
-    "ali.k and ali.m differ by one letter; students may pick the wrong one". These
-    warnings do not block.
-- **Create** is disabled while the name is empty or there are problems. It calls
-  `createClass()`, a transaction with code-collision retry.
+- *Class name* (required, 1-60 characters after `cleanLine`). Nothing else: "You get a
+  class code to give your students. They press Hand in, type the code and their name:
+  no class list to prepare."
+- **Create** calls `createClass({ name })`, a transaction with code-collision retry.
 - The class then opens with a banner: "Class created. Give your students the code
   **BKT-4M9** or the class link."
 - Errors: `code_collision`, `offline`, `quota`, `permission`, `unknown`.
@@ -442,19 +361,10 @@ The dialog footer has **Close** only. The teacher link is gone (m3).
 **T4 Class page header.**
 - The class name.
 - The big formatted code, with **Copy code**, **Copy class link** and **Show to the class**.
-- The **joining control**:
-  - *Always open*: [switch on]. "Anyone with the code can join and pick a name."
-  - *Closed*: [switch off] and **Open for 15 minutes**. "Students who already joined can
-    still hand in."
-  - *Window open*: "Joining open · 12:34 left", with **+15 min** and **Close now**.
-    - The countdown uses `joinWindowAt + 15 min`, the server time, against the local
-      clock.
-    - Tip under it: "On lab computers that forget sign-ins, open joining at the start of
-      each lesson."
-- The switch **Accepting hand-ins** (on/off). Off: "This class no longer accepts
-  hand-ins (use it for last year's classes)."
-- **Current task** select ("no task" / the tasks) and **Manage tasks** (Settings).
-- Tabs: **Overview** | **All hand-ins** | **Students** | **Settings**.
+- The switch **Accepting hand-ins** (on/off). On: "Anyone with the code can hand in under
+  their name." Off: "This class no longer accepts hand-ins (use it for last year's
+  classes)."
+- Tabs: **Overview** | **All hand-ins** | **Settings**.
 - Opening the class starts the background retention check (§2.11). Its notices appear
   on the Overview.
 
@@ -464,18 +374,17 @@ The dialog footer has **Close** only. The teacher link is gone (m3).
   - **Last 7 days**, **Last 14 days**, **Last 30 days**: one-off `loadHandins`, with a
     **Refresh** button.
   - The choice is remembered per class in `z1.teacher.period.<code>`.
-- **Task** filter: All / each task (client-side).
-- Header line: "22 of 28 handed in today" (or "…in the last 7 days"), counting roster
-  students with at least one hand-in in the view.
-- One row per roster student, sortable by name (default) or by last hand-in. Keys ↑/↓
-  move between rows; Enter opens the detail. Columns:
+- Header line: "12 students handed in today" (or "…in the last 7 days"): the distinct
+  names (`nameKey`) with at least one hand-in in the view.
+- One row per student name (**"Last name, First name"**, grouped by `nameKey`, so
+  "ali khoury" and "Ali Khoury" are one student), sortable by name (default) or by
+  last hand-in. Keys ↑/↓ move between rows; Enter opens the detail. Columns:
   - **Status**, always as text plus an icon:
     - "● New": a hand-in newer than the `seen` mark in
-      `z1.teacher.seen.<code>` (studentId → createdAt ms);
-    - "✓ Seen";
-    - "Nothing yet".
-  - **Last hand-in**: time ("10:42" today, "Mon 10:42" this week, else the date) · task
-    or title.
+      `z1.teacher.seen.<code>` (nameKey → createdAt ms);
+    - "✓ Seen".
+  - **Last hand-in**: time ("10:42" today, "Mon 10:42" this week, else the date) ·
+    Code / Blocks.
   - **Versions**: the number in the view.
   - **Computers**:
     - normally neutral text ("1 computer", "2 computers");
@@ -493,6 +402,10 @@ The dialog footer has **Close** only. The teacher link is gone (m3).
   - **Download all shown (.zip)**.
 - Live insertions are announced by one polite summary ("2 new hand-ins"). The new-row
   highlight respects `prefers-reduced-motion` and always carries the "New" text.
+- Empty: "Nothing handed in yet. Students press Hand in, type the class code and their
+  name."
+- A large review payload (`#rid=`) gets **one** `z1.review.<rid>` handoff per hand-in,
+  memoised on the session and reused across renders.
 
 **T6 Hand-in detail** (panel beside the table at 1200 px or more, else below it).
 - The student's versions, newest first.
@@ -500,20 +413,19 @@ The dialog footer has **Close** only. The teacher link is gone (m3).
   - **Load older versions** calls `studentHandins` (10 per page).
 - Each version shows:
   - the time;
-  - the task, the title, the note (pre-wrapped text);
   - the computer: `shortDeviceId(uid)`, plus the device label when members are loaded;
   - **Code** / **Blocks**;
   - a read-only `<pre>` code preview (`textContent`). For Blocks, the sketch generated
     from the blocks, labelled so.
 - Actions:
   - **Open in the simulator** (a link, as in T5);
-  - **Download .ino**: `sketchFileName(username, createdAt)`. For Blocks, the zip
-    download also adds `<username>.blocks.json`.
+  - **Download .ino**: `sketchFileName("First Last", createdAt)`. For Blocks, the zip
+    download also adds `<First_Last>.blocks.json`.
   - **Copy code**: enabled when decoded. Fallback: select the `<pre>` text and say
     "Press Ctrl+C".
-  - **Wrong student? Move to…**: a roster select, then `refileHandin(code, id, { studentId })`.
-  - **Wrong task? Move to…**: `refileHandin(code, id, { taskId })`.
   - **Remove the computer that sent this**: confirm, then `removeDevice(code, uid)`.
+    (There is no "Move to…": hand-ins are immutable; a wrong name is deleted and the
+    student hands in again.)
   - **Delete**: confirm "Delete this hand-in? This cannot be undone.", then `deleteHandin()`.
 - Content that cannot be decoded shows:
   - `too_large`: "This hand-in is larger than the simulator accepts. It was not made by
@@ -522,43 +434,24 @@ The dialog footer has **Close** only. The teacher link is gone (m3).
   - `corrupt`: "This hand-in is damaged."
 
 **T7 All hand-ins.** A feed of the same view, newest first:
-- time, username (the current roster name; "(removed) ali.k" when gone), task, title or
-  "(no title)", a **Code** / **Blocks** badge, and the first line of the note;
-- filters by student and task;
+- time, "Last name, First name", a **Code** / **Blocks** badge;
+- a filter by student (the names in the view);
 - the same detail panel.
 
-**T8 Students.**
-- `watchMembers` runs only while this tab or the Show-to-the-class overlay is visible.
-- A table sorted by username: username, computers (neutral count), last joined, and
-  actions **Rename**, **Let join again (15 min)** (→ `letRejoin`) and **Remove**.
-- **Add students**: the same textarea, checkbox and preview as T3, checked against the
-  current roster; **Add** calls `addStudents()`.
-- **Rename**: an inline input; `normalizeUsername` + `usernameProblem` + a duplicate
-  check, then `renameStudent()`. Help: "Students keep their hand-ins. On their computer
-  the new name shows the next time they open Hand in."
-- **Remove**:
-  - Confirm: "Remove ali.k? Their computers are removed too and they can no longer hand
-    in. Their hand-ins stay (shown as '(removed) ali.k')."
-  - Then `removeStudent(code, id)`.
-- Expanding a row lists its computers:
-  - the device label and short id (`Chrome · Windows · 7F3A`), joined at, last hand-in;
-  - **Remove this computer**: confirm, then `removeDevice()`.
-  - Help: "Remove a computer that joined under the wrong name. The student can join
-    again while joining is open, or when you let them join again."
-- **Remove computers not used for 30 days**: `removeUnusedDevices(code, 30)`, which
-  reports the count removed.
-- Members whose studentId is no longer on the roster are listed under "Removed
-  students' computers".
+**T8 Students.** Removed with the roster (2026-09-27). The members listener runs only
+while a detail panel needs the device labels. `removeUnusedDevices` stays in the API.
 
 **T9 Settings.**
-- Rename the class and edit the teacher name (**Save** → `updateClass`).
+- Rename the class (**Save** → `updateClass`).
+- The **Accepting hand-ins** switch (the same as in the header).
 - **Keep hand-ins for** [1-52] weeks (`keepWeeks`). Help: "Older hand-ins are deleted
   automatically when you open this class. You are warned a week before."
-- **Tasks**: add (one per line), rename, delete, set current.
 - **Delete class**:
-  - Explanation: "Deletes the class, its class list, all hand-ins and all joined
-    computers. This cannot be undone."
-  - Link: **Download everything first (.zip)**.
+  - Explanation: "Deletes the class, all hand-ins and all joined computers. This cannot
+    be undone."
+  - Link: **Download everything first (.zip)**: pages through **every** hand-in of the
+    class (`loadHandins` from the beginning of time until `hasMore` is false), not only
+    the loaded view, and reports "n hand-ins in the zip".
   - Input: "Type the class code to confirm". It accepts `BKT4M9` and `bkt-4m9`.
   - **Delete class** calls `deleteClass(code, onProgress)`. Progress reads "Deleting…
     120 of about 340". Then back to T2 with the toast "Class deleted".
@@ -570,8 +463,9 @@ The dialog footer has **Close** only. The teacher link is gone (m3).
 - The huge formatted code, with `aria-label="B K T 4 M 9"`.
 - The class link as short text (`ebechalani.github.io/zero1smartboard/#class=BKT4M9`,
   computed from `location`).
-- "Open the link, or press **Hand in**, type the code and pick your name."
-- The joining state and "12 of 28 joined", live from members.
+- "Open the link, or press **Hand in**, type the code and your name."
+- "Hand-ins open · 12 students handed in today" (from the loaded view; no members
+  listener).
 - Esc closes it. (A QR code comes later.)
 
 **T11 Sign out.**
@@ -656,23 +550,21 @@ quota reset (midnight America/Los_Angeles) in the viewer's local time, from
 | `index_missing` | `failed-precondition` on an indexed query | The class platform is not fully set up yet. Tell your teacher. | The database is missing an index. The site maintainer must deploy firestore.indexes.json (docs/CLASSROOM.md, step 7). |
 | `bad_code` | `normalizeClassCode` returned null | A class code has 6 letters and digits, like BKT-4M9. Check it with your teacher. | - |
 | `class_not_found` | class doc missing, or `deleting` | There is no class with the code {code}. Check the code with your teacher. | This class no longer exists. |
-| `class_closed` | joining not open for this student | Joining {class} is closed right now. Ask your teacher to open joining for a few minutes. | - |
 | `handins_closed` | `handinsOpen === false` | {class} no longer accepts hand-ins. If you have a new class code, choose Different class. | - |
 | `class_deleted` | class doc missing / `deleting` after joining | This class no longer exists. | - |
-| `lost_identity` | saved session, but the anonymous user is gone | This computer lost its class sign-in. Pick your name again. | - |
-| `not_on_roster` | studentId no longer on the roster | Your name is no longer on the class list. Pick your name again. | - |
-| `device_removed` | own member doc missing | Your teacher removed this computer from the class. Join again. | - |
+| `lost_identity` | saved session, but the anonymous user is gone | This computer lost its class sign-in. Enter the class code and your name again. | - |
+| `device_removed` | own member doc missing | Your teacher removed this computer from the class. Enter your name again. | - |
 | `too_soon` | less than 10 s since the last hand-in | Wait a few seconds before handing in again. | - |
-| `limit_reached` | member `handinCount >= 300` | This computer has handed in 300 times in this class. Ask your teacher to let you join again, then sign out and join again. | - |
+| `limit_reached` | member `handinCount >= 300` | This computer has handed in 300 times in this class. Tell your teacher. | - |
 | `empty_sketch` | nothing to hand in | Your sketch is empty. There is nothing to hand in yet. | - |
 | `too_large` | size limits | Your work is too big to hand in (more than 50,000 characters of code). Use Share → Download .ino instead. | - |
 | `code_collision` | 5 codes taken in a row | - | Could not find a free class code. Try again. |
-| `bad_roster` | invalid names reached the API | - | Some usernames are not valid. Fix the list and try again. |
+| `bad_name` | a first or last name failed `nameProblem` | Type your first name and your last name (letters only, up to 30 characters each). | That name is not valid. |
 | `classes_left` | `deleteAccount()` while classes remain | - | Delete all your classes first (step 1). |
 | `permission` | `permission-denied` without a better diagnosis | The class did not accept this. Try again; if it keeps failing, tell your teacher. | You do not have access to this class. Sign in with the account that created it. |
 | `unknown` | anything else | Something went wrong. Try again. | Something went wrong: {message}. Try again. |
 
-`renamed` is internal to the data layer and never shown.
+`renamed` (the member doc's name differs from the session's) is internal to the data layer and never shown.
 
 ---
 
@@ -686,8 +578,8 @@ classes/{code}                  code = doc id, e.g. "BKT4M9"
   └─ handins/{handinId}         handinId = 20 × [A-Za-z0-9] (made by the client before the batch)
 ```
 
-There are no other collections and no `teachers` or `users` collection. The teacher's
-display name lives on each class; the Google profile stays in Firebase Auth. The draft's
+There are no other collections and no `teachers` or `users` collection. The Google
+profile stays in Firebase Auth; no teacher name is stored in Firestore. The draft's
 `handinCode` collection is gone: the rules deny it (R8.2).
 
 ### 2.2 Class code
@@ -716,111 +608,62 @@ display name lives on each class; the Google profile stays in Firebase Auth. The
 - **Guessing**: students cannot list `classes`, so codes can only be guessed. Each guess
   is one billed read. With 2,000 classes a random guess hits with probability about
   1e-5. The guesser mostly burns the shared read quota; §3.5 covers that.
-- **No code rotation in v1** (decision log, Security 2a). Instead, joining can be closed
-  and opened in windows (§2.6), which makes a leaked code useless. v1.1: "Copy class
-  with a new code".
+- **No code rotation in v1** (decision log, Security 2a). A class whose code leaked is
+  switched to "Hand-ins stopped" and a new class is created (a new code). v1.1: "Copy
+  class with a new code".
 
 ### 2.3 `classes/{code}`
 
 | field | type | rule / limit | notes |
 |---|---|---|---|
-| `schema` | int | `== 1` at create, immutable | for future migrations |
+| `schema` | int | `== 2` at create, immutable | 2 since the simplification (1 = the roster model; no v1 data was deployed) |
 | `ownerUid` | string | `== request.auth.uid` at create, immutable | the teacher's Google uid. Visible to code-holders (§3.5) |
 | `name` | string | 1-60 chars | "8B Robotics" |
-| `teacherName` | string | 0-60 chars | shown to students |
-| `roster` | map<string,string> | §2.4 | studentId → username |
-| `joinOpen` | bool | | "always open" |
-| `joinWindowAt` | timestamp or null | null or `== request.time` when set | a 15-minute class join window starts here |
-| `rejoin` | map<string,timestamp> | ≤ 100 entries, keys ⊆ roster keys, `{}` at create | a 15-minute window for one student starts at `rejoin[studentId]` |
-| `handinsOpen` | bool | | false = no hand-ins and no joins ("Hand-ins stopped") |
-| `tasks` | map<string,string> | ≤ 30; id `[a-z0-9]{6}`; title 1-60 chars, one line | §2.5 |
-| `currentTaskId` | string | `''` or a key of `tasks` | preselected on the student's Ready view |
+| `handinsOpen` | bool | | false = no hand-ins and no new names ("Hand-ins stopped") |
 | `keepWeeks` | int | 1-52 | retention (§2.11); default `CLASSROOM_DEFAULTS.keepWeeks` |
 | `deleting` | bool | `false` at create | set first when deleting (§2.11) |
 | `createdAt` | timestamp | `== request.time` at create, immutable | `serverTimestamp()` |
 | `updatedAt` | timestamp | `== request.time` on every write | `serverTimestamp()` |
 
-Exactly these keys exist at create. An update may change every key except `schema`,
-`ownerUid` and `createdAt`, and MUST set `updatedAt`. Size: at most about 8 KB.
+Exactly these keys exist at create. An update may change `name`, `handinsOpen`,
+`keepWeeks` and `deleting`, and MUST set `updatedAt`. There is no roster, no task list,
+no teacher name and no joining window (2026-09-27).
 
-### 2.4 Roster and usernames
+### 2.4 Student names
 
-- `roster` is a map `{ [studentId]: username }` with at most **100** entries.
-- **`studentId`**:
-  - 8 chars `[a-z0-9]`, random (`newStudentId()`);
-  - unique within the class, never reused, never shown;
-  - stable across renames; hand-ins and members refer to it.
-- **`username`**:
-  - `^[a-z0-9][a-z0-9._-]{1,23}$`: 2-24 characters from lowercase ASCII letters,
-    digits, `.`, `_` and `-`, starting with a letter or digit;
-  - unique in the class.
-- **`normalizeUsername(input, { shortenLastName })`**:
-  1. NFD, then strip combining marks (`Élise` → `elise`);
-  2. lowercase;
-  3. with `shortenLastName` (the default in the UI): the first word plus `.` plus the
-     first letter of the last word ("Ali Khalil" → `ali.k`, "Ali Ben Salah" → `ali.s`);
-  4. whitespace runs → `.`;
-  5. drop characters outside the alphabet;
-  6. collapse repeated `.`, `_` and `-`;
-  7. trim leading and trailing separators;
-  8. cut to 24.
+A student types a **first name** and a **last name**; nothing is prepared by the teacher.
 
-  The result is then checked with `usernameProblem()`.
-- `nearDuplicates(names)` returns pairs at Levenshtein distance 1, for the warnings.
-- The rules validate the whole map at once:
-  - `roster.keys().join(' ')` and `roster.values().join(' ')` are each matched with one
-    regex;
-  - `roster.values().toSet().size() == roster.size()` enforces uniqueness.
-  - Note: `join()` **turns non-strings into text**, so an int username `12` passes the
-    class rules (R2.6). Only the owner writes rosters, and nobody can join as such an
-    entry, because `member.username` must be a string equal to it. Clients MUST still
-    read roster and task values with `String(v)`.
-- Edits use **field-path updates**, never read-modify-write:
-  - add or rename: `{ ['roster.' + id]: name, updatedAt }`;
-  - remove: `{ ['roster.' + id]: deleteField(), ['rejoin.' + id]: deleteField(), updatedAt }`.
-    The rules require rejoin keys to be roster keys (R3.7).
-- A duplicate name is refused by the rules (R3.9).
-- Restoring a removed student under the same studentId is deferred to v1.1. Meanwhile:
-  re-add the student and use **Move to…** for old hand-ins.
+- `cleanName(input)`: NFC, one line, single spaces, trimmed, at most 30 characters.
+- `nameProblem(name)`: `'empty' | 'too_long' | 'invalid' | null`, with
+  `NAME_PATTERN = /^\p{L}[\p{L} '.-]{0,29}$/u`: a letter of any alphabet (accents kept),
+  then letters, spaces, apostrophes, dots and hyphens. The rules use the same regex
+  (RE2, `\p{L}`).
+- `nameKey = "first last".toLowerCase()`: the dashboard's **grouping key** ("ali khoury"
+  typed on two computers is one student). The rules check that it is a non-empty
+  lower-case string of at most 61 characters, but not the exact formula: the rules'
+  `lower()` is ASCII-only, so "Élise" would be refused. The key has no security value
+  (a student can type any name anyway, §3.5).
+- Display: "Ali Khoury" (`fullName`) in the dialog and the review banner; "Khoury, Ali"
+  (`listName`) in the dashboard lists.
+- File names: `sketchFileName("Ali Khoury", …)` → `zero1_Ali_Khoury_0926_104200.ino`;
+  zip entries `Ali_Khoury.ino`, `Ali_Khoury-2026-09-26-1000.ino`.
 
 ### 2.5 Tasks
 
-- `tasks` is a map `{ [taskId]: title }` with at most **30** entries.
-  - `taskId`: 6 chars `[a-z0-9]` (`newTaskId()`).
-  - The title comes from `cleanLine`, is 1-60 characters, and has no newline.
-- Deleting a task MUST also set `currentTaskId: ''` when it pointed at that task (R3.8).
-- A hand-in's `taskId` is `''` or an existing key at submit time. Hand-ins of a deleted
-  task keep their id; the dashboard shows "(deleted task)".
-- Filtering by task is client-side on the loaded view, so no index is needed.
+Removed (2026-09-27). A hand-in has no task, title or note.
 
 ### 2.6 Joining
 
-A student may create a member doc when all of these hold:
-- `deleting == false` and `handinsOpen == true`;
-- **and one of**:
-  - `joinOpen == true`;
-  - `request.time < joinWindowAt + 15 min`;
-  - `request.time < rejoin[studentId] + 15 min`.
+Removed (2026-09-27). A student may create their member doc, and hand in, whenever the
+class exists, is not deleting and has `handinsOpen == true`. There is no window and no
+per-student control: anyone with the code can hand in under any name (§3.5).
 
-All times are `serverTimestamp()` values, which the rules check. The teacher's clock
-cannot open joining for days.
+### 2.7 `classes/{code}/members/{uid}` (device ↔ name binding)
 
-| teacher action | write |
-|---|---|
-| Always open / close | `{ joinOpen: true / false, joinWindowAt: null, updatedAt }` |
-| Open for 15 minutes / +15 min | `{ joinWindowAt: serverTimestamp(), updatedAt }` (the window restarts) |
-| Let ali.k join again (15 min) | `{ ['rejoin.' + id]: serverTimestamp(), updatedAt }` |
-
-The client helper `joinStatus(cls, studentId, nowMs)` evaluates the same condition with
-a tolerance of ±60 s for clock skew. The student side uses it to avoid denied writes,
-which cost a billed read; the dashboard uses it for the countdown.
-
-### 2.7 `classes/{code}/members/{uid}` (device ↔ username binding)
-
-| field | type | at create (join) | later |
+| field | type | at create | later |
 |---|---|---|---|
-| `studentId` | string | must be a key of `roster` | immutable |
-| `username` | string | must equal `roster[studentId]` | immutable snapshot (display only) |
+| `firstName`, `lastName` | string | `validName` (§2.4) | changed only by the owner uid ("Change"), both together with `nameKey` |
+| `nameKey` | string | non-empty, lower-case, ≤ 61 chars; the client's `nameKeyOf(first, last)` | as above |
 | `ownerUid` | string | must equal the class `ownerUid` | immutable (lets the teacher read and delete without a `get`) |
 | `joinedAt` | timestamp | `== request.time` | immutable |
 | `device` | string | ≤ 40 chars, from `deviceLabel(navigator.userAgent)` | immutable. **Untrusted free text** |
@@ -829,56 +672,36 @@ which cost a billed read; the dashboard uses it for the countdown.
 | `lastHandinId` | string | `''` | id of the last hand-in |
 
 - **Who writes it**:
-  - Only the student creates it, with doc id = own uid, while joining is allowed (§2.6).
-  - An existing member doc can never be overwritten. The only student update is the
-    counter tick (§2.9).
+  - Only the student creates it, with doc id = own uid, while the class accepts hand-ins.
+  - The student updates it in two ways only: the counter tick (§2.9), and a **rename**
+    (`affectedKeys` ⊆ `firstName, lastName, nameKey`, same validation). A rename and a
+    tick in one batch are refused. The counter and the cooldown survive a rename.
   - The teacher lists, reads and deletes members. Students cannot delete theirs: it
     carries the cooldown and the counter.
-- **The 300 cap is best effort per identity.**
-  - Two concurrent batches at 299 can both land, giving 301.
-  - Signing out and joining again starts a new count.
-  - It bounds a single identity, not an attacker (§3.5).
-- **Accumulation**: sign-out and re-joins create new uids and member docs. Anonymous
-  Auth records accumulate on Spark with no clean-up. They hold no personal data, and the
-  cap is 100 million. "Remove computers not used for 30 days" keeps the member list
-  short.
+- **The 300 cap is best effort per identity** (two concurrent batches at 299 can both
+  land). "Change" keeps the uid, so it does not reset the count; a wiped browser does.
+- Old hand-ins keep the name they were made under (denormalised, §2.8): after a rename
+  the teacher sees two students, which is right when two students shared a computer.
 
 ### 2.8 `classes/{code}/handins/{handinId}`
 
 | field | type | rule |
 |---|---|---|
 | `uid` | string | `== request.auth.uid` |
-| `studentId` | string | `== members/{uid}.studentId` (after the batch) |
-| `username` | string | `== roster[studentId]` **at submit time** (snapshot) |
+| `firstName`, `lastName`, `nameKey` | string | `==` the member doc's values **after the batch** (denormalised snapshot; `getAfter(members/{uid})`) |
 | `ownerUid` | string | `== class.ownerUid` |
 | `kind` | string | `'code'` or `'blocks'` |
-| `taskId` | string | `''` or a key of `class.tasks` |
-| `title` | string | ≤ 80 chars (client: `cleanLine`) |
-| `note` | string | ≤ 500 chars (client: `cleanMultiline`) |
 | `createdAt` | timestamp | `== request.time`, immutable |
 | `enc` | string | `'plain'` or `'gzip'` |
 | `code` | string or bytes | the Arduino sketch (Blocks: generated from the blocks). `plain`: string ≤ 50,000 UTF-8 bytes. `gzip`: bytes ≤ 50,000. Never empty |
 | `workspace` | string or bytes | Blocks: `JSON.stringify(Blockly.serialization.workspaces.save(ws))`, never empty. Code: empty. `plain`: ≤ 100,000 UTF-8 bytes. `gzip`: ≤ 100,000 bytes |
 
-- **Encoding** (`src/classroom/codec.ts`):
-  - `encodeContent` gzips both fields with `CompressionStream('gzip')` when it exists
-    **and** the gzip total is smaller; otherwise it stores plain strings. A 96-byte
-    sketch gzips to 99 bytes, and an average example to about 45 %.
-  - The client checks the **raw** sizes (50,000 / 100,000 UTF-8 bytes) before encoding,
-    so students see the same limit with or without compression.
-- **Decoding** (`decodeContent`) inflates with `DecompressionStream`, **capped** at 2×
-  the raw limits (code 100,000 B, workspace 200,000 B). Past that it reports
-  `too_large`. A 5 MB gzip bomb fits in under 50 KB; the cap refuses it (e2e).
-- The workspace is a string, not a Firestore map:
-  - Firestore limits nesting to 20 levels, and Blockly's `next` chains nest one level
-    per block;
-  - a string is also opaque to indexing.
-- A typical hand-in is 1-3 KB stored (§6.2).
-- **Updates and deletes**:
-  - Students can never update or delete a hand-in.
-  - The owner may re-file one: change only `studentId` + `username` (which must match the
-    roster) and/or `taskId`.
-  - The owner deletes.
+- **Encoding** (`src/classroom/codec.ts`), unchanged: gzip when `CompressionStream`
+  exists and it is smaller, else plain; the client checks the raw sizes before
+  encoding; decoding is capped at 2× (gzip bombs → `too_large`).
+- The workspace is a string, not a map (nesting limit, opaque to indexing).
+- **Immutable**: nobody updates a hand-in, not even the owner (no re-filing: there is no
+  roster to re-file to). The owner deletes.
 
 ### 2.9 The hand-in batch and idempotent retry (MUST)
 
@@ -888,7 +711,7 @@ random), and the dialog keeps it for retries of the same draft.
 ```ts
 const batch = writeBatch(db);
 batch.set(doc(db, `classes/${code}/handins/${id}`), {
-  uid, studentId, username, ownerUid, kind, taskId, title, note,
+  uid, firstName, lastName, nameKey, ownerUid, kind,
   createdAt: serverTimestamp(), enc, code, workspace,            // code/workspace: Bytes.fromUint8Array(...) when enc === 'gzip'
 });
 batch.update(doc(db, `classes/${code}/members/${uid}`), {
@@ -898,8 +721,8 @@ await withTimeout(batch.commit());
 ```
 
 How the rules tie the two writes together:
-- The hand-in requires the member doc *after* the batch to have `lastHandinId == id` and
-  `lastHandinAt == request.time`.
+- The hand-in requires the member doc *after* the batch to have `lastHandinId == id`,
+  `lastHandinAt == request.time` and the same `firstName` / `lastName` / `nameKey`.
 - The tick requires `handins/{id}` *after* the batch to have this uid and `createdAt ==
   request.time`. So the tick cannot point at an older hand-in (R4.9).
 - The tick also requires:
@@ -921,20 +744,16 @@ hand-in, which the rules refuse (R6.16, e2e).
 | operation | who | requests | reads (incl. rules) | writes / deletes |
 |---|---|---|---|---|
 | create class | teacher | transaction get + set | 1 | 1 |
-| rename class / joining / hand-ins switch / keepWeeks / current task | teacher | `updateDoc` | 0 | 1 |
-| add / rename students, tasks | teacher | one `updateDoc` with field paths | 0 | 1 |
-| remove student | teacher | `updateDoc` (roster + rejoin) → `members where studentId == id` → batch delete | 1 + n | 1 + n deletes |
-| let a student join again / open a window | teacher | `updateDoc` | 0 | 1 |
+| rename class / hand-ins switch / keepWeeks | teacher | `updateDoc` | 0 | 1 |
 | remove computer | teacher | `deleteDoc(members/uid)` | 0 | 1 delete |
 | find class | student | `getDoc(class)` + `getDoc(members/me)` | 2 | 0 |
-| join | student | `setDoc(members/me)` | 1 (rule get) | 1 |
+| enter a name (join) | student | `setDoc(members/me)`, or `updateDoc` of the three name fields when the doc exists (no write when the name is the same) | 1 (rule get) / 0 | 1 |
 | restore (dialog open) | student | `getDoc(class)` | 1 | 0 |
 | hand in | student | 1 batch (§2.9) | ≤ 3 (rules: class, member-after, hand-in-after) | 2 |
 | check after timeout / diagnosis | student | `getDoc(members/me)` (+ `getDoc(class)`) | 1-2 | 0 |
-| my hand-ins | student | `where uid == me orderBy createdAt desc limit 20` | ≤ 20 (min 1) | 0 |
-| re-file hand-in | teacher | `updateDoc` | 1 (rule get) | 1 |
 | delete hand-in | teacher | `deleteDoc` | 0 | 1 delete |
 | prune | teacher | count + `where createdAt < cutoff orderBy createdAt limit 200` → batch | 1 + n | n deletes |
+| download everything / old hand-ins | teacher | `loadHandins` pages of 100 until `hasMore` is false | n | 0 |
 | delete class | teacher | §2.11 | n | n deletes |
 
 ### 2.11 Retention and deletion (no Cloud Functions)
@@ -956,8 +775,8 @@ maintainer's yearly review covers them (§6.3).
 
 **Delete class**, `deleteClass(code, onProgress, budget = 5000)`:
 1. Unsubscribe this class's listeners.
-2. `updateDoc(class, { deleting: true, joinOpen: false, joinWindowAt: null, updatedAt })`.
-   From then on no join and no hand-in succeeds.
+2. `updateDoc(class, { deleting: true, handinsOpen: false, updatedAt })`.
+   From then on no new name and no hand-in succeeds.
 3. Loop: `getDocs(query(members, limit(400)))`, then one delete batch, until the query
    is empty.
 4. Loop: `getDocs(query(handins, limit(400)))`, then one delete batch, until the query
@@ -982,66 +801,27 @@ budget of 5,000 per run.
 |---|---|---|
 | teacher | `classes where ownerUid == uid` (live) | automatic single-field |
 | teacher | `classes/{c}` doc (live) | - |
-| teacher | `members orderBy joinedAt desc limit 150` (live while visible) | automatic single-field |
-| teacher | `members where studentId == id` (remove student) | automatic single-field |
+| teacher | `members orderBy joinedAt desc limit 150` (live while a detail panel is shown) | automatic single-field |
 | teacher | `handins where createdAt >= startOfToday orderBy createdAt desc limit 300` (live) | automatic single-field (`createdAt`) |
 | teacher | `handins where createdAt >= since orderBy createdAt desc limit 100` (+ `startAfter`) | automatic single-field |
-| teacher | `handins where studentId == id orderBy createdAt desc limit 10` | **composite** (studentId ↑, createdAt ↓) |
+| teacher | `handins where nameKey == key orderBy createdAt desc limit 10` (older versions) | **composite** (nameKey ↑, createdAt ↓) |
 | teacher | `handins where createdAt < cutoff orderBy createdAt limit 200`, and `count()` | automatic single-field |
-| student | `handins where uid == me orderBy createdAt desc limit 20` | **composite** (uid ↑, createdAt ↓) |
+| student | `handins where uid == me orderBy createdAt desc` (allowed by the rules; not used by the dialog any more) | **composite** (uid ↑, createdAt ↓) |
 
-`firestore.indexes.json` (MUST, deployed with the rules):
+`firestore.indexes.json` (MUST, deployed with the rules) holds the two composite indexes
+and turns off single-field indexing for every field that is never queried on its own:
+hand-ins `uid`, `nameKey`, `firstName`, `lastName`, `ownerUid`, `kind`, `enc`, `code`,
+`workspace`; members `firstName`, `lastName`, `nameKey`, `ownerUid`, `device`,
+`handinCount`, `lastHandinId`; classes `name`, `keepWeeks`, `schema`. The file is the
+source of truth.
 
-```json
-{
-  "indexes": [
-    { "collectionGroup": "handins", "queryScope": "COLLECTION",
-      "fields": [{ "fieldPath": "uid", "order": "ASCENDING" }, { "fieldPath": "createdAt", "order": "DESCENDING" }] },
-    { "collectionGroup": "handins", "queryScope": "COLLECTION",
-      "fields": [{ "fieldPath": "studentId", "order": "ASCENDING" }, { "fieldPath": "createdAt", "order": "DESCENDING" }] }
-  ],
-  "fieldOverrides": [
-    { "collectionGroup": "handins", "fieldPath": "uid", "indexes": [] },
-    { "collectionGroup": "handins", "fieldPath": "studentId", "indexes": [] },
-    { "collectionGroup": "handins", "fieldPath": "username", "indexes": [] },
-    { "collectionGroup": "handins", "fieldPath": "ownerUid", "indexes": [] },
-    { "collectionGroup": "handins", "fieldPath": "kind", "indexes": [] },
-    { "collectionGroup": "handins", "fieldPath": "taskId", "indexes": [] },
-    { "collectionGroup": "handins", "fieldPath": "title", "indexes": [] },
-    { "collectionGroup": "handins", "fieldPath": "note", "indexes": [] },
-    { "collectionGroup": "handins", "fieldPath": "enc", "indexes": [] },
-    { "collectionGroup": "handins", "fieldPath": "code", "indexes": [] },
-    { "collectionGroup": "handins", "fieldPath": "workspace", "indexes": [] },
-    { "collectionGroup": "members", "fieldPath": "username", "indexes": [] },
-    { "collectionGroup": "members", "fieldPath": "ownerUid", "indexes": [] },
-    { "collectionGroup": "members", "fieldPath": "device", "indexes": [] },
-    { "collectionGroup": "members", "fieldPath": "handinCount", "indexes": [] },
-    { "collectionGroup": "members", "fieldPath": "lastHandinId", "indexes": [] },
-    { "collectionGroup": "classes", "fieldPath": "name", "indexes": [] },
-    { "collectionGroup": "classes", "fieldPath": "teacherName", "indexes": [] },
-    { "collectionGroup": "classes", "fieldPath": "roster", "indexes": [] },
-    { "collectionGroup": "classes", "fieldPath": "rejoin", "indexes": [] },
-    { "collectionGroup": "classes", "fieldPath": "tasks", "indexes": [] },
-    { "collectionGroup": "classes", "fieldPath": "currentTaskId", "indexes": [] },
-    { "collectionGroup": "classes", "fieldPath": "joinWindowAt", "indexes": [] },
-    { "collectionGroup": "classes", "fieldPath": "keepWeeks", "indexes": [] },
-    { "collectionGroup": "classes", "fieldPath": "schema", "indexes": [] }
-  ]
-}
-```
-
-- The field overrides turn off single-field indexing for every field that is never
-  queried on its own. That includes `uid` and `studentId` on hand-ins: the composite
-  indexes cover their queries.
 - This saves about half of each hand-in's stored size, since index entries count
   toward the 1 GiB (§6.2).
 - **The emulator does not check composite indexes.** Tests pass without them.
-  Therefore:
-  - there is **no silent fallback**: `failed-precondition` on the two composite queries
-    becomes `index_missing`, and the data layer logs `console.error` with the index link
-    once;
-  - step 7 of §6.1 is mandatory;
-  - step 11 (the production smoke test) runs both composite queries.
+  Therefore there is **no silent fallback**: `failed-precondition` on the composite
+  queries becomes `index_missing`, and the data layer logs `console.error` with the
+  index link once; step 7 of §6.1 is mandatory; step 11 (the production smoke test)
+  runs the `nameKey` query.
 - **Rules are not filters.** Every query MUST carry the constraint the rule checks:
   `ownerUid == uid` for classes, `uid == me` for a student's hand-ins.
   Collection-group queries are denied.
@@ -1050,12 +830,11 @@ budget of 5,000 per run.
 
 | key | where | owner | content |
 |---|---|---|---|
-| `z1.classroom` | localStorage | session-store | `{"v":1,"code","className","teacherName","studentId","username","uid","lastUsedAt","lastHandinAt","lastHandinTitle"}` |
-| `z1.classroom.lastCode` | localStorage | session-store | the last class code (prefill after Sign out) |
-| `z1.classroom.confirmed` | sessionStorage | session-store | the uid confirmed in this tab (S5) |
+| `z1.classroom` | localStorage | session-store | `{"v":2,"code","className","firstName","lastName","uid","lastUsedAt","lastHandinAt"}` (a `v: 1` entry from before the simplification is ignored) |
+| `z1.classroom.lastCode` | localStorage | session-store | the last class code (prefill after Change) |
 | `z1.teacher.lastClass` | localStorage | dashboard | last opened class code |
 | `z1.teacher.period.<code>` | localStorage | dashboard | `today` / `7` / `14` / `30` |
-| `z1.teacher.seen.<code>` | localStorage | dashboard | `{ studentId: createdAtMs }` |
+| `z1.teacher.seen.<code>` | localStorage | dashboard | `{ nameKey: createdAtMs }` |
 | `z1.teacher.pruned.<code>` | sessionStorage | dashboard | retention already checked in this tab |
 | `z1.review.<rid>` | localStorage | dashboard → review page | large review payloads (§1.4). Cleared on sign-out and `pagehide`; the review page drops entries older than 1 day |
 | IndexedDB `firebaseLocalStorageDb` | | Firebase Auth | anonymous student session (app `z1-student`) **only**. The teacher session is in the tab's sessionStorage |
@@ -1069,317 +848,37 @@ and the app must keep working (it does, verified).
 
 ## 3. Security
 
-### 3.1 `firestore.rules` (MUST; tested as-is, §7.1 and App. B)
+### 3.1 `firestore.rules` (MUST; tested as-is, §7.1)
 
-A byte-identical copy of the tested file is
-`scratchpad/classroom-design/firestore.rules`. Dev A copies it to the repository root.
+The file at the repository root is the source of truth (the rules of the roster model in
+the earlier version of this document were replaced on 2026-09-27). What it enforces:
 
-```
-rules_version = '2';
+- **Teachers** are `google.com` sign-ins with `email_verified == true`; students are
+  anonymous. Every write is checked field by field (`exactKeys` on create,
+  `affectedKeys().hasOnly` on update). Request-only checks come first, document reads
+  (`get` / `getAfter`, each a billed read even when denied) last.
+- **classes/{code}**: `get` for anyone signed in; `list` only with `ownerUid == uid`;
+  create/update/delete by the owner with the shape of §2.3 (`schema == 2`, server
+  times, `deleting == false` at create). Deleting a missing doc is allowed to a teacher.
+- **members/{uid}**: `get` own or owner; `list` owner; **create** by the uid itself with
+  `validMemberShape` (§2.7: `validName` on both names, lower-case `nameKey` ≤ 61,
+  `ownerUid` a string, `joinedAt == request.time`, device ≤ 40, counter at 0) and
+  `validMemberClass` (class not deleting, `handinsOpen`, `ownerUid == class.ownerUid`);
+  **update** by the uid itself as either a **rename** (`affectedKeys` ⊆ the three name
+  fields, same validation) or the **tick** (`handinCount + 1` ≤ 300, `lastHandinAt ==
+  request.time` at least 10 s after the previous one, `lastHandinId` a 20-char id whose
+  hand-in *after the batch* has this uid and `createdAt == request.time`); **delete** by
+  the owner.
+- **handins/{hid}**: `get`/`list` by the owner or by the student for `uid == me`;
+  **create** with `validHandinShape` (§2.8: `uid == auth.uid`, name strings, `kind`,
+  `createdAt == request.time`, `validContent`) and `validHandinClass` (class open and
+  not deleting, `ownerUid == class.ownerUid`, the three name fields equal to the member
+  doc's *after the batch*, and that member doc's `lastHandinId == hid` and
+  `lastHandinAt == request.time`); **no update** for anyone; **delete** by the owner.
+- Everything else, including collection-group queries, is closed.
 
-// ZERO1 Classes: Firestore Security Rules (docs/CLASSROOM.md §3).
-//
-// There is no server: these rules are the only thing standing between the
-// public web page and the data. Every write is checked field by field.
-//
-//   classes/{code}                 a class; the doc id IS the class code
-//   classes/{code}/members/{uid}   a device (anonymous uid) that joined as a roster username
-//   classes/{code}/handins/{id}    one hand-in: metadata + the sketch (+ blocks), never edited by students
-//
-// Limits here must match src/classroom/model.ts (tests/classroom-model.test.ts checks it).
-// Order inside every condition: checks on the request alone first, document reads (get /
-// getAfter, each billed as one read even when the request is denied) last.
-
-service cloud.firestore {
-  match /databases/{database}/documents {
-
-    // ------------------------------------------------------------ helpers
-
-    function signedIn() {
-      return request.auth != null;
-    }
-
-    // Teachers sign in with Google. Anonymous (student) accounts are never teachers.
-    // To restrict teachers to some schools later, add e.g.
-    //   && request.auth.token.email.matches('.*@(school-a[.]edu|school-b[.]org)$')
-    function isTeacher() {
-      return signedIn()
-        && request.auth.token.firebase.sign_in_provider == 'google.com'
-        && request.auth.token.email_verified == true;
-    }
-
-    function classPath(code) {
-      return /databases/$(database)/documents/classes/$(code);
-    }
-
-    function subPath(code, sub, id) {
-      return /databases/$(database)/documents/classes/$(code)/$(sub)/$(id);
-    }
-
-    function classDoc(code) {
-      return get(classPath(code)).data;
-    }
-
-    // One document read: only where no copied ownerUid exists (list queries, re-filing).
-    function ownsClass(code) {
-      return isTeacher() && classDoc(code).ownerUid == request.auth.uid;
-    }
-
-    // No document read: the ownerUid copied into members / hand-ins when they were created.
-    function ownsExisting() {
-      return isTeacher() && resource.data.ownerUid == request.auth.uid;
-    }
-
-    // Deleting a document that is already gone changes nothing; allowing it keeps retried or
-    // concurrent delete batches (two tabs, a commit that timed out but went through) from failing.
-    function canDelete() {
-      return resource == null ? isTeacher() : ownsExisting();
-    }
-
-    function exactKeys(data, keys) {
-      return data.keys().hasOnly(keys) && data.keys().hasAll(keys);
-    }
-
-    function textUpTo(value, max) {
-      return value is string && value.size() <= max;
-    }
-
-    // Class code: 6 symbols, no vowels (no accidental words), none of 0 1 2 5 6 8 O I
-    // (look-alikes of letters on a projector).
-    function validCode(code) {
-      return code.matches('^[BCDFGHJKLMNPQRSTVWXZ3479]{6}$');
-    }
-
-    // Firestore auto ids.
-    function validAutoId(id) {
-      return id is string && id.matches('^[A-Za-z0-9]{20}$');
-    }
-
-    // roster: { studentId: username }, at most 100 entries, usernames unique.
-    // studentId: 8 x [a-z0-9]; username: 2-24 x [a-z0-9._-], starting with a letter or digit.
-    // Rules have no loops: the keys and the values are joined into one string and matched at once.
-    function validRoster(roster) {
-      return roster is map
-        && roster.size() <= 100
-        && (roster.size() == 0
-          || (roster.keys().join(' ').matches('^[a-z0-9]{8}( [a-z0-9]{8})*$')
-            && roster.values().join(' ').matches('^[a-z0-9][a-z0-9._-]{1,23}( [a-z0-9][a-z0-9._-]{1,23})*$')
-            && roster.values().toSet().size() == roster.size()));
-    }
-
-    // tasks: { taskId: title }, at most 30; taskId 6 x [a-z0-9]; title 1-60 characters, one line.
-    function validTasks(tasks) {
-      return tasks is map
-        && tasks.size() <= 30
-        && (tasks.size() == 0
-          || (tasks.keys().join(' ').matches('^[a-z0-9]{6}( [a-z0-9]{6})*$')
-            && tasks.values().join('\n').matches('^[^\n]{1,60}(\n[^\n]{1,60})*$')));
-    }
-
-    // Fields every version of a class must satisfy (create and update).
-    function validClassFields(d) {
-      return textUpTo(d.name, 60) && d.name.size() > 0
-        && textUpTo(d.teacherName, 60)
-        && validRoster(d.roster)
-        && d.joinOpen is bool
-        && (d.joinWindowAt == null || d.joinWindowAt is timestamp)
-        && d.rejoin is map
-        && d.rejoin.size() <= 100
-        && d.rejoin.keys().hasOnly(d.roster.keys())
-        && d.handinsOpen is bool
-        && validTasks(d.tasks)
-        && (d.currentTaskId == '' || d.currentTaskId in d.tasks)
-        && d.keepWeeks is int && d.keepWeeks >= 1 && d.keepWeeks <= 52
-        && d.deleting is bool;
-    }
-
-    // ------------------------------------------------------------ classes
-
-    match /classes/{code} {
-      // Anyone signed in who knows the code may read the class (name, teacher name, roster, tasks).
-      // Listing is only for the owner's own classes: the query must say where('ownerUid', '==', uid).
-      allow get: if signedIn();
-      allow list: if isTeacher() && resource.data.ownerUid == request.auth.uid;
-
-      allow create: if isTeacher()
-        && validCode(code)
-        && exactKeys(request.resource.data,
-             ['schema', 'ownerUid', 'name', 'teacherName', 'roster', 'joinOpen', 'joinWindowAt',
-              'rejoin', 'handinsOpen', 'tasks', 'currentTaskId', 'keepWeeks', 'deleting',
-              'createdAt', 'updatedAt'])
-        && request.resource.data.schema == 1
-        && request.resource.data.ownerUid == request.auth.uid
-        && validClassFields(request.resource.data)
-        && request.resource.data.rejoin.size() == 0
-        && request.resource.data.deleting == false
-        && (request.resource.data.joinWindowAt == null || request.resource.data.joinWindowAt == request.time)
-        && request.resource.data.createdAt == request.time
-        && request.resource.data.updatedAt == request.time;
-
-      allow update: if isTeacher()
-        && resource.data.ownerUid == request.auth.uid
-        && request.resource.data.diff(resource.data).affectedKeys()
-             .hasOnly(['name', 'teacherName', 'roster', 'joinOpen', 'joinWindowAt', 'rejoin',
-                       'handinsOpen', 'tasks', 'currentTaskId', 'keepWeeks', 'deleting', 'updatedAt'])
-        && validClassFields(request.resource.data)
-        // A join window always starts at the server's time (serverTimestamp()), so a wrong clock on
-        // the teacher's computer cannot open joining for days.
-        && (request.resource.data.joinWindowAt == resource.data.joinWindowAt
-          || request.resource.data.joinWindowAt == null
-          || request.resource.data.joinWindowAt == request.time)
-        && request.resource.data.updatedAt == request.time;
-
-      allow delete: if canDelete();
-
-      // ---------------------------------------------------------- members
-      // One doc per device (anonymous uid) that joined: binds the uid to a roster studentId.
-      // Written once by the student (join); afterwards only the hand-in counter moves.
-      // "Sign out" on the student side signs in as a NEW anonymous uid instead.
-
-      match /members/{uid} {
-        allow get: if (signedIn() && request.auth.uid == uid) || ownsExisting();
-        allow list: if ownsClass(code);
-
-        allow create: if signedIn() && request.auth.uid == uid && validJoinShape() && validJoinClass(code);
-
-        // The hand-in counter: only in the same batch as a new hand-in (see validHandinClass).
-        allow update: if signedIn() && request.auth.uid == uid && validHandinTick(code);
-
-        // "Remove this computer": the teacher only (students cannot reset the counter this way).
-        allow delete: if canDelete();
-      }
-
-      function validJoinShape() {
-        let d = request.resource.data;
-        return exactKeys(d, ['studentId', 'username', 'ownerUid', 'joinedAt', 'device',
-                             'handinCount', 'lastHandinAt', 'lastHandinId'])
-          && d.studentId is string
-          && d.username is string
-          && d.joinedAt == request.time
-          && textUpTo(d.device, 40)
-          && d.handinCount == 0
-          && d.lastHandinAt == null
-          && d.lastHandinId == '';
-      }
-
-      // Joining is allowed while it is switched on, during a 15-minute class window, or during a
-      // 15-minute window the teacher opened for this one student ("Let ali.k join again").
-      function joinAllowed(cls, studentId) {
-        return cls.joinOpen == true
-          || (cls.joinWindowAt != null && request.time < cls.joinWindowAt + duration.value(15, 'm'))
-          || (studentId in cls.rejoin && request.time < cls.rejoin[studentId] + duration.value(15, 'm'));
-      }
-
-      function validJoinClass(code) {
-        let d = request.resource.data;
-        let cls = classDoc(code);
-        return cls.deleting == false
-          && cls.handinsOpen == true
-          && d.studentId in cls.roster
-          && d.username == cls.roster[d.studentId]
-          && d.ownerUid == cls.ownerUid
-          && joinAllowed(cls, d.studentId);
-      }
-
-      function validHandinTick(code) {
-        let d = request.resource.data;
-        let before = resource.data;
-        return d.diff(before).affectedKeys().hasOnly(['handinCount', 'lastHandinAt', 'lastHandinId'])
-          && d.handinCount == before.handinCount + 1
-          && d.handinCount <= 300
-          && d.lastHandinAt == request.time
-          && (before.lastHandinAt == null || request.time > before.lastHandinAt + duration.value(10, 's'))
-          && validAutoId(d.lastHandinId)
-          && tickMatchesNewHandin(code, d.lastHandinId);
-      }
-
-      // The tick must point at a hand-in of this device created by this very request:
-      // hand-ins are never updated by students and createdAt is immutable, so an older hand-in
-      // cannot have createdAt == request.time.
-      function tickMatchesNewHandin(code, hid) {
-        let h = getAfter(subPath(code, 'handins', hid)).data;
-        return h.uid == request.auth.uid && h.createdAt == request.time;
-      }
-
-      // --------------------------------------------------------- hand-ins
-      // Created by a joined student in ONE batch of two writes: handins/{id} + members/{uid} tick.
-      // Students never update or delete them. The teacher may re-file one (student / task) or delete it.
-
-      match /handins/{hid} {
-        // A student reads only what this device handed in; the teacher reads the whole class.
-        // Student query: where('uid', '==', uid). Teacher query: any (checked with one read of the class).
-        allow get: if (signedIn() && resource.data.uid == request.auth.uid) || ownsExisting();
-        allow list: if (signedIn() && resource.data.uid == request.auth.uid) || ownsClass(code);
-
-        allow create: if signedIn() && validAutoId(hid) && validHandinShape() && validHandinClass(code, hid);
-
-        // "Wrong student? Move to..." / "Wrong task? Move to...": the owner only, nothing else changes.
-        allow update: if ownsExisting() && validRefile(code);
-
-        allow delete: if canDelete();
-      }
-
-      // Sketch and blocks: either plain strings (enc 'plain', sizes in UTF-8 bytes) or gzip bytes
-      // (enc 'gzip'); a Code hand-in has an empty workspace, a Blocks hand-in a non-empty one.
-      function validContent(d) {
-        return ((d.enc == 'plain'
-                  && d.code is string && d.workspace is string
-                  && d.code.toUtf8().size() <= 50000
-                  && d.workspace.toUtf8().size() <= 100000)
-              || (d.enc == 'gzip'
-                  && d.code is bytes && d.workspace is bytes
-                  && d.code.size() <= 50000
-                  && d.workspace.size() <= 100000))
-          && d.code.size() > 0
-          && (d.kind == 'blocks' ? d.workspace.size() > 0 : d.workspace.size() == 0);
-      }
-
-      function validHandinShape() {
-        let d = request.resource.data;
-        return exactKeys(d, ['uid', 'studentId', 'username', 'ownerUid', 'kind', 'taskId', 'title',
-                             'note', 'createdAt', 'enc', 'code', 'workspace'])
-          && d.uid == request.auth.uid
-          && d.studentId is string
-          && d.username is string
-          && d.ownerUid is string
-          && d.taskId is string
-          && d.kind in ['code', 'blocks']
-          && textUpTo(d.title, 80)
-          && textUpTo(d.note, 500)
-          && d.createdAt == request.time
-          && validContent(d);
-      }
-
-      function validHandinClass(code, hid) {
-        let d = request.resource.data;
-        let cls = classDoc(code);
-        let member = getAfter(subPath(code, 'members', request.auth.uid)).data;
-        return cls.deleting == false
-          && cls.handinsOpen == true
-          && d.ownerUid == cls.ownerUid
-          && d.studentId == member.studentId
-          && d.username == cls.roster[d.studentId]
-          && (d.taskId == '' || d.taskId in cls.tasks)
-          && member.lastHandinId == hid
-          && member.lastHandinAt == request.time;
-      }
-
-      function validRefile(code) {
-        let d = request.resource.data;
-        let cls = classDoc(code);
-        return d.diff(resource.data).affectedKeys().hasOnly(['studentId', 'username', 'taskId'])
-          && d.studentId is string
-          && d.studentId in cls.roster
-          && d.username == cls.roster[d.studentId]
-          && d.taskId is string
-          && (d.taskId == resource.data.taskId || d.taskId == '' || d.taskId in cls.tasks);
-      }
-    }
-
-    // Everything else (including collection-group queries) is closed.
-  }
-}
-```
+The name regex is `"^\\p{L}[\\p{L} '.-]{0,29}$"` (RE2; the same as `NAME_PATTERN` in
+`model.ts`, checked by `tests/classroom-model.test.ts` together with every limit).
 
 ### 3.2 Notes for Dev A
 
@@ -1391,9 +890,8 @@ service cloud.firestore {
   - The hand-in batch uses 3 calls on 3 distinct documents. Teacher deletes use none.
 - **Order of checks.** Conditions check the request alone first and read documents
   last. Rules short-circuit `&&` and `||`, so a malformed request costs no read.
-- **Sizes.** `string.size()` counts characters. The client cuts titles and notes by
-  UTF-16 length (`.length`), which is never smaller, so a value the client accepts
-  always passes. Content limits are in UTF-8 bytes on both sides
+- **Sizes.** `string.size()` counts characters. The client cuts names by UTF-16 length
+  (`.length`), which is never smaller, so a value the client accepts always passes. Content limits are in UTF-8 bytes on both sides
   (`new TextEncoder().encode(s).length` ↔ `toUtf8().size()`), or in bytes for gzip.
 - **Teachers** must be `google.com` sign-ins with `email_verified == true`.
   - A token with no `email_verified` claim is denied: safe direction, and rare for
@@ -1402,32 +900,35 @@ service cloud.firestore {
   - To restrict teachers to some schools later, extend `isTeacher()` with an email-domain
     regex (see the comment in the rules).
   - Microsoft sign-in later = `sign_in_provider in ['google.com', 'microsoft.com']`.
-- **`join()` coercion.** See §2.4 (R2.6).
+- **`lower()` is ASCII-only** in the emulator (and documented as such): the rules do
+  not check the `nameKey` formula, only that the key is lower-case-stable (§2.4).
 
 ### 3.3 Threats and how the rules stop them
 
 | threat | stopped by | tests |
 |---|---|---|
 | reading another teacher's class list | `list` only with `ownerUid == auth.uid` (the query must say so) | R3.3 |
-| reading another teacher's roster, members or hand-ins | members `list` = `ownsClass` (a get of the class); hand-ins `list` = own uid or `ownsClass`; single gets check the copied `ownerUid` | R5.2, R7.4 |
-| a student reading other students' hand-ins | hand-ins readable only when `uid == auth.uid`; sign-out gives a new uid | R7.1, e2e |
-| handing in as another username without joining as them | the hand-in `studentId` must equal the member doc's; member docs are create-only and bound to the uid | R6.5, R4.8 |
-| cross-class hand-in, batch cross-wiring, re-using an old hand-in for the tick | member path is the same class; tick bound to a hand-in created by *this* request | R6.4, R6.5, R4.9, R6.15 |
-| forging `createdAt`, `username`, `uid`, `ownerUid`, class | `createdAt == request.time`; `username == roster[studentId]`; `uid == auth.uid`; `ownerUid == class.ownerUid`; the class is the path | R6.6 |
-| editing or deleting a hand-in after submission (student) | no student update or delete | R7.2 |
-| re-filing a hand-in to a non-roster name / changing its content | `validRefile`: only `studentId` + `username` (matching the roster) + `taskId`, owner only | R7.6 |
-| roster, task or joining tampering by students | class `update` is owner-only | R3.10 |
-| joining a closed class, or opening joining with a wrong clock | `joinAllowed` with server-time windows; `joinWindowAt == request.time` when set | R4.2, R4.3, R3.6 |
-| joining or handing in to a stopped / deleting class | `handinsOpen == true`, `deleting == false` | R4.4, R6.14 |
+| reading another teacher's members or hand-ins | members `list` = `ownsClass` (a get of the class); hand-ins `list` = own uid or `ownsClass`; single gets check the copied `ownerUid` | R5.2, R7.4 |
+| a student reading other students' hand-ins | hand-ins readable only when `uid == auth.uid` | R7.1 |
+| handing in without a member doc, or under a name other than the member doc's | the three name fields must equal the member doc's *after the batch*; member docs are bound to the uid | R6.5, R4.5 |
+| cross-class hand-in, batch cross-wiring, re-using an old hand-in for the tick, a rename in the same batch | member path is the same class; tick bound to a hand-in created by *this* request; rename and tick are exclusive | R6.4, R6.5, R4.10, R6.13, R6.15 |
+| forging `createdAt`, `uid`, `ownerUid`, the class | `createdAt == request.time`; `uid == auth.uid`; `ownerUid == class.ownerUid`; the class is the path | R6.6 |
+| editing or deleting a hand-in after submission | no update for anyone; delete by the owner only | R7.2 |
+| invalid names (digits, HTML, empty, over 30) | `validName` regex on create and rename | R4.2, R4.8 |
+| a student changing anything but their name, or another student's doc | `validRename` (`affectedKeys` ⊆ the three name fields), own uid only | R4.8 |
+| class tampering by students | class `update` is owner-only | R3.10 |
+| entering or handing in to a stopped / deleting class | `handinsOpen == true`, `deleting == false` | R4.4, R6.14 |
 | enumerating classes through list queries | no `list` on classes except own; no collection-group rules | R3.3, R7.5 |
-| oversize documents | every string capped; content capped in UTF-8 bytes or gzip bytes; roster ≤ 100, tasks ≤ 30 | R6.8, R2.* |
+| oversize documents | every string capped; content capped in UTF-8 bytes or gzip bytes | R6.8 |
 | wrong encoding / gzip bombs | `enc` must match the field types; the dashboard inflates with a cap | R6.3, e2e |
-| unexpected fields | `exactKeys` on every create; `affectedKeys().hasOnly` on every update | R1.5, R4.6, R6.6 |
+| unexpected fields (including the old roster / task fields) | `exactKeys` on every create; `affectedKeys().hasOnly` on every update | R1.5, R3.5, R4.6, R6.6 |
 | hand-in flooding from one identity | 10 s cooldown + 300 per device in the member tick (best effort, §2.7) | R6.10, R6.11 |
-| handing in after removal from the list | `roster[studentId]` must exist | R6.12 |
 | anonymous users acting as teachers | `isTeacher()` requires `google.com` + verified email | R1.2 |
 | a failed or duplicated delete batch | deleting a missing doc is allowed | R3.11, R5.3, R7.7 |
-| writing anywhere else (including the old `handinCode`) | no other `match` | R8.2 |
+| writing anywhere else | no other `match` | R8.2 |
+
+`tests-emulator/mutations.sh` weakens the rules one clause at a time (10 mutations) and
+checks that the suite catches each one.
 
 ### 3.4 Running student code safely (MUST, v1)
 
@@ -1478,22 +979,23 @@ service cloud.firestore {
      `SketchError`.
 
 **Rendering (MUST).** Every user-controlled string is rendered with `textContent`,
-never `innerHTML`. That covers `username`, `device`, `title`, `note`, `teacherName`,
-class `name`, task titles and the code `<pre>`. It applies to the dashboard, the review
+never `innerHTML`. That covers `firstName`, `lastName`, `device`, class `name` and the
+code `<pre>`. It applies to the dashboard, the review
 banner and the student dialog. §7.3 has a test matrix with stored `<img src=x
 onerror=…>` and `</script>` payloads (R4.7 shows the rules accept them).
 
 ### 3.5 What the rules cannot stop
 
-1. **Anyone with the code can pick any username while joining is allowed.** This is the
-   same as Tinkercad nicknames (R4 "nickname model"). They still cannot read that
-   student's earlier hand-ins.
-   - Mitigations: joining closed by default outside windows (§2.6), device visibility,
-     "2 computers within an hour", Remove computer, Move to…
-2. **Shared computers.** The next person at a computer acts as the student who is still
-   signed in.
-   - Mitigations: the per-tab + 20-minute Confirm view, the name in the header, and
-     "Leaving? Sign out" after each hand-in (S4-S6).
+1. **Anyone with the code can hand in under any name** while the class accepts hand-ins.
+   This is accepted by the teacher's decision of 2026-09-27 (simplicity over control):
+   the code is the only secret. They still cannot read that student's earlier hand-ins.
+   - Mitigations: the code is shown in class and not published; "Hand-ins stopped" for
+     old classes; the teacher sees the device of every hand-in, "2 computers within an
+     hour", and can delete a hand-in or remove a computer.
+2. **Shared computers.** The next person at a computer sees the previous student's name
+   in the header and on the Ready view ("Hand in as Ali Khoury…") and must press
+   **Change** to type their own. A careless student hands in under the wrong name; the
+   teacher deletes it and the student hands in again.
 3. **Quota exhaustion (denial of service), shared by all schools.**
    - Anyone can load the public web config and sign in anonymously, up to 100 new
      accounts per hour per IP.
@@ -1509,10 +1011,11 @@ onerror=…>` and `</script>` payloads (R4.7 shows the rules accept them).
      decided by the maintainer (§3.6).
 4. **Any Google account can become a teacher** and create classes (storage). If this is
    abused, add a domain allow-list to `isTeacher()`.
-5. **Content.** The rules cannot judge code, titles or notes (rudeness, personal data).
-   The teacher deletes.
-6. **Visible to anyone with the code**: the class name, teacher name, roster usernames,
-   task titles and the teacher's Firebase `ownerUid` (R3.2).
+5. **Content.** The rules cannot judge code or names (rudeness, personal data). The
+   teacher deletes.
+6. **Visible to anyone with the code**: the class name and the teacher's Firebase
+   `ownerUid` (R3.2). Student names are visible only to the teacher and to the device
+   that typed them.
    - `ownerUid` is an account identifier, not a credential. Every owner check needs to
      *be* that authenticated uid.
    - It is kept, because the member create rule and the teacher's read-free deletes use
@@ -1555,8 +1058,7 @@ onerror=…>` and `</script>` payloads (R4.7 shows the rules accept them).
 **Runbook** when usage spikes or a school reports junk hand-ins:
 1. Firestore → Usage, and Authentication → Usage: which operation, since when.
 2. If one class is abused (the teacher reports it):
-   - in the console, set that class's `joinOpen: false` and `joinWindowAt: null` (or
-     `handinsOpen: false`);
+   - in the console, set that class's `handinsOpen: false` (the teacher can do it too);
    - delete the offending member docs;
    - ask the teacher to use Remove computer.
 3. Script abuse across classes:
@@ -1709,85 +1211,51 @@ export function loadTeacherFirebase(): Promise<TeacherFirebase>;
 export const CLASS_CODE_ALPHABET = 'BCDFGHJKLMNPQRSTVWXZ3479';
 export const CLASS_CODE_LENGTH = 6;
 export const CODE_LOOKALIKES: Readonly<Record<string, string>> = { '2': 'Z', '5': 'S', '6': 'G', '8': 'B' };
-export const STUDENT_ID_LENGTH = 8;  // [a-z0-9]
-export const TASK_ID_LENGTH = 6;     // [a-z0-9]
+export const CLASS_SCHEMA = 2;
 export const LIMITS = {
-  classNameMax: 60, teacherNameMax: 60, rosterMax: 100, tasksMax: 30, taskTitleMax: 60,
-  usernameMin: 2, usernameMax: 24, titleMax: 80, noteMax: 500, deviceMax: 40,
+  classNameMax: 60, nameMax: 30, deviceMax: 40,
   codeMaxBytes: 50_000, workspaceMaxBytes: 100_000,
-  /** Inflate caps for stored content (2× the raw limits): beyond them = 'too_large'. */
-  codeDecodeCap: 100_000, workspaceDecodeCap: 200_000,
-  handinsPerDevice: 300, handinCooldownMs: 10_000,
-  joinWindowMs: 15 * 60_000, clockSkewMs: 60_000,
-  /** Ask "Hand in as <name>?" when a saved session was last used longer ago (or in a new tab). */
-  confirmAfterMs: 20 * 60_000,
+  codeDecodeCap: 100_000, workspaceDecodeCap: 200_000,   // 2× the raw limits
+  handinsPerDevice: 300, handinCooldownMs: 10_000, clockSkewMs: 60_000,
   keepWeeksMin: 1, keepWeeksMax: 52,
   requestTimeoutMs: 20_000, batchMaxOps: 400, deletesPerRun: 5_000, prunePerOpen: 500,
-  todayLimit: 300, periodPage: 100, studentPage: 10, myHandinsPage: 20, membersWatchLimit: 150,
-  reviewHashMax: 60_000,
+  todayLimit: 300, periodPage: 100, studentPage: 10, membersWatchLimit: 150, reviewHashMax: 60_000,
 } as const;
-export const USERNAME_PATTERN = /^[a-z0-9][a-z0-9._-]{1,23}$/;
-
-export type HandinKind = 'code' | 'blocks';
-export type Roster = Readonly<Record<string, string>>;
-export interface RosterEntry { studentId: string; username: string }
-export interface TaskEntry { taskId: string; title: string }
+export const NAME_PATTERN = /^\p{L}[\p{L} '.-]{0,29}$/u;
 
 export function normalizeClassCode(input: string): string | null;       // 'bkt-4m9 ' → 'BKT4M9'; '8KT' → 'BKT'…
 export function codeProblem(input: string): string | null;              // 'Class codes never contain the letter A.'
 export function formatClassCode(code: string): string;                  // 'BKT4M9' → 'BKT-4M9'
 export function classLink(code: string, base?: string): string;         // new URL('./#class=BKT4M9', base ?? location.href)
 export function generateClassCode(randomBytes?: (n: number) => Uint8Array): string;
-export function newStudentId(existing: Roster, randomBytes?: (n: number) => Uint8Array): string;
-export function newTaskId(existing: Readonly<Record<string, string>>, randomBytes?: (n: number) => Uint8Array): string;
 export function newHandinId(randomBytes?: (n: number) => Uint8Array): string; // 20 × [A-Za-z0-9], rejection sampling
+export function isHandinId(id: string): boolean;
 
-export function normalizeUsername(input: string, options?: { shortenLastName?: boolean }): string;
-export type UsernameProblem = 'empty' | 'too_short' | 'too_long' | 'invalid';
-export function usernameProblem(name: string): UsernameProblem | null;
-export function nearDuplicates(names: readonly string[]): [string, string][]; // Levenshtein distance 1
-export function sortedRoster(roster: Roster): RosterEntry[];                   // by username, locale-independent
-export function sortedTasks(tasks: Readonly<Record<string, string>>): TaskEntry[];
-
-export type RosterProblemReason = UsernameProblem | 'duplicate' | 'already_in_class' | 'too_many';
-export interface RosterPlan {
-  add: RosterEntry[];   // new entries with fresh studentIds, in input order
-  problems: { line: number; input: string; normalized: string; reason: RosterProblemReason }[];
-  warnings: { names: [string, string]; reason: 'near_duplicate' }[];
-}
-export function planRosterAdd(existing: Roster, text: string, options?: { shortenLastName?: boolean; randomBytes?: (n: number) => Uint8Array }): RosterPlan;
-export function planTasksAdd(existing: Readonly<Record<string, string>>, text: string, randomBytes?: (n: number) => Uint8Array): { add: TaskEntry[]; problems: { line: number; reason: 'too_long' | 'too_many' | 'duplicate' }[] };
-
-export interface JoinState { joinOpen: boolean; joinWindowAt: Date | null; rejoin: Readonly<Record<string, Date>> }
-/** The rules' joinAllowed() on the client, with clockSkewMs tolerance ('open' when unsure). */
-export function joinStatus(cls: JoinState, studentId: string | null, nowMs: number): { open: boolean; until: Date | null };
+export function cleanName(input: string): string;                       // NFC, one line, ≤ 30
+export type NameProblem = 'empty' | 'too_long' | 'invalid';
+export function nameProblem(name: string): NameProblem | null;
+export function nameKeyOf(firstName: string, lastName: string): string; // 'ali khoury'
+export function fullName(firstName: string, lastName: string): string;  // 'Ali Khoury'
+export function listName(firstName: string, lastName: string): string;  // 'Khoury, Ali'
 
 export function cleanLine(text: string, max: number): string;       // one line; invisible chars removed; trimmed; cut (no half surrogate)
-export function cleanMultiline(text: string, max: number): string;  // CRLF→LF; ≤ 1 empty line in a row; trimmed; cut
 export function utf8Length(text: string): number;
 export function deviceLabel(userAgent: string): string;             // 'Chrome · Windows' (≤ 40)
 export function shortDeviceId(uid: string): string;                 // last 4 chars, uppercase
 
-export interface HandinDraft {
-  kind: HandinKind;
-  code: string;          // the Arduino sketch (Blocks: generated)
-  workspaceJson: string; // '' in Code mode
-  taskId: string;        // '' = no task
-  title: string;
-  note: string;
-}
+export interface HandinDraft { kind: HandinKind; code: string; workspaceJson: string }   // workspaceJson '' in Code mode
 export interface HandinContent { kind: HandinKind; code: string; workspaceJson: string }
 export interface HandinRecord {
-  id: string; classCode: string; uid: string; studentId: string; username: string;
-  kind: HandinKind; taskId: string; title: string; note: string;
-  createdAt: Date | null;      // server time; for a hand-in this device just made: local time
-  content: EncodedContent;     // still encoded (codec.ts)
+  id: string; classCode: string; uid: string; firstName: string; lastName: string; nameKey: string;
+  kind: HandinKind; createdAt: Date | null; content: EncodedContent;
 }
 export function draftProblem(draft: HandinDraft): 'empty_sketch' | 'too_large' | null;
-```
 
-`cleanLine` / `cleanMultiline` are the current `cleanName` / `cleanMessage` of
-share-dialog.ts, generalised with a `max` parameter. The code and its tests move here.
+export interface ClassDoc { ownerUid; name; handinsOpen; keepWeeks; deleting; createdAt; updatedAt }
+export interface MemberDoc { firstName; lastName; nameKey; device; joinedAt; handinCount; lastHandinAt; lastHandinId }
+export function readClassDoc(data): ClassDoc; export function readMemberDoc(data): MemberDoc;
+export function readHandinDoc(id, classCode, data): HandinRecord;   // Bytes → Uint8Array
+```
 
 ### 4.5 `src/classroom/codec.ts` (pure; A)
 
@@ -1810,9 +1278,9 @@ export function decodeContent(content: EncodedContent): Promise<DecodeResult>;
 export type ClassroomErrorCode =
   | 'not_configured' | 'load_failed' | 'app_updated' | 'offline' | 'timeout' | 'quota' | 'signup_limit'
   | 'auth_disabled' | 'storage_blocked' | 'popup_blocked' | 'popup_closed' | 'unauthorized_domain'
-  | 'recent_login' | 'not_ready' | 'index_missing' | 'bad_code' | 'class_not_found' | 'class_closed'
-  | 'handins_closed' | 'class_deleted' | 'lost_identity' | 'not_on_roster' | 'device_removed' | 'too_soon'
-  | 'limit_reached' | 'empty_sketch' | 'too_large' | 'code_collision' | 'bad_roster' | 'classes_left'
+  | 'recent_login' | 'not_ready' | 'index_missing' | 'bad_code' | 'class_not_found'
+  | 'handins_closed' | 'class_deleted' | 'lost_identity' | 'device_removed' | 'too_soon'
+  | 'limit_reached' | 'empty_sketch' | 'too_large' | 'code_collision' | 'bad_name' | 'classes_left'
   | 'permission' | 'unknown';
 
 export class ClassroomError extends Error {
@@ -1831,205 +1299,119 @@ export function quotaResetText(now: Date, locale?: string): string;
 // session-store.ts
 export const CLASSROOM_STORAGE_KEY = 'z1.classroom';
 export const LAST_CODE_STORAGE_KEY = 'z1.classroom.lastCode';
-export const CONFIRMED_SESSION_KEY = 'z1.classroom.confirmed';  // sessionStorage
 export interface SavedSession {
-  v: 1; code: string; className: string; teacherName: string;
-  studentId: string; username: string; uid: string;
+  v: 2; code: string; className: string; firstName: string; lastName: string; uid: string;
   lastUsedAt: number;        // ms since epoch
   lastHandinAt: number;      // 0 = never
-  lastHandinTitle: string;   // task title or title of the last hand-in ('' = none)
 }
-export function loadSavedSession(storage?: Storage): SavedSession | null;   // null on bad JSON / wrong shape / throwing storage
+export function loadSavedSession(storage?: Storage): SavedSession | null;   // null on bad JSON / an older version / a wrong shape / a throwing storage
 export function saveSession(session: SavedSession, storage?: Storage): void; // swallows storage errors
-export function clearSession(storage?: Storage, tabStorage?: Storage): void;
+export function clearSession(storage?: Storage): void;
 export function loadLastCode(storage?: Storage): string;
 export function saveLastCode(code: string, storage?: Storage): void;
-export function isConfirmedInTab(uid: string, tabStorage?: Storage): boolean;
-export function markConfirmedInTab(uid: string, tabStorage?: Storage): void;
-/** The joined username, '' when none: header label and .ino file names (Share, Arduino IDE dialog). */
-export function currentUsername(storage?: Storage): string;
+/** "Ali Khoury", '' when none: header label and .ino file names (Share, Arduino IDE dialog). */
+export function currentStudentName(storage?: Storage): string;
 ```
 
 ### 4.7 `src/classroom/student.ts` (StudentApi)
 
 ```ts
-export interface StudentSession { code: string; className: string; teacherName: string; studentId: string; username: string; uid: string }
-export interface PublicClass extends JoinState {
-  code: string; name: string; teacherName: string; ownerUid: string; handinsOpen: boolean;
-  students: RosterEntry[];   // sorted
-  tasks: TaskEntry[];        // sorted by title
-  currentTaskId: string;
-}
-export interface FoundClass { info: PublicClass; existing: { studentId: string; username: string } | null }
-export interface RestoreResult {
-  session: StudentSession;
-  info: PublicClass;
-  /** 'new_tab': not confirmed in this tab; 'stale': last used > LIMITS.confirmAfterMs ago; null: go straight to Ready. */
-  confirm: 'new_tab' | 'stale' | null;
-  lastHandin: { at: number; title: string } | null;
-}
+export interface StudentSession { code: string; className: string; firstName: string; lastName: string; uid: string }
+export interface PublicClass { code: string; name: string; ownerUid: string; handinsOpen: boolean }
+export interface StudentName { firstName: string; lastName: string }
+export interface FoundClass { info: PublicClass; existing: StudentName | null }   // existing = this device's member doc
+export interface RestoreResult { session: StudentSession; info: PublicClass; lastHandinAt: number | null }
 
 export interface StudentApi {
   /**
-   * The saved session, checked. Steps:
-   * - await auth.authStateReady();
-   * - check that it is the same anonymous uid (else 'lost_identity': saved session cleared, lastCode kept);
-   * - read the class (1 read): it exists, is not deleting, hand-ins are open, the studentId is still on the roster;
-   * - refresh and save the names.
-   * The member doc is NOT read here (checked on hand-in failure).
-   * Null when nothing is saved: no Firebase download then.
-   * Rejects: lost_identity | class_deleted | handins_closed | not_on_roster | offline | timeout | quota | load_failed | app_updated.
+   * The saved session, checked: the same anonymous uid (else 'lost_identity': session cleared, lastCode kept);
+   * the class exists, is not deleting and accepts hand-ins (1 read); the class name is refreshed. The member
+   * doc is NOT read here. Null when nothing is saved: no Firebase download then.
+   * Rejects: lost_identity | class_deleted | handins_closed | offline | timeout | quota | load_failed | app_updated.
    */
   restore(): Promise<RestoreResult | null>;
-  /**
-   * Normalise → sign in anonymously if needed → get the class + own member doc (2 reads).
-   * Rejects: bad_code | class_not_found | handins_closed | offline | timeout | signup_limit | auth_disabled | storage_blocked | quota | load_failed | app_updated.
-   */
+  /** Normalise → sign in anonymously if needed → get the class + own member doc (2 reads). */
   findClass(codeInput: string): Promise<FoundClass>;
-  /** Re-read the class ("Refresh the list"). */
-  refreshClass(code: string): Promise<PublicClass>;
   /**
-   * Create the member doc, save the session, mark it confirmed in this tab.
-   * Rejects: class_closed | handins_closed | not_on_roster | class_not_found | offline | timeout | quota | permission.
+   * cleanName + nameProblem (else 'bad_name'), then setDoc(members/me) or, when found.existing, updateDoc of the
+   * three name fields (nothing when the name is the same). A denied write is retried the other way once (the doc
+   * appeared or vanished meanwhile), then explained with a fresh read of the class. Saves the session + lastCode.
+   * Rejects: bad_name | handins_closed | class_not_found | offline | timeout | quota | permission.
    */
-  join(cls: PublicClass, studentId: string): Promise<StudentSession>;
-  /** Use FoundClass.existing; save the session; mark it confirmed. */
-  continueAs(found: FoundClass): Promise<StudentSession>;
-  /** "Yes, I'm ali.k": mark confirmed in this tab, set lastUsedAt. */
-  confirm(session: StudentSession): void;
-  /**
-   * draftProblem → local cooldown → encodeContent → the 2-write batch with `handinId` (§2.9).
-   * On timeout / offline / unknown / permission-denied: read own member doc; lastHandinId === handinId → success.
-   * Otherwise diagnose (read class + member). If only the username changed: save it and retry once with the SAME id.
-   * Resolves with the new record (createdAt = local time) and updates lastHandinAt / lastHandinTitle.
-   * Rejects: empty_sketch | too_large | too_soon | limit_reached | not_on_roster | device_removed | class_deleted | handins_closed | offline | timeout | quota | permission | index_missing.
-   */
+  join(found: FoundClass, name: StudentName): Promise<StudentSession>;
+  /** As before (§2.9): local checks → the 2-write batch → on failure read the member doc, then diagnose. */
   handIn(session: StudentSession, draft: HandinDraft, handinId: string): Promise<HandinRecord>;
-  /**
-   * Newest first, 20 per page; `before` = createdAt of the last row.
-   * Rejects index_missing when the composite index is absent (no fallback).
-   */
-  myHandins(session: StudentSession, page?: { before?: Date }): Promise<{ items: HandinRecord[]; hasMore: boolean }>;
-  /** Delete the anonymous user if possible (errors ignored), sign out, clear the session and the tab flag (lastCode kept unless forgetCode). */
-  leave(options?: { forgetCode?: boolean }): Promise<void>;
+  /** "Change": forget the saved session; the anonymous uid stays (the member doc is renamed next time). */
+  forget(options?: { forgetCode?: boolean }): void;
 }
-
-export interface StudentApiDeps {
-  load?: () => Promise<StudentFirebase>;  // default loadStudentFirebase
-  storage?: Storage;                       // default localStorage
-  tabStorage?: Storage;                    // default sessionStorage
-  now?: () => number;
-  userAgent?: string;
-  timeoutMs?: number;
-}
+export interface StudentApiDeps { load?; storage?; now?; userAgent?; timeoutMs? }
 export function createStudentApi(deps?: StudentApiDeps): StudentApi;
+export function cleanStudentName(name: StudentName): StudentName | null;
 
-/** Pure: why a hand-in was refused, from fresh reads. 'renamed' = only the username differs. */
+/** Pure: why a hand-in was refused, from fresh reads. 'renamed' = the member doc's name differs from the session. */
 export function diagnoseHandinRefusal(
-  cls: { roster: Roster; deleting: boolean; handinsOpen: boolean; tasks: Record<string, string> } | null,
-  member: { studentId: string; handinCount: number; lastHandinAt: Date | null; lastHandinId: string } | null,
-  session: StudentSession, draft: HandinDraft, handinId: string, now: number,
+  cls: { deleting: boolean; handinsOpen: boolean } | null,
+  member: { firstName: string; lastName: string; handinCount: number; lastHandinAt: Date | null; lastHandinId: string } | null,
+  session: StudentName, handinId: string, now: number,
 ): ClassroomErrorCode | 'renamed' | 'arrived';
 ```
 
-Diagnosis order:
-1. `member.lastHandinId === handinId` → `arrived`.
-2. class missing or deleting → `class_deleted`.
-3. `!handinsOpen` → `handins_closed`.
-4. member missing → `device_removed`.
-5. `roster[member.studentId]` missing → `not_on_roster`.
-6. `handinCount >= 300` → `limit_reached`.
-7. `now − lastHandinAt < 10 s` (+1 s margin for clock skew) → `too_soon`.
-8. roster name ≠ session username → `renamed`.
-9. `draft.taskId` no longer a task → the task is cleared, and the dialog asks the student
-   to pick again (`permission` with the message 'task').
-10. otherwise → `permission`.
+Diagnosis order: `arrived` (member `lastHandinId === handinId`) → `class_deleted` →
+`handins_closed` → `device_removed` (member missing) → `limit_reached` → `too_soon`
+(+1 s margin) → `renamed` (retried once with the member doc's name and the same id) →
+`permission`.
+
+`myHandins` and `leave` (delete the anonymous user) are gone: the dialog has no history
+and "Change" keeps the uid.
 
 ### 4.8 `src/classroom/teacher.ts` (TeacherApi)
 
 ```ts
 export type Unsubscribe = () => void;
 export interface TeacherUser { uid: string; name: string; email: string; photoURL: string | null }
-export interface ClassSummary {
-  code: string; name: string; teacherName: string; joinOpen: boolean; joinWindowAt: Date | null;
-  handinsOpen: boolean; deleting: boolean; studentCount: number; createdAt: Date | null; updatedAt: Date | null;
-}
-export interface ClassDetail extends ClassSummary, JoinState {
-  ownerUid: string; roster: Roster; students: RosterEntry[];
-  tasks: TaskEntry[]; currentTaskId: string; keepWeeks: number;
-}
+export interface ClassSummary { code: string; name: string; handinsOpen: boolean; deleting: boolean; createdAt: Date | null; updatedAt: Date | null }
+export interface ClassDetail extends ClassSummary { ownerUid: string; keepWeeks: number }
 export interface Member {
-  uid: string; studentId: string; username: string; device: string;
+  uid: string; firstName: string; lastName: string; nameKey: string; device: string;
   joinedAt: Date | null; handinCount: number; lastHandinAt: Date | null;
 }
 export interface HandinsUpdate { items: HandinRecord[]; added: string[]; modified: string[]; removed: string[] }
-export interface NewClassInput {
-  name: string; teacherName: string; students: RosterEntry[]; tasks: string[];
-  joinOpen: boolean; keepWeeks?: number;
-}
-export type ClassPatch = Partial<Pick<ClassDetail, 'name' | 'teacherName' | 'joinOpen' | 'handinsOpen' | 'keepWeeks' | 'currentTaskId'>>;
+export interface NewClassInput { name: string; keepWeeks?: number }
+export type ClassPatch = Partial<Pick<ClassDetail, 'name' | 'handinsOpen' | 'keepWeeks'>>;
 
 export interface TeacherApi {
-  /** Resolves when the SDK is loaded and the tab's session restored. The Sign-in button stays disabled until then. */
   readonly ready: Promise<void>;
   onUser(callback: (user: TeacherUser | null) => void): Unsubscribe;   // a non-Google user is signed out
-  /**
-   * MUST be called synchronously in the click handler, after `ready`.
-   * Its first statement is signInWithPopup(auth, provider{prompt: 'select_account'}): no await before it.
-   * Rejects not_ready if called earlier.
-   */
-  signIn(): Promise<TeacherUser>;
+  signIn(): Promise<TeacherUser>;     // MUST be called synchronously in the click handler, after `ready`
   signOut(): Promise<void>;
 
-  watchClasses(onChange: (classes: ClassSummary[]) => void, onError: (e: ClassroomError) => void): Unsubscribe;
-  /** Transaction with up to 5 code attempts. Students/tasks already validated (else bad_roster). */
-  createClass(input: NewClassInput): Promise<ClassDetail>;
-  watchClass(code: string, onChange: (cls: ClassDetail | null) => void, onError: (e: ClassroomError) => void): Unsubscribe;
+  watchClasses(onChange, onError): Unsubscribe;
+  createClass(input: NewClassInput): Promise<ClassDetail>;             // transaction with up to 5 code attempts
+  watchClass(code, onChange: (cls: ClassDetail | null) => void, onError): Unsubscribe;
   updateClass(code: string, patch: ClassPatch): Promise<void>;
-  openJoinWindow(code: string): Promise<void>;                 // joinWindowAt = serverTimestamp()
-  closeJoining(code: string): Promise<void>;                   // joinOpen false, joinWindowAt null
-  letRejoin(code: string, studentId: string): Promise<void>;   // rejoin.<id> = serverTimestamp()
 
-  addStudents(code: string, entries: RosterEntry[]): Promise<void>;
-  renameStudent(code: string, studentId: string, username: string): Promise<void>;
-  /** Roster + rejoin entry in one update, then that student's member docs (query where studentId == id). */
-  removeStudent(code: string, studentId: string): Promise<void>;
-  addTasks(code: string, entries: TaskEntry[]): Promise<void>;
-  renameTask(code: string, taskId: string, title: string): Promise<void>;
-  deleteTask(code: string, taskId: string): Promise<void>;     // clears currentTaskId when it pointed at it
-
-  watchMembers(code: string, onChange: (members: Member[]) => void, onError: (e: ClassroomError) => void): Unsubscribe; // newest 150
+  watchMembers(code, onChange: (members: Member[]) => void, onError): Unsubscribe;   // newest 150
   removeDevice(code: string, uid: string): Promise<void>;
   removeUnusedDevices(code: string, olderThanDays: number): Promise<number>;
 
-  /** Since local midnight (re-subscribes at the date change), newest first, limit 300, live. */
-  watchTodayHandins(code: string, onChange: (u: HandinsUpdate) => void, onError: (e: ClassroomError) => void): Unsubscribe;
-  /** One-off, 100 per page. */
-  loadHandins(code: string, since: Date, page?: { before?: Date }): Promise<{ items: HandinRecord[]; hasMore: boolean }>;
-  /** 10 per page; composite index; rejects index_missing. */
-  studentHandins(code: string, studentId: string, page?: { before?: Date }): Promise<{ items: HandinRecord[]; hasMore: boolean }>;
-  refileHandin(code: string, id: string, patch: { studentId?: string; taskId?: string }): Promise<void>;
+  watchTodayHandins(code, onChange: (u: HandinsUpdate) => void, onError): Unsubscribe;   // since local midnight, live, ≤ 300
+  loadHandins(code: string, since: Date, page?: { before?: Date }): Promise<{ items: HandinRecord[]; hasMore: boolean }>;  // 100 per page
+  studentHandins(code: string, nameKey: string, page?: { before?: Date }): Promise<{ items: HandinRecord[]; hasMore: boolean }>; // 10 per page; composite index
   deleteHandin(code: string, id: string): Promise<void>;
 
-  countHandinsBefore(code: string, before: Date): Promise<number>;                // count() aggregation
-  pruneHandins(code: string, before: Date, maxDeletes?: number): Promise<number>; // §2.11
-  /** §2.11. 'more' when the budget ran out (class stays deleting: true). */
-  deleteClass(code: string, onProgress?: (done: number, total: number | null) => void, budget?: number): Promise<'done' | 'more'>;
-  deleteAllClasses(onProgress?: (text: string) => void): Promise<'done' | 'more'>;
-  /**
-   * Step 2 of T12. MUST be called synchronously in a click handler.
-   * Rejects classes_left if any class remains; otherwise reauthenticateWithPopup, then deleteUser.
-   */
-  deleteAccount(): Promise<void>;
+  countHandinsBefore(code: string, before: Date): Promise<number>;
+  pruneHandins(code: string, before: Date, maxDeletes?: number): Promise<number>;
+  deleteClass(code: string, onProgress?, budget?): Promise<'done' | 'more'>;     // §2.11
+  deleteAllClasses(onProgress?): Promise<'done' | 'more'>;
+  deleteAccount(): Promise<void>;     // step 2 of T12; synchronous in the click
 }
-export interface TeacherApiDeps { load?: () => Promise<TeacherFirebase>; randomBytes?: (n: number) => Uint8Array; now?: () => number }
-export function createTeacherApi(deps?: TeacherApiDeps): TeacherApi;   // starts loading at once
+export function createTeacherApi(deps?: { load?; randomBytes?; now?; reauthenticate? }): TeacherApi;   // starts loading at once
 ```
 
-- All methods reject with `ClassroomError`, and `onError` callbacks receive one.
-- Every Promise-returning network call goes through `withTimeout`.
-- With the full SDK, a write that times out may still be applied later. The UI text says
-  so. Deletes are idempotent (§2.11).
+Gone with the roster and the tasks: `openJoinWindow`, `closeJoining`, `letRejoin`,
+`addStudents`, `renameStudent`, `removeStudent`, `addTasks`, `renameTask`, `deleteTask`,
+`refileHandin`. All methods reject with `ClassroomError`; every network call goes
+through `withTimeout`; deletes are idempotent (§2.11).
 
 ### 4.9 `src/share-link.ts` (pure; A)
 
@@ -2060,40 +1442,33 @@ tests keep working.
 ```ts
 export interface HandinWork {
   kind: 'code' | 'blocks'; code: string; workspaceJson: string;
-  /** Set by the App: untouched starting sketch / untouched example (with its title). */
-  unchanged: { kind: 'blank' } | { kind: 'example'; title: string } | null;
-  /** Transpiler errors in `code` (App runs the check synchronously), 0 when none. */
-  errorCount: number;
+  unchanged: { kind: 'blank' } | { kind: 'example'; title: string } | null;   // set by the App
+  errorCount: number;                                                        // synchronous transpile()
 }
 export interface HandinDialogOptions {
-  loadApi?: () => Promise<StudentApi>;   // default: () => import('../classroom/student').then((m) => m.createStudentApi())
-  openWork?(content: HandinContent): void; // App: location.hash = handinHash(content).hash
-  onSessionChange?(username: string): void; // App updates the header label ('' = not joined)
+  loadApi?: () => Promise<StudentApi>;       // default: () => import('../classroom/student').then((m) => m.createStudentApi())
+  onSessionChange?(studentName: string): void; // App updates the header label ('' = no remembered name)
   toast?(text: string): void;
-  confirm?(text: string): boolean;          // default window.confirm
+  onAppUpdated?(): void;
+  confirm?(text: string): boolean;           // default window.confirm (the untouched-example question)
   now?: () => Date;
   isOnline?: () => boolean;
 }
 export interface HandinDialog {
-  open(work: HandinWork, options?: { joinCode?: string }): void;  // joinCode: #class= join mode (S0)
+  open(work: HandinWork, options?: { joinCode?: string }): void;  // joinCode: a #class= link prefills the code (S0)
   close(): void; isOpen(): boolean; readonly element: HTMLDialogElement;
 }
 export function createHandinDialog(parent: HTMLElement, options?: HandinDialogOptions): HandinDialog;
+export const HANDIN_TEXT: { title, loading, nameHelp, handingIn, checking, notArrived, blank, example(title), errors(n), success(time) };
 ```
 
-- A `<dialog class="z1-dialog z1-handin">`, built like Share and the Arduino IDE dialog:
-  `.z1-dialog-form`, `.z1-setting`, `.z1-btn-primary`, and a status line with
-  `role="status" aria-live="polite"`.
-- One view is visible at a time: `data-view="loading|code|pick|already|confirm|ready|success|switch|joined|error"`.
-- Buttons carry `data-action`: `next`, `back`, `pick`, `refresh`, `continue`, `yes`,
-  `other`, `different`, `signout`, `handin`, `anyway`, `retry`, `history`, `more`,
-  `open`, `close`. Status elements carry `data-role`.
-- Focus:
-  - Code view → the code input;
-  - Pick → the filter or the first radio;
-  - Ready → Task (or Title);
-  - Success → Close;
-  - after an error → the control to fix.
+- A `<dialog class="z1-dialog z1-handin">`, built like Share and the Arduino IDE dialog.
+- One view is visible at a time: `data-view="loading|code|name|ready|success|error"`.
+  The work block (description, warnings) moves into the Name and Ready views.
+- Buttons carry `data-action`: `next`, `back`, `handin-name`, `handin`, `retry`,
+  `change`, `different`, `ok`, `retry-open`, `close`. Texts carry `data-role`.
+- Focus: Code view → the code input; Name → First name; Ready → Hand in; Success →
+  Close; after an error → the control to fix.
 - The dialog never keeps the student's work after closing; `open(work)` replaces it.
 - All user strings go through `textContent`.
 
@@ -2103,8 +1478,9 @@ export function createHandinDialog(parent: HTMLElement, options?: HandinDialogOp
 - The button: `<button type="button" class="z1-btn" data-slot="handin" aria-label="Hand in your work to your teacher" title="Hand in: send this work to your teacher"><span aria-hidden="true">📥</span> <span class="z1-handin-label">Hand in</span><span class="z1-handin-name"></span></button>`.
 - It is rendered only when `isClassroomConfigured()`.
 - Order: New, Examples, Run, Stop, Reset, Settings, **Hand in**, Share, Arduino IDE.
-- While joined, the name part is " · ali.k" with `max-width: 9ch; overflow: hidden;
-  text-overflow: ellipsis`. The `aria-label` becomes "Hand in as ali.k to 8B Robotics".
+- While a name is remembered, the name part is " · Ali Khoury" with `max-width: 14ch;
+  overflow: hidden; text-overflow: ellipsis`. The `aria-label` becomes "Hand in as Ali
+  Khoury to your class".
 - **Brand**: below 1536 px the header shows "ZERO1 Simulator". The full name stays in
   `<title>` and in visually hidden text.
 - B re-measures at 1536, 1440, 1366, 1280, 1024, 768 and 375 px, with the longest
@@ -2116,7 +1492,7 @@ export function createHandinDialog(parent: HTMLElement, options?: HandinDialogOp
   fromLink.kind : loadMode()`. Test: saved Blocks mode + a `#code=` link shows the
   link's sketch.
 - **`#class=`**: `takeHashPayload()` also recognises `#class=`. It removes the hash, and
-  when configured calls `handinDialog.open(work, { joinCode })`.
+  when configured calls `handinDialog.open(work, { joinCode })` (the code is prefilled).
 - **Review mode** is active only when `location.hash === '#review'` **and**
   `self.origin === 'null'`, that is, in the sandbox.
   - Posts `{ type: 'z1-review-ready' }` to the parent and waits for the payload (§1.4).
@@ -2134,8 +1510,6 @@ export function createHandinDialog(parent: HTMLElement, options?: HandinDialogOp
   - `workspaceJson = JSON.stringify(workspace)`;
   - `unchanged`, from `isUntouchedText` / the last loaded example / `defaultBlocks`;
   - `errorCount`, from a synchronous `transpile(code)`.
-- `openWork(content)` → `location.hash = handinHash(content).hash`. The existing
-  `onHashChange` confirms and loads.
 - **Update prompt** (`app_updated`):
   - `window.addEventListener('vite:preloadError', …)` and failed lazy imports (Blockly,
     the classroom chunk) first flush the editor and blocks autosave.
@@ -2155,10 +1529,10 @@ export function createHandinDialog(parent: HTMLElement, options?: HandinDialogOp
   - when configured, one line: "To send your work to your teacher, use **Hand in**.";
   - always, a small line: "Teachers: see your students' work on the class dashboard
     (teacher.html)." (m3: the link moved out of the student dialog).
-- Download names use `currentUsername()` (it was the typed name).
+- Download names use `currentStudentName()` ("Ali Khoury" → `zero1_Ali_Khoury_…`).
 - `ShareDialogOptions` keeps `copyText`, `toast` and `download`, and drops `relayUrl`
   and `sendWork`.
-- **Arduino IDE dialog**: the default `studentName()` becomes `currentUsername()`.
+- **Arduino IDE dialog**: the default `studentName()` becomes `currentStudentName()`.
 
 ### 4.13 Teacher dashboard (C)
 
@@ -2187,7 +1561,7 @@ export function createHandinDialog(parent: HTMLElement, options?: HandinDialogOp
 - **Live data**:
   - one `watchClasses` while signed in;
   - for the open class: `watchClass` and `watchTodayHandins` (when the period is
-    Today), plus `watchMembers` while the Students tab or the overlay is visible.
+    Today), plus `watchMembers` while a detail panel is shown (device labels).
   - Switching class keeps the previous class's listeners for **10 minutes** (at most
     one previous class). Re-subscribing with the memory cache re-bills every document.
 - **Decoding**: the content of each loaded record is decoded (`decodeContent`) right
@@ -2197,14 +1571,18 @@ export function createHandinDialog(parent: HTMLElement, options?: HandinDialogOp
 - **Open links**:
   - `reviewLink(payload)` gives the `href`;
   - when it returns a `handoff`, the dashboard writes it to `localStorage` **when it
-    renders** the link (so middle-click works too) and removes its handoffs on
-    `pagehide` and sign-out.
+    first renders** the link (so middle-click works too), memoises the link per hand-in
+    and class name on the `ClassSession` (one entry per record, not one per render),
+    and removes its handoffs on `pagehide` and sign-out.
   - There is no "Opened in a new tab" toast.
 - **Zip** (`src/teacher/zip.ts`):
   - `makeZip(files: { name: string; data: string | Uint8Array; date?: Date }[]): Blob`;
   - store-only (no compression), CRC-32, UTF-8 file names (flag bit 11);
-  - names `<username>.ino`, `<username>.blocks.json`, `<username>-<yyyy-mm-dd-hhmm>.ino`
-    for older versions, made unique with `sketchFileName` rules.
+  - names `<First_Last>.ino`, `<First_Last>.blocks.json`, `<First_Last>-<yyyy-mm-dd-hhmm>.ino`
+    for older versions, made unique.
+- **Complete downloads**: "Download everything first" (Settings) and "Download them"
+  (the retention notice) page through every hand-in with `ClassSession.loadAll()` (no
+  cap) and report the count; a failed page shows the error, never a silently short zip.
 - **Allowed imports**: `src/classroom/model.ts`, `codec.ts`, `errors.ts`,
   `teacher.ts` (type imports plus the lazy import), `src/share-link.ts`,
   `src/ui/sketch-file.ts`. Anything that imports CodeMirror, Blockly, the transpiler or
@@ -2368,8 +1746,8 @@ Appendix A).
     `main`; the Pages workflow deploys. **Deploy outside school hours**: tabs opened
     before a deploy show the "simulator was updated" prompt.
 11. **Smoke test** (production only; the emulator does not check indexes):
-    1. Open `…/teacher.html`, sign in, create a class with two usernames and one task.
-    2. In a private window, open the class link, pick a name and hand in. The hand-in
+    1. Open `…/teacher.html`, sign in, create a class.
+    2. In a private window, open the class link, type a name and hand in. The hand-in
        appears on the Overview.
     3. **Open** runs it in `review.html`. Download .ino works.
     4. Open **My hand-ins** (composite index 1). Open the student's detail and **Load
@@ -2466,338 +1844,138 @@ is included in the table above (2 loads per lesson).
 
 ### 7.1 Security rules (A): `tests-emulator/firestore.rules.test.ts`
 
-Copy `scratchpad/classroom-design/final/rules/tests/rules.test.ts` (78 tests, all
-passing) and adapt the path (`readFileSync('firestore.rules')` from the repository root).
+62 cases against the Firestore emulator (`npm run test:rules`), with the contexts
+`teacher(uid)` (google.com, verified email), `student(uid)` (anonymous) and `nobody()`;
+seeding with `withSecurityRulesDisabled`, `clearFirestore()` before each test.
 
-**Setup.**
-- `initializeTestEnvironment({ projectId: 'demo-zero1', firestore: { rules, host:
-  '127.0.0.1', port: 8080 } })`.
-- Contexts:
-  - `teacher(uid)` = `authenticatedContext(uid, { firebase: { sign_in_provider:
-    'google.com' }, email, email_verified: true })`;
-  - `student(uid)`: `sign_in_provider: 'anonymous'`;
-  - `nobody()`.
-- Seed with `withSecurityRulesDisabled`; `clearFirestore()` before each test.
+- **R1 classes, create.** R1.1 happy path; R1.2 teacher gate (anonymous, unverified, no
+  claim, other providers, smuggled claims, signed out ✗); R1.3 foreign ownerUid ✗; R1.4
+  bad codes ✗; R1.5 extra / missing field, client times, `deleting: true`, `schema: 1`,
+  the old roster fields ✗; R1.6 name length, switch type, `keepWeeks` 0 / 53 / 10.5 /
+  "10" ✗; R1.7 re-create over an existing class ✗.
+- **R3 classes, read / update / delete.** R3.1 get by code ✓ (also missing), signed out
+  ✗; R3.2 the GET exposes `ownerUid` and the name, no email; R3.3 list own with the
+  filter only; R3.4 the owner edits name, switch, retention; R3.5 immutable and extra
+  fields (roster too), missing `updatedAt`, empty name ✗; R3.10 others ✗, owner deletes;
+  R3.11 deleting a missing class: teacher ✓, student ✗.
+- **R4 members, enter a name.** R4.1 anyone with the code, also the same name twice;
+  R4.2 the name regex (accents, Arabic, `O'Neil-Dupont Jr.`, 30 chars ✓; empty, 31,
+  digits, leading hyphen, HTML, newline, non-string ✗); R4.3 nameKey (upper-case,
+  empty, 62 chars, non-string ✗); R4.4 stopped / deleting / missing class ✗; R4.5 own
+  doc only, `ownerUid` must be the class owner; R4.6 forged counter, time, long device,
+  extra or missing field, the old `studentId`/`username` ✗; R4.7 HTML device label
+  stored; **R4.8 "Change"**: the owner uid renames (three fields, same validation, the
+  counter stays; a single field, an upper-case key, a bad name, other fields, another
+  uid, the teacher ✗); R4.9 re-create ✗, a tick without a hand-in ✗; R4.10 a tick against
+  an **old** own hand-in ✗.
+- **R5 members, read / remove.** R5.1 own only; R5.2 the owner lists and deletes,
+  others ✗; R5.3 a double delete batch ✓.
+- **R6 hand-ins, create.** R6.1 batch with `increment(1)` ✓; R6.2 plain blocks, gzip
+  code, gzip blocks ✓; R6.3 encoding mismatches ✗; R6.4 `increment(2)` / `(0)`, no tick,
+  tick id mismatch ✗; **R6.5 a hand-in requires a member doc with the SAME name**: no
+  member doc, another name, a spelling difference, another nameKey, another class, a
+  teacher ✗; R6.6 forged uid / ownerUid / createdAt / kind, extra fields, the old
+  title / note / taskId ✗; R6.7 bad id ✗; R6.8 sizes; R6.9 kind vs workspace; R6.10
+  cooldown; R6.11 cap of 300; **R6.12 after a Change**: old name ✗, new name ✓, counter
+  carries on; R6.13 rename + hand-in in one batch ✗; R6.14 stopped or deleting ✗; R6.15
+  create member + tick + hand-in in one batch ✗; R6.16 a retry with the same id after
+  success ✗, and the member doc shows the id.
+- **R7 hand-ins, read / delete / prune.** R7.1 the student query by uid ✓; a query by
+  nameKey, others' docs ✗; R7.2 nobody edits a hand-in (student or owner); R7.3 owner
+  list / window / per nameKey / `count()` / get; R7.4 another teacher ✗; R7.5
+  collection-group queries ✗; R7.7 double delete ✓; R7.8 prune query and batch.
+- **R8.** R8.1 delete-class flow (61 deletes in one batch, no rule reads); R8.2 unknown
+  collections ✗.
 
-**Cases**, by group:
-- **R1 classes, create.**
-  - R1.1 happy path.
-  - R1.2 teacher gate: anonymous, unverified, **no `email_verified` claim**,
-    password/custom/phone/facebook, smuggled claims, signed out → all ✗.
-  - R1.3 foreign ownerUid ✗.
-  - R1.4 codes `BKT4M`, `BKT4M9X`, `bkt4m9`, vowel, `0 1 2 5 6 8 Y` ✗.
-  - R1.5 extra or missing field, client times, `deleting: true`, schema 2, rejoin at
-    create, client join window ✗; server window ✓.
-  - R1.6 name lengths.
-  - R1.7 re-create over an existing class ✗.
-- **R2 validation.**
-  - R2.1 roster 0 / 100 ✓, 101 ✗.
-  - R2.2 bad usernames ✗.
-  - R2.3 2- and 24-char names ✓; duplicates, bad ids, non-strings, arrays ✗.
-  - R2.4 tasks: 30 ✓ (any language), 31 ✗, bad id ✗, empty or 61-char title ✗,
-    missing `currentTaskId` ✗.
-  - R2.5 `keepWeeks` 0 / 53 / 10.5 / "10" ✗, 52 ✓.
-  - R2.6 `join()` coercion documented.
-- **R3 classes, read / update / delete.**
-  - R3.1 get by code (also a missing one) ✓, signed out ✗.
-  - R3.2 the class GET exposes `ownerUid` and the roster, no email (documented).
-  - R3.3 list own with the filter only.
-  - R3.4 the owner edits every mutable field ✓.
-  - R3.5 immutable fields, extra fields, missing `updatedAt` ✗.
-  - R3.6 join window: server time ✓, client time ✗, null ✓.
-  - R3.7 rejoin: roster keys only; removing a student requires removing their rejoin
-    entry.
-  - R3.8 deleting a task requires clearing `currentTaskId`.
-  - R3.9 field-path roster edits; duplicate ✗.
-  - R3.10 other teachers and students cannot update or delete; the owner deletes.
-  - R3.11 deleting a missing class: teacher ✓, student ✗.
-- **R4 members, join.**
-  - R4.1 happy path.
-  - R4.2 closed ✗, window ✓, expired window ✗.
-  - R4.3 rejoin for that student only, 15 minutes.
-  - R4.4 hand-ins stopped / deleting / missing class ✗.
-  - R4.5 wrong name, unknown id, other uid ✗.
-  - R4.6 forged fields ✗.
-  - R4.7 HTML in the device label is stored (rendering test in §7.3).
-  - R4.8 re-bind ✗; a tick without a hand-in ✗.
-  - R4.9 a tick against an **old** own hand-in ✗.
-- **R5 members, read / remove.**
-  - R5.1 own only.
-  - R5.2 the owner lists (bounded, by studentId) and deletes; others ✗.
-  - R5.3 a double delete batch ✓.
-- **R6 hand-ins, create.**
-  - R6.1 batch with `increment(1)` ✓.
-  - R6.2 plain blocks, gzip code, gzip blocks ✓.
-  - R6.3 encoding and type mismatches ✗.
-  - R6.4 `increment(2)`, `increment(0)`, no tick, tick id mismatch ✗.
-  - R6.5 not joined, other studentId, other class, a teacher ✗.
-  - R6.6 forged fields ✗.
-  - R6.7 bad id ✗.
-  - R6.8 sizes: 50,000 ✓ / 50,001 ✗, `é` × 25,001 ✗, workspace 100,001 ✗, gzip 50,001
-    bytes ✗, title 81 ✗, note 501 ✗, empty code ✗, 80 + 500 ✓.
-  - R6.9 kind vs workspace.
-  - R6.10 cooldown.
-  - R6.11 cap of 300.
-  - R6.12 removed ✗; renamed: old ✗, new ✓.
-  - R6.13 task.
-  - R6.14 closed joining still ✓; stopped or deleting ✗.
-  - R6.15 join + tick + hand-in in one batch ✗.
-  - R6.16 a retry with the same id after success ✗, and the member doc shows the id.
-- **R7 hand-ins, read / re-file / delete / prune.**
-  - R7.1 the student query by uid ✓; others' docs ✗.
-  - R7.2 students cannot edit, re-file or delete.
-  - R7.3 owner list / window / per student / `count()` / get.
-  - R7.4 another teacher ✗.
-  - R7.5 collection-group queries ✗.
-  - R7.6 re-file: roster-consistent ✓, anything else ✗, task ✓ / unknown ✗.
-  - R7.7 double delete ✓.
-  - R7.8 prune query and batch.
-- **R8.**
-  - R8.1 delete-class flow (61 deletes in one batch, no rule reads).
-  - R8.2 unknown collections and the old `handinCode` ✗.
-
-**Mutation check.** Run in CI monthly or when the rules change:
-`tests-emulator/mutations.sh` re-runs the suite against each rule mutation of App. B.
-Each mutation must make at least one test fail.
+**Mutation check.** `tests-emulator/mutations.sh` re-runs the suite against each file in
+`tests-emulator/mutations/` (the rules with one protection removed:
+`delete-not-idempotent`, `enc-types-unchecked`, `handin-name-unchecked`,
+`handin-owner-unchecked`, `handins-open-ignored`, `member-owner-unchecked`,
+`name-pattern-unchecked`, `rename-any-field`, `student-reads-others`,
+`tick-not-bound-to-new-handin`). Each mutation must make at least one test fail
+(verified: all 10 caught).
 
 **Sync test.** `tests/classroom-model.test.ts` reads `firestore.rules` as text and
-asserts that:
-- every number in `LIMITS` that the rules use appears in it: 60, 100, 30, 24, 80, 500,
-  40, 50000, 100000, 300, 10 s, 15 m, 52;
-- the code alphabet regex appears in it.
+asserts that every number in `LIMITS` that the rules use appears in it (60, 40, 50000,
+100000, 300, 52, `{0,29}`, 61, 10 s, `schema == 2`), and that the code alphabet and the
+name regex appear in it.
 
 ### 7.2 Data layer (A)
 
 **Unit** (node, the normal `npm test`):
-- `tests/classroom-model.test.ts`:
-  - `normalizeClassCode`: case, spaces, hyphens, dots, `2 5 6 8` mapping, vowels and
-    `0`/`1` → null;
-  - `codeProblem` texts;
-  - `formatClassCode`, `classLink`;
-  - `generateClassCode`: alphabet only, length, uniform over 24,000 draws within ±15 %
-    per symbol; rejection of bytes ≥ 240 with a scripted source;
-  - `newStudentId`, `newTaskId`, `newHandinId` (20 × `[A-Za-z0-9]`);
-  - `normalizeUsername` table, with and without `shortenLastName`:
-    - `Ali Khalil` → `ali.khalil` / `ali.k`;
-    - `Élise Martin` → `elise.martin` / `elise.m`;
-    - `  sara__m ` → `sara_m`;
-    - `O'Neil` → `oneil`;
-    - Arabic only → `''`;
-  - `nearDuplicates`;
-  - `planRosterAdd`: split rules, duplicates, already in class, more than 100,
-    collisions after shortening, warnings;
-  - `planTasksAdd`, `sortedRoster`, `sortedTasks`;
-  - `joinStatus`: open, window inside and outside, rejoin for this and another student,
-    ±skew;
-  - `cleanLine` / `cleanMultiline` (the tests moved from share-dialog);
-  - `utf8Length`;
-  - `deviceLabel` table: Chrome, Edge, Firefox and Safari on Windows, macOS, ChromeOS,
-    Android, iOS and Linux, plus unknown;
-  - `draftProblem`;
-  - the limits-in-rules sync test.
-- `tests/classroom-codec.test.ts` (node 22 has `CompressionStream`):
-  - round trip plain and gzip;
-  - a tiny sketch stays plain (gzip is not smaller);
-  - `compress: false`;
-  - decode cap (a 5 MB bomb → `too_large`);
-  - corrupt bytes → `corrupt`;
-  - missing `DecompressionStream` (stubbed) → `unsupported`;
-  - a code-kind workspace encodes to empty bytes.
-- `tests/classroom-errors.test.ts`:
-  - `toClassroomError` for every Firebase code in §1.5 (plain objects `{ code, name:
-    'FirebaseError' }`), including `failed-precondition` → `index_missing`;
-  - a failed `import()` → `load_failed`, or `app_updated` when flagged;
-  - anything else → `unknown`;
-  - `withTimeout` with fake timers;
-  - both text tables cover every code;
-  - `errorText` placeholders;
-  - `quotaResetText` with fixed dates in the Europe/Paris and Asia/Beirut time zones,
-    across DST changes.
-- `tests/classroom-session-store.test.ts`: round trip, bad JSON, wrong version, storage
-  that throws, tab flag, `currentUsername`.
-- `tests/classroom-student-unit.test.ts`, with a fake `load` spy:
-  - `restore()` with nothing saved resolves null **without calling load**;
-  - the `confirm` reasons (`new_tab` / `stale` / null);
-  - the `diagnoseHandinRefusal` table (every branch, including `arrived`);
-  - `handIn` rejects `empty_sketch` / `too_large` / `too_soon` without calling load;
-  - a timeout followed by a member read with the same id → success;
-  - `myHandins` maps `failed-precondition` → `index_missing` (no fallback query).
-- `tests/share-link.test.ts`:
-  - the moved share-link tests;
-  - `classFromHash`;
-  - `encodeReviewPayload` / `decodeReviewPayload`: round trip, strict shape, bad input;
-  - `reviewLink`: under and over 60,000 characters;
-  - `handinHash`: code, blocks, invalid workspace → fallback.
-- `tests/bundle-boundary.test.ts` (§4.2): a source scan of static imports.
+- `tests/classroom-model.test.ts`: class codes (normalisation, `codeProblem`, format,
+  link, uniform generation, rejection sampling), `newHandinId`, **student names**
+  (`cleanName` NFC / spaces / cut, the `nameProblem` table, `nameKeyOf`, `fullName`,
+  `listName`), `cleanLine`, `utf8Length`, the `deviceLabel` table, `draftProblem`, the
+  document readers, the limits-in-rules sync test.
+- `tests/classroom-codec.test.ts`: unchanged.
+- `tests/classroom-errors.test.ts`: unchanged (the code list has `bad_name`, no
+  `class_closed` / `not_on_roster` / `bad_roster`).
+- `tests/classroom-session-store.test.ts`: the v2 session round trip, a v1 entry is
+  ignored, storages that throw, `currentStudentName`.
+- `tests/classroom-student-unit.test.ts`, with a fake SDK (`setDoc`, `updateDoc` and
+  the batch scriptable): `restore()` reads the class only and never loads Firebase
+  without a session; `findClass` reports the existing name; **join**: cleaning, `bad_name`
+  and `handins_closed` without a write, create, rename in place (no write for the same
+  name), the create ↔ rename fallback on a denied write, both denied → diagnosis; the
+  `diagnoseHandinRefusal` table; `handIn`: local checks, the batch with the
+  denormalised name, timeout then `arrived`, the rename retry with the same id, the
+  permission diagnosis; `forget` keeps the sign-in and the code.
+- `tests/share-link.test.ts`, `tests/bundle-boundary.test.ts`: unchanged.
 
 **Integration** (emulators, `npm run test:emulator`), in `tests-emulator/`:
-- `student-api.test.ts`: the real `createStudentApi({ load })` with a loader wired to
-  the emulators and in-memory storages.
-  - findClass: bad code, missing, stopped, open.
-  - join: open, closed → `class_closed`, window, rejoin.
-  - continueAs.
-  - restore: same uid, changed uid → `lost_identity`, class deleted, not on roster,
-    stopped, rename refreshes.
-  - handIn:
-    - success, both encodings;
-    - cooldown → `too_soon`;
-    - removed → `not_on_roster`;
-    - renamed → automatic retry with the same id succeeds;
-    - limit via a seeded counter → `limit_reached`;
-    - **a committed batch followed by `handIn` with the same id → success, no duplicate**.
-  - myHandins paging.
-  - leave → a new uid that sees nothing.
-- `teacher-api.test.ts`: sign in with
-  `signInWithCredential(GoogleAuthProvider.credential(JSON.stringify({ sub, email,
-  email_verified: true })))`. `signIn()` itself is covered by the UI tests with a fake.
-  - createClass, including a collision: pre-seed the first generated code with a
-    scripted `randomBytes`.
-  - watchClasses.
-  - openJoinWindow / closeJoining / letRejoin.
-  - add / rename / remove students (members removed too).
-  - tasks: add, rename, delete (clears current).
-  - watchMembers, removeDevice, removeUnusedDevices.
-  - watchTodayHandins (`added` when a student hands in; `modified` after a re-file).
-  - loadHandins paging, studentHandins, refileHandin, deleteHandin.
-  - countHandinsBefore, pruneHandins with 450 seeded old hand-ins (cap respected).
-  - deleteClass with 900 seeded docs: at least 3 batches, progress callbacks, a budget
-    of 500 → `'more'`, then Finish → `'done'`.
-  - deleteAllClasses; deleteAccount (with `classes_left` first).
-- `flow.test.ts`: the e2e of App. B (two named apps in one process).
+- `student-api.test.ts`: findClass (bad, missing, stopped, open); join (member doc +
+  session, `bad_name`, a class stopped meanwhile, **rename in place with the counter
+  kept**, `forget` keeps the uid, a removed computer enters its name again); restore
+  (same uid, `lost_identity`, stopped, deleted); handIn (plain and gzip with the name,
+  cooldown, a name changed in another tab → retry with the same id, limit / stopped /
+  deleting, the idempotent retry, **two computers under one name grouped by nameKey**).
+- `teacher-api.test.ts`: onUser; createClass (cleaned name, schema 2, exactly the §2.3
+  keys, collision retry); watchClasses; watchClass (name, switch, clamped keepWeeks,
+  deletion); watchMembers (names), removeDevice, removeUnusedDevices;
+  watchTodayHandins with a real student hand-in; loadHandins / studentHandins by
+  nameKey paging; countHandinsBefore, pruneHandins; deleteClass over 900 docs;
+  deleteAllClasses, deleteAccount.
+- `flow.test.ts`: teacher creates → student code + name + gzip hand-in → idempotent
+  retry → live Today view (bomb refused by the cap) → **Change** name → hand in again
+  → two students on the dashboard.
 
 ### 7.3 UI (happy-dom)
 
 **B**:
 - `tests/handin-dialog.test.ts`, with a fake `StudentApi` (in memory; each method a
-  `vi.fn`):
-  - not configured: no `data-slot="handin"`;
-  - no saved session → Code view focused;
-  - invalid code → inline error with the `codeProblem` detail and no API call;
-  - `class_not_found`;
-  - Pick:
-    - sorted list;
-    - filter above 12 names;
-    - Refresh the list;
-    - empty roster text;
-    - closed joining detected locally (no `join` call);
-  - This is me → `join(cls, id)` → Ready "Hand in as ali.k";
-  - already joined → Continue / Sign out;
-  - `#class=` join mode: same class → Confirm; other class → Switch; end text;
-  - Confirm view:
-    - shown for `new_tab` and `stale`;
-    - Yes → `confirm`;
-    - someone else / Different class → `leave` with the right `forgetCode`;
-    - My hand-ins hidden until confirmed;
-  - empty, too large and offline → no API call;
-  - unchanged example → a second click is needed; `errorCount` note;
-  - task select preselects `currentTaskId`;
-  - success view (title kept, note cleared), **double click → one `handIn`**;
-  - timeout → "Checking…" → success when the fake reports `arrived`;
-  - Try again reuses the **same `handinId`**;
-  - every error code → its §1.5 text (table-driven);
-  - `not_on_roster` / `device_removed` / `lost_identity` buttons;
-  - history: lazy on open, Show more, empty text, Open → `openWork` and the dialog
-    closes;
-  - Esc closes; the App keyboard guard works while open;
-  - `onSessionChange` updates the header label.
-- `tests/app-header.test.ts`:
-  - the button exists only when configured (mock `isClassroomConfigured`);
-  - order: New … Settings, Hand in, Share, Arduino IDE;
-  - label "Hand in · ali.k" from a saved session;
-  - Share title;
-  - Blocks mode passes `workspaceJson`;
-  - **saved Blocks mode + a `#code=` link shows the link's sketch** (B1a).
-- `tests/app-review-mode.test.ts`: with `self.origin` stubbed to `'null'` and a
-  `localStorage` spy:
-  - no storage access at all;
-  - mode from the payload;
-  - hidden buttons;
-  - the ready/payload handshake with source and origin checks;
-  - messages from a wrong source or origin are ignored;
-  - no auto-run;
-  - `#review=` with a normal origin → `location.replace('./review.html#review=…')`.
-- `tests/share-dialog.test.ts`:
-  - no email, name or message inputs and no Send button;
-  - Copy link and Download .ino unchanged;
-  - the Hand in hint only when configured;
-  - the teachers line;
-  - download name from `currentUsername()`.
-- `tests/codegen.test.ts`: the X1 cases (§3.4).
+  `vi.fn`): the Code view (prefill, inline code errors with the `codeProblem` detail,
+  every `findClass` error text, `#class=` prefills the code without a restore and opens
+  Ready for the remembered class); the Name view (class heading, work block, prefill
+  from the member doc then the saved session, Hand in → `join` + `handIn` → Success,
+  Enter, `bad_name` and the other join errors inline, the local checks and the
+  untouched-example confirm before any request); the Ready view ("Hand in as … to class
+  …", Last handed in, Change → `forget` + Code view, the local checks, one confirm for
+  an untouched example, double click → one `handIn`, a new id after success, "Checking
+  whether it arrived…", Try again with the same id, every error text, the
+  `device_removed` / `class_deleted` / `handins_closed` buttons, a name changed elsewhere,
+  a late answer ignored); the restore errors; the textContent matrix.
+- `tests/app-header.test.ts`: the button exists only when configured; the label "Hand
+  in · Ali Khoury" from a saved session; `#class=` opens the dialog with the code.
+- `tests/share-dialog.test.ts`, `tests/arduino-ide-dialog.test.ts`: download names from
+  `currentStudentName()` (`zero1_Elise_M_…`).
 
 **C**:
-- `tests/teacher-dashboard.test.ts`, with `tests/fakes/fake-teacher-api.ts` (an
-  in-memory store with callbacks, `emit*` helpers, and a `ready` deferred):
-  - not configured: `loadApi` is never called;
-  - signed out:
-    - the button is disabled until `ready`;
-    - **`signIn` is called synchronously in the click** (the fake records that no
-      microtask passed);
-    - `popup_blocked` text; `popup_closed` silent;
-  - class list and empty state;
-  - create class:
-    - name required;
-    - preview of normalised and shortened names, problems and near-duplicate warnings;
-    - Create disabled when there are problems;
-    - tasks;
-    - the code shown formatted;
-  - class page:
-    - Copy code and Copy class link;
-    - overlay (joined count, Esc);
-    - joining control: switch, 15-minute window countdown (fake clock), +15, Close now;
-    - hand-ins switch; current task;
-  - Overview:
-    - one row per roster student, "Nothing yet";
-    - "22 of 28";
-    - New / Seen persisted in storage;
-    - a live insert, with one polite announcement;
-    - period switch: Today live → 7 days one-off, remembered per class;
-    - task filter;
-    - "2 computers within an hour" only for close hand-ins;
-    - **the Open link is an `<a target=_blank rel="noopener noreferrer">` pointing at
-      `./review.html#review=…`, and `#rid=` + handoff when large**;
-    - `.ino` enabled after decode, with no await between the click and `download`;
-    - zip downloads;
-  - detail:
-    - versions, Load older;
-    - Move to student / task → `refileHandin`;
-    - Remove the computer; Delete;
-    - decode problems → texts;
-  - All hand-ins: "(removed) name";
-  - Students:
-    - add with preview; rename with duplicate error;
-    - remove (members too);
-    - Let join again;
-    - device list and removal;
-    - Remove unused;
-    - the members listener only while visible;
-  - retention: warning line + download, prune toast, once per tab;
-  - delete class:
-    - the confirm input accepts `bkt-4m9`;
-    - progress; `'more'` → Finish deleting;
-  - T12, two steps: `deleteAccount` called synchronously;
-  - sign out: 0 active listeners and handoffs cleared;
-  - listener error banner + Retry;
-  - class switch keeps the previous listeners (fake clock: 10 min).
-- **textContent matrix** (Security m4), in both `teacher-dashboard.test.ts` and
-  `handin-dialog.test.ts`:
-  - payloads `<img src=x onerror=alert(1)>` and `</script><b>x</b>`;
-  - in `username`, `device`, `title`, `note`, `teacherName`, class `name`, task title
-    and code;
-  - rendered on Overview, detail, All hand-ins, Students, the overlay, the review banner
-    (`review-page.test.ts`) and the student Pick / Ready / history / Confirm views;
-  - assertion: no `img` / `b` element is created and the text is shown literally.
-- `tests/review-page.test.ts`:
-  - payload from the hash and from a handoff;
-  - expired handoff and broken payload texts;
-  - the iframe has **exactly** `sandbox="allow-scripts"` and `src="./index.html#review"`;
-  - the CSP meta is present;
-  - handshake: replies only to the frame's `z1-review-ready` with origin `'null'`;
-  - Download .ino and Copy from the payload.
-- `tests/zip.test.ts`:
-  - CRC-32 of known strings;
-  - a 2-file zip parsed back by a minimal reader in the test (local headers + central
-    directory);
-  - UTF-8 name flag.
+- `tests/teacher-dashboard.test.ts`, with `tests/fakes/fake-teacher-api.ts`: not
+  configured; signed out (synchronous `signIn`, error texts); the class list (badges,
+  **the last class is re-opened only when it is in the list**); create class (name only);
+  the header (copy code / link, the overlay with the count and no members listener, the
+  hand-ins switch); the Overview (one row per name "Last, First" grouped by nameKey,
+  sort, New / Seen by nameKey, live inserts, periods, **one `#rid=` handoff per hand-in
+  reused across renders**, `.ino` with no await, zips named after the students,
+  keyboard); the detail (versions, older by nameKey, the blocks zip, Remove computer,
+  Delete, decode problems, no Move to…); All hand-ins (names, filter); retention (**a
+  complete paged download**, prune toast, once per tab); Settings (name, switch, weeks,
+  **"Download everything first" pages through every hand-in**, delete with progress,
+  Finish deleting); Delete my data; sign-out; the error banner; parked listeners; the
+  textContent matrix over names, class name, code and device.
+- `tests/review-page.test.ts`, `tests/zip.test.ts`: unchanged (the review banner shows
+  "Ali Khoury's hand-in · 8B Robotics · …"; `task` and `title` are empty strings).
 
 ### 7.4 Browser check of the sandbox (manual, plus an optional script)
 
@@ -2909,7 +2087,7 @@ The names below are as of commit a705e3c. Re-check them after the review-fix pas
   - Keep `LINK_MAX_LENGTH` if the Copy link warning uses it.
   - Update the header comment.
   - Keep Copy link, Download .ino, status and Close. Add the lines of §4.12.
-- `src/ui/arduino-ide-dialog.ts`: import `currentUsername` instead of
+- `src/ui/arduino-ide-dialog.ts`: import `currentStudentName` instead of
   `STUDENT_NAME_STORAGE_KEY`.
 - `src/ui/style.css`:
   - remove every rule that only the send section used: `.z1-share input[type='email']`,
@@ -2922,7 +2100,7 @@ The names below are as of commit a705e3c. Re-check them after the review-fix pas
   - `tests/share-dialog.test.ts`: drop the relay, email, name and message tests; keep
     and adapt the link, copy and download tests.
   - `tests/app-header.test.ts` and `tests/arduino-ide-dialog.test.ts`: names from
-    `currentUsername()`.
+    `currentStudentName()`.
 - `README.md`:
   - Replace the Share bullet with: **Share**: copy a link to the work or download it as
     an `.ino` file.
@@ -2954,17 +2132,15 @@ project (script.google.com); the release notes say so.
 - **Teachers**:
   - Google account uid, email, display name and photo URL, in Firebase Authentication
     only (not copied to Firestore);
-  - `teacherName` (free text, shown to anyone with the code);
-  - class and task names;
+  - class names;
   - the Firebase `ownerUid` (an opaque id), visible to code-holders (§3.5).
 - **Students**: **no account data**. Anonymous Firebase users have only a uid and
   timestamps.
-  - The roster usernames are chosen by the teacher and visible to anyone with the class
-    code. The default **shortens last names to an initial** (`ali.k`). Recommend
-    pseudonymous handles, never full names.
-  - Hand-ins hold the code, blocks, task, title, note (free text a student could fill
-    with personal data), time, the username at hand-in, the device uid, and a coarse
-    device label ("Chrome · Windows"). No IP and no fingerprint are stored.
+  - Students type their **first name and last name** themselves (2026-09-27). The names
+    are visible to the teacher and to the device that typed them, never to other
+    students (§3.5). A school that prefers pseudonyms tells its students what to type.
+  - Hand-ins hold the code, blocks, time, the name at hand-in, the device uid, and a
+    coarse device label ("Chrome · Windows"). No IP and no fingerprint are stored.
   - Google processes IP addresses for abuse protection: the per-IP sign-up limit, and
     reCAPTCHA when App Check is on. The app stores none.
 
@@ -2973,16 +2149,15 @@ project (script.google.com); the release notes say so.
   Analytics (step 1) and no tracking.
 - reCAPTCHA (App Check) runs a Google risk check in the browser. When it is enabled,
   say so in the schools' notice.
-- The school or teacher decides the usernames, and is the one who can see and delete
-  the work.
+- The teacher is the one who can see and delete the work.
 - Schools using the deployment should mention it in their privacy notice. Firebase is a
   Google Cloud service under the Firebase / Google Cloud data processing terms; the
   maintainer is the project owner.
 
 **Who can see what.**
 - A teacher sees only their own classes.
-- A student sees the class name, teacher name, username list and task titles of a class
-  whose code they know, and only their own device's hand-ins.
+- A student sees the class name of a class whose code they know, and nothing of other
+  students.
 - The **maintainer** can see all data in the Firebase console and must say so to
   schools.
 
@@ -3018,10 +2193,10 @@ project (script.google.com); the release notes say so.
 | Q2 | Quota DoS across all schools (§3.5 item 3) | App Check wired; enforcement and Blaze are **maintainer decisions** (§3.6, §6.3) |
 | Q3 | Capacity: Spark ≈ 35-40 schools of the reviewed profile | Monitor weekly; Blaze beyond that (§6.2-6.3) |
 | Q4 | Any Google account can be a teacher | Keep open (like Tinkercad). If abused, add an email-domain allow-list in `isTeacher()` |
-| Q5 | Impersonation by picking a classmate's name | v1: joining windows, rejoin per student, device visibility, Move to… PIN in v1.1 only if schools ask (§3.7) |
-| Q6 | ASCII-only usernames | Keep for v1 (safe file names, typable, rule-checkable). Task titles and class names accept any language |
+| Q5 | Impersonation by typing a classmate's name | Accepted by the teacher (2026-09-27): the code is the only secret; device visibility, "2 computers within an hour", Delete, Remove computer. PIN in v1.1 only if schools ask (§3.7) |
+| Q6 | Names in any alphabet | Accepted: `\p{L}` in both the client and the rules; file names are slugged (`zero1_Elise_M_…`) |
 | Q7 | Transpiler escapes beyond X1's denylist | The sandbox is the real boundary. X1 is defence in depth; any new escape is a normal bug, not an account takeover |
-| Q8 | SDK issue #10402 (a quota error at start-up clears the stored anonymous user) | Handled as `lost_identity` + "Let join again". Track the issue; bump `firebase` when it is fixed |
+| Q8 | SDK issue #10402 (a quota error at start-up clears the stored anonymous user) | Handled as `lost_identity`: the student types the code and their name again (a new member doc). Track the issue; bump `firebase` when it is fixed |
 | Q9 | Co-teachers, feedback to students, QR code, printable username slips, "Delete older versions", task × student grid, restoring removed students with the same id, a French UI, class code rotation | v1.1+ |
 | Q10 | Teacher sign-in blocked by Google Workspace admins | Documented (§6.1 step 13); personal Google accounts work |
 | Q11 | Rules published by hand can drift from the repository | Step 7 ("publish before merging") + the optional `deploy-rules` CI job |
@@ -3107,6 +2282,26 @@ Reject / defer = not in v1, with the reason given.
 
 ---
 
+### Simplified by teacher decision (2026-09-27)
+
+The teacher's decision, which overrides the flows above wherever they conflict: "let the
+hand in be very simple: the teacher creates a class code and gives it to the students; a
+student enters the class code, then inputs their name and surname, and the work is
+handed in."
+
+| what | resolution |
+|---|---|
+| Roster, usernames, "Shorten last names", near-duplicate warnings, Students tab, Rename / Remove / Let join again, "(removed) name" | **Removed.** The student types a first name and a last name (§2.4). `members/{uid}` stores `firstName`, `lastName`, `nameKey`; each hand-in carries a copy, checked by the rules against the member doc (§2.7-2.8, R6.5) |
+| Joining controls (always open, 15-minute window, per-student rejoin), D14 | **Removed.** Only `handinsOpen` remains (§2.6) |
+| Tasks, current task, title, note, task filters, Move to… (re-file), D15 | **Removed.** Hand-ins are immutable for everyone (§2.8, R7.2) |
+| Pick / Already joined / Confirm / Switch / Joined views, the per-tab + 20-minute confirmation, My hand-ins, Sign out (new uid) | **Replaced** by one flow (code → name → Hand in) and the remembered "Hand in as … / Change" view, which is the shared-computer confirmation. "Change" keeps the anonymous uid and renames the member doc in place (D5, R4.8), so the 300 cap and the cooldown survive it |
+| Untouched-example / blank second click | **Adapted** to a single confirm dialog |
+| Teacher name on the class, `teacherName` | **Removed** (the Google profile is enough) |
+| Schema | `schema: 2`; `firestore.indexes.json` indexes `nameKey + createdAt` instead of `studentId + createdAt`; the storage session is `v: 2` (a v1 entry is ignored) |
+| Anyone with the code can hand in under any name | **Accepted** and documented (§3.5 item 1) |
+| Rules cannot check the `nameKey` formula (`lower()` is ASCII-only) | **Accepted**: the key is a grouping aid with no security value; the rules check that it is short and lower-case-stable, and that a hand-in carries the member doc's key (§2.4, R4.3) |
+| Reviewer findings folded in at the same time | one `#rid=` handoff per hand-in, memoised (T5, §4.13); "Download everything first" and "Download them" page through every hand-in with no cap (T9, §2.11); `z1.teacher.lastClass` is re-opened only when it is in the teacher's own list (T2) |
+
 ## Appendix A. Sources
 
 `firebase.google.com`, `docs.cloud.google.com`, `github.io` and `www.tinkercad.com` could
@@ -3170,6 +2365,8 @@ maintainer should re-check them while following §6.1.
   https://www.tinkercad.com/blog/classroom-links-simplify-sign-on
 
 ## Appendix B. Verification log (this environment, 2026-09-26)
+
+> Historical: the roster model. The 2026-09-27 mutation set is listed in §7.1.
 
 - **Tools**: firebase-tools 15.31.0, `cloud-firestore-emulator-v1.22.0.jar`, OpenJDK 21,
   `firebase` 12.19.0, `@firebase/rules-unit-testing` 5.0.2, vitest 3, Chromium 1194

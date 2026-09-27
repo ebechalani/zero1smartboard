@@ -47,6 +47,9 @@ function edgesMs(sim: UnoSim, port: 'B' | 'C', bit: number, from: number) {
   return sim.pinEdges(port, bit, from).map((e) => ({ ms: +(((e.t - from) / sim.freq) * 1000).toFixed(2), level: e.level }));
 }
 
+// Cycle-accurate emulation of a whole upload: give it well over the 5 s default.
+const EMULATED_UPLOAD_TIMEOUT_MS = 60_000;
+
 test('Arduino-core sketch 01_blink_red: A1 blinks at 500 ms, prints ON/OFF', async () => {
   const hex = readText(fixture('01_blink_red.hex'));
   const sim = newOptibootUno();
@@ -61,7 +64,7 @@ test('Arduino-core sketch 01_blink_red: A1 blinks at 500 ms, prints ON/OFF', asy
   const periods = a1.slice(1).map((e, i) => e.ms - a1[i].ms);
   assert.ok(periods.every((p) => Math.abs(p - 500) < 2), `500 ms: ${periods}`);
   assert.match(avrTextSince(sim, run.endCycle), /^ON\r\nOFF\r\nON\r\n/);
-});
+}, EMULATED_UPLOAD_TIMEOUT_MS);
 
 test('too-large program: refused before any reset', async () => {
   const sim = newOptibootUno();
@@ -86,4 +89,4 @@ test('57600 fallback against the old ATmegaBOOT (Nano "old bootloader")', async 
   sim.runForMs(2000);
   const a1 = edgesMs(sim, 'C', 1, run.endCycle);
   assert.ok(a1.length >= 5, 'app runs after the bootloader times out');
-});
+}, EMULATED_UPLOAD_TIMEOUT_MS);

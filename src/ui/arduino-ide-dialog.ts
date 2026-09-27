@@ -15,7 +15,7 @@
  * Without an IDE (Chromebooks) the Arduino Cloud Editor can import the file.
  */
 import type { AppMode } from './blocks-panel';
-import { currentUsername } from '../classroom/session-store';
+import { currentStudentName } from '../classroom/session-store';
 import { downloadTextFile, sketchFileName, sketchName } from './sketch-file';
 
 export interface ArduinoIdePayload {
@@ -50,7 +50,7 @@ export interface ArduinoIdeDialogOptions {
    * "Save into my Arduino folder" button.
    */
   pickDirectory?: (() => Promise<SketchFolder>) | null;
-  /** The student's name for the sketch name (default: the username of the joined class, if any). */
+  /** The student's name for the sketch name (default: the remembered class name of the student, if any). */
   studentName?(): string;
 }
 
@@ -91,7 +91,7 @@ function errorName(err: unknown): string {
 export function createArduinoIdeDialog(parent: HTMLElement, options: ArduinoIdeDialogOptions = {}): ArduinoIdeDialog {
   const now = options.now ?? (() => new Date());
   const copyText = options.copyText ?? defaultCopyText;
-  const studentName = options.studentName ?? (() => currentUsername());
+  const studentName = options.studentName ?? (() => currentStudentName());
   const pickDirectory = options.pickDirectory === undefined ? defaultPickDirectory() : options.pickDirectory;
 
   const dialog = document.createElement('dialog');

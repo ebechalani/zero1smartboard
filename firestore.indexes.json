@@ -19,7 +19,7 @@
       "queryScope": "COLLECTION",
       "fields": [
         {
-          "fieldPath": "studentId",
+          "fieldPath": "nameKey",
           "order": "ASCENDING"
         },
         {
@@ -37,12 +37,17 @@
     },
     {
       "collectionGroup": "handins",
-      "fieldPath": "studentId",
+      "fieldPath": "nameKey",
       "indexes": []
     },
     {
       "collectionGroup": "handins",
-      "fieldPath": "username",
+      "fieldPath": "firstName",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "handins",
+      "fieldPath": "lastName",
       "indexes": []
     },
     {
@@ -53,21 +58,6 @@
     {
       "collectionGroup": "handins",
       "fieldPath": "kind",
-      "indexes": []
-    },
-    {
-      "collectionGroup": "handins",
-      "fieldPath": "taskId",
-      "indexes": []
-    },
-    {
-      "collectionGroup": "handins",
-      "fieldPath": "title",
-      "indexes": []
-    },
-    {
-      "collectionGroup": "handins",
-      "fieldPath": "note",
       "indexes": []
     },
     {
@@ -87,7 +77,17 @@
     },
     {
       "collectionGroup": "members",
-      "fieldPath": "username",
+      "fieldPath": "firstName",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "members",
+      "fieldPath": "lastName",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "members",
+      "fieldPath": "nameKey",
       "indexes": []
     },
     {
@@ -113,36 +113,6 @@
     {
       "collectionGroup": "classes",
       "fieldPath": "name",
-      "indexes": []
-    },
-    {
-      "collectionGroup": "classes",
-      "fieldPath": "teacherName",
-      "indexes": []
-    },
-    {
-      "collectionGroup": "classes",
-      "fieldPath": "roster",
-      "indexes": []
-    },
-    {
-      "collectionGroup": "classes",
-      "fieldPath": "rejoin",
-      "indexes": []
-    },
-    {
-      "collectionGroup": "classes",
-      "fieldPath": "tasks",
-      "indexes": []
-    },
-    {
-      "collectionGroup": "classes",
-      "fieldPath": "currentTaskId",
-      "indexes": []
-    },
-    {
-      "collectionGroup": "classes",
-      "fieldPath": "joinWindowAt",
       "indexes": []
     },
     {

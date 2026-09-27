@@ -176,15 +176,6 @@ body {
   background: #fef3c7;
   color: var(--warn);
 }
-.z1t-chip {
-  display: inline-block;
-  padding: 2px 8px;
-  border-radius: 6px;
-  background: var(--accent-tint);
-  color: var(--accent-soft);
-  font-family: var(--mono);
-  font-size: 12.5px;
-}
 .z1t-kind {
   padding: 1px 7px;
   border-radius: 999px;
@@ -197,11 +188,6 @@ body {
   background: #e0f2fe;
   color: var(--info);
 }
-.z1t-task {
-  color: var(--accent-soft);
-  font-size: 12.5px;
-}
-
 /* ----------------------------------------------------------- class list */
 .z1t-classes {
   display: flex;
@@ -270,11 +256,10 @@ body {
 
 /* --------------------------------------------------------- create dialog */
 .z1t-create {
-  width: min(720px, calc(100vw - 32px));
+  width: min(520px, calc(100vw - 32px));
   overflow: auto;
 }
 .z1t-create textarea,
-.z1t-roster-form textarea,
 .z1t-settings textarea {
   font: inherit;
   font-size: 13px;
@@ -285,37 +270,6 @@ body {
   color: var(--text);
   resize: vertical;
 }
-.z1t-roster-form {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.z1t-roster-preview {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  font-size: 13px;
-}
-.z1t-roster-preview:empty {
-  display: none;
-}
-.z1t-roster-names {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-}
-.z1t-roster-problems,
-.z1t-roster-warnings {
-  margin: 0;
-  padding-left: 18px;
-}
-.z1t-roster-problems {
-  color: var(--error);
-}
-.z1t-roster-warnings {
-  color: var(--warn);
-}
-
 /* ------------------------------------------------------------ class page */
 .z1t-class {
   display: flex;
@@ -357,7 +311,7 @@ body {
 }
 .z1t-class-bars {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr;
   gap: 12px;
 }
 @media (max-width: 900px) {
@@ -365,7 +319,6 @@ body {
     grid-template-columns: 1fr;
   }
 }
-.z1t-joining,
 .z1t-class-controls {
   display: flex;
   flex-direction: column;
@@ -378,9 +331,6 @@ body {
 }
 .z1t-join-text {
   font-size: 13px;
-}
-.z1t-countdown {
-  color: var(--ok);
 }
 .z1t-switch {
   display: inline-flex;
@@ -715,50 +665,6 @@ body {
   font-size: 12.5px;
 }
 
-/* Students */
-.z1t-roster td {
-  white-space: normal;
-}
-.z1t-roster td:first-child {
-  color: inherit;
-  font-weight: 600;
-}
-.z1t-devices {
-  margin: 4px 0;
-  padding-left: 18px;
-  font-size: 13px;
-}
-.z1t-device {
-  margin: 4px 0;
-}
-.z1t-devices-row td {
-  background: var(--bg);
-}
-.z1t-rename input {
-  width: 200px;
-}
-.z1t-add-students {
-  padding: 12px 14px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--panel);
-}
-.z1t-add-students > summary {
-  cursor: pointer;
-  font-weight: 600;
-}
-.z1t-add-students .z1t-roster-form {
-  margin-top: 10px;
-}
-.z1t-removed-devices h4 {
-  margin: 0 0 4px;
-  font-size: 13px;
-  color: var(--muted);
-}
-.z1t-removed-devices:empty {
-  display: none;
-}
-
 /* Settings */
 .z1t-settings input[type='number'] {
   width: 80px;
@@ -770,24 +676,6 @@ body {
 .z1t-settings input[type='text'] {
   max-width: 420px;
 }
-.z1t-tasks {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.z1t-task-item {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-}
-.z1t-task-title {
-  font-weight: 600;
-}
-
 /* Show to the class overlay */
 .z1t-overlay {
   position: fixed;
