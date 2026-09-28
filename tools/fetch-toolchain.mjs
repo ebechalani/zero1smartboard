@@ -71,7 +71,13 @@ function verifyDir(dir, sums) {
 }
 
 async function fetchText(url) {
-  const r = await fetch(url, { headers: { 'User-Agent': 'zero1smartboard-build' } });
+  const headers = { 'User-Agent': 'zero1smartboard-build' };
+  // Anonymous API calls from shared CI machines often hit GitHub's rate limit (HTTP 403),
+  // which would silently build the site without "Upload to board": use the workflow token.
+  if (process.env.GITHUB_TOKEN && url.startsWith('https://api.github.com/')) {
+    headers.Authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
+  }
+  const r = await fetch(url, { headers });
   if (!r.ok) throw new Error(`${url}: HTTP ${r.status}`);
   return r.text();
 }

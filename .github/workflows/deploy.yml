@@ -43,6 +43,8 @@ jobs:
             toolchain-${{ hashFiles('tools/build-toolchain-bundle.mjs', 'tools/fetch-toolchain.mjs', 'tools/arduino-libs/**', 'public/THIRD_PARTY_NOTICES.md') }}-
       - run: npm test
       - run: npm run build
+        env:
+          GITHUB_TOKEN: ${{ github.token }} # finds the toolchain release without hitting the anonymous API rate limit
       - name: Emulated hardware tests (Optiboot upload, LCD / ultrasonic libraries)
         run: npm run test:hardware-sim
       - name: Toolchain status
