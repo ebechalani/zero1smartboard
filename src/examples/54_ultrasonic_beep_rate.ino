@@ -1,11 +1,10 @@
 /*
-  ZERO1 Smart Board - 59 Speed up the buzzer as the distance decreases
-  --------------------------------------------------------------------
+  ZERO1 Smart Board - 54 Parking beeper: faster beeps when closer
+  ---------------------------------------------------------------
   WHAT IT TEACHES
     - A measurement used as a NUMBER, not only as a yes/no: the distance
-      becomes the pause between two beeps.
-    - constrain() keeps a value inside limits, map() converts a range into
-      another one (here 5..100 cm -> 50..1000 ms).
+      becomes the pause between two beeps (10 ms per centimetre).
+    - constrain() keeps a value inside limits (here 50 ... 1000 ms).
     - This is how a car parking sensor works.
 
   PARTS AND PINS
@@ -14,10 +13,10 @@
     - Buzzer ............. D8
 
   EXPECTED BEHAVIOUR
-    - The buzzer beeps (50 ms) with a pause that depends on the distance:
-      1000 ms at 100 cm or more, about 500 ms at 50 cm, 50 ms at 5 cm or less.
-      The closer the object, the faster the beeps.
-    - Serial prints, e.g., "Distance: 49.7 cm -> pause 490 ms".
+    - The buzzer beeps (50 ms), then waits 10 ms per centimetre: about 500 ms
+      at 50 cm, 200 ms at 20 cm, never less than 50 ms and never more than
+      1000 ms. The closer the object, the faster the beeps.
+    - Serial prints, e.g., "Distance: 49.7 cm -> pause 497 ms".
     - No echo (sensor unplugged): no beep, "No echo" is printed.
 
   TRY THIS
@@ -28,7 +27,9 @@
 const int TRIG_PIN = 3;
 const int ECHO_PIN = 2;
 const int BUZZER = 8;
-const int BEEP_TIME = 50;   // milliseconds of sound
+const int BEEP_TIME = 50;     // milliseconds of sound
+const int MIN_PAUSE = 50;     // milliseconds: the fastest beeps
+const int MAX_PAUSE = 1000;   // milliseconds: the slowest beeps
 
 float readDistanceCm() {
   digitalWrite(TRIG_PIN, LOW);
@@ -56,9 +57,9 @@ void loop() {
     return;
   }
 
-  // 5 cm (or less) -> 50 ms pause ... 100 cm (or more) -> 1000 ms pause
-  int cm = constrain((int) distance, 5, 100);
-  int pause = map(cm, 5, 100, 50, 1000);
+  // 10 ms per centimetre, kept between 50 and 1000 ms
+  int pause = distance * 10;                   // 49.7 cm -> 497 ms (the decimals are dropped)
+  pause = constrain(pause, MIN_PAUSE, MAX_PAUSE);
 
   Serial.print("Distance: ");
   Serial.print(distance, 1);

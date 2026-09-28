@@ -1,6 +1,6 @@
 /*
-  ZERO1 Smart Board - 56 Display distance on the Serial Monitor
-  -------------------------------------------------------------
+  ZERO1 Smart Board - 52 Show the distance on the Serial Monitor
+  --------------------------------------------------------------
   WHAT IT TEACHES
     - The HC-SR04 measures a distance with sound: a 10 us pulse on TRIG,
       then ECHO stays HIGH for the time the sound needs to go and come back.
@@ -13,7 +13,7 @@
     - Ultrasonic ECHO .... D2
 
   EXPECTED BEHAVIOUR
-    - Every 300 ms Serial prints, for example, "Distance: 49.7 cm" when the
+    - Every 500 ms Serial prints, for example, "Distance: 49.7 cm" when the
       object is 50 cm away (the sensor counts whole microseconds, so the
       last digit is not exact).
     - In the simulator, move the distance slider and watch the number follow.
@@ -48,5 +48,5 @@ void loop() {
   Serial.print("Distance: ");
   Serial.print(distance, 1);   // one digit after the point
   Serial.println(" cm");
-  delay(300);
+  delay(500);
 }

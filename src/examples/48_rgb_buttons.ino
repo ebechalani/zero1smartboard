@@ -1,19 +1,19 @@
 /*
-  ZERO1 Smart Board - 51 Button A -> Red (RGB), Button B -> Green (RGB)
-  ---------------------------------------------------------------------
+  ZERO1 Smart Board - 48 Buttons colour the RGB LED
+  -------------------------------------------------
   WHAT IT TEACHES
     - Two inputs choose the colour of one output.
     - if / else if / else: three cases, only one of them runs.
 
   PARTS AND PINS
-    - Button A (Button 1)  D6
-    - Button B (Button 2)  D7
+    - Button 1 (A) ....... D6
+    - Button 2 (B) ....... D7
     - RGB LED (NeoPixel) . D9
 
   EXPECTED BEHAVIOUR
-    - While Button A is held the RGB LED is red; while Button B is held it is
+    - While Button 1 is held the RGB LED is red; while Button 2 is held it is
       green; when no button is pressed it is off.
-    - If both are pressed, Button A wins (it is tested first).
+    - If both are pressed, Button 1 wins (it is tested first).
 
   TRY THIS
     - Show blue when both buttons are pressed (test that case first, with &&).

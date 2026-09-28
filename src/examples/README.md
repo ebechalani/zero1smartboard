@@ -25,8 +25,8 @@ All sketches use the fixed ZERO1 pin map (see `docs/PINOUT.md`):
 
 Suggested order: Outputs → Inputs → Display → Projects. The sketches marked
 *millis()* introduce non-blocking timing ("blink without delay"). The
-part-by-part groups that follow (40–66) are shorter one-idea sketches, one
-per part of the board, that can be used in any order.
+part-by-part groups that follow (40–59) are shorter one-idea sketches, one
+or two per part of the board, that can be used in any order.
 
 ## Outputs
 
@@ -73,78 +73,71 @@ per part of the board, that can be used in any order.
 
 | # | File | What it teaches | Expected behaviour |
 |---|------|-----------------|--------------------|
-| 40 | `40_led_blink_red.ino` | The simplest program: HIGH, wait, LOW, wait | Red LED 1 s on / 1 s off, forever. |
+| 40 | `40_led_blink_red.ino` | The simplest program: HIGH, wait, LOW, wait | Red LED 500 ms on / 500 ms off, forever. |
 | 41 | `41_led_red_green.ino` | Two outputs; switch the old one off before the new one on | Red 500 ms, then green 500 ms, forever; never both on. |
-| 42 | `42_led_blink_10_times.ino` | `for` loop; code in `setup()` runs once | Red LED blinks 10× (300 ms / 300 ms) then stays off; Serial `Blink 1` … `Blink 10`, `Done`. |
+| 42 | `42_led_blink_10_times.ino` | `for` loop; code in `setup()` runs once | Red LED blinks exactly 10× (300 ms / 300 ms) then stays off; Serial `Blink 1` … `Blink 10`, `Done`. |
 
 ## Buzzer
 
 | # | File | What it teaches | Expected behaviour |
 |---|------|-----------------|--------------------|
-| 43 | `43_buzzer_short_beeps.ino` | Active buzzer = HIGH sounds, like an LED | 100 ms beep every 600 ms, forever. |
-| 44 | `44_buzzer_beep_10_times.ino` | Counting with a `for` loop | Exactly 10 beeps (200 ms / 200 ms), then silence; Serial `Beep 1` … `Beep 10`, `Done`. |
-| 45 | `45_buzzer_led_10_times.ino` | Two outputs together, a small function | 10× red LED + buzzer on 200 ms, off 300 ms; then both off; Serial `Done`. |
+| 43 | `43_buzzer_short_beeps.ino` | Active buzzer = HIGH sounds, like an LED | 100 ms beep, 400 ms silence, forever (two beeps per second). |
+| 44 | `44_buzzer_led_10_times.ino` | Counting with a `for` loop; two outputs together; a small function | Exactly 10× red LED + buzzer on 200 ms, off 300 ms; then both off; Serial `Done`. |
 
 ## Push Button
 
 | # | File | What it teaches | Expected behaviour |
 |---|------|-----------------|--------------------|
-| 46 | `46_button_a_red_led.ino` | `digitalRead()`, `if / else` | Red LED on while Button A (D6) is held. |
-| 47 | `47_button_b_red_led.ino` | Same with the other pin | Red LED on while Button B (D7) is held. |
-| 48 | `48_button_a_short_beep.ino` | Input triggers output; the delay sets the length | Button A → 100 ms beep (every 300 ms while held). |
-| 49 | `49_button_b_long_beep.ino` | Same with a longer delay | Button B → 1 s beep (every 1.2 s while held). |
+| 45 | `45_buttons_leds.ino` | `digitalRead()`, `if / else`, two inputs in one `loop()` | Red LED on while Button 1 (D6) is held; green LED on while Button 2 (D7) is held. |
+| 46 | `46_buttons_beeps.ino` | Input triggers output; a function parameter sets the length; waiting for the release | Button 1 → one 100 ms beep, Button 2 → one 1 s beep; holding a button does not repeat. |
 
 ## RGB LED
 
 | # | File | What it teaches | Expected behaviour |
 |---|------|-----------------|--------------------|
-| 50 | `50_rgb_red_green_blue.ino` | NeoPixel, `Color(r, g, b)`, `setPixelColor()` + `show()` | Red 500 ms → green 500 ms → blue 500 ms, forever (brightness 80). |
-| 51 | `51_rgb_buttons.ino` | `if / else if / else` | Button A → red, Button B → green, none → off; A wins when both are pressed. |
+| 47 | `47_rgb_red_green_blue.ino` | NeoPixel, `Color(r, g, b)`, `setPixelColor()` + `show()` | Red 1 s → green 1 s → blue 1 s, forever (brightness 80). |
+| 48 | `48_rgb_buttons.ino` | `if / else if / else` | Button 1 held → red, Button 2 held → green, none → off; Button 1 wins when both are pressed. |
 
 ## LDR
 
 | # | File | What it teaches | Expected behaviour |
 |---|------|-----------------|--------------------|
-| 52 | `52_ldr_serial.ino` | `analogRead()` on a light sensor | Every 200 ms `LDR: 580` (light 60 %). Switch on **LDR**. |
-| 53 | `53_ldr_red_green.ino` | Threshold, two LEDs | `LDR: 220 -> dark` + red LED below 500; `LDR: 580 -> bright` + green LED at 500 or above. Switch on **LDR**. |
+| 49 | `49_ldr_serial.ino` | `analogRead()` on a light sensor | Every 500 ms `Light: 580` (light 60 %). Switch on **LDR**. |
+| 50 | `50_ldr_red_green.ino` | Threshold, two LEDs | Every 500 ms: `Light: 220 -> dark` + red LED below 500; `Light: 580 -> bright` + green LED at 500 or above. Switch on **LDR**. |
 
 ## Seven-Segment
 
 | # | File | What it teaches | Expected behaviour |
 |---|------|-----------------|--------------------|
-| 54 | `54_seg_button_a_1_to_4.ino` | 74HC595 + `shiftOut()`, digit table, `for` loop started by a button | Blank; press Button A → 1, 2, 3, 4 (one per second), then blank; Serial prints each digit. |
-| 55 | `55_seg_button_b_7_to_1.ino` | Counting down (`n--`) | Blank; press Button B → 7, 6, 5, 4, 3, 2, 1, then blank. |
+| 51 | `51_seg_buttons_count.ino` | 74HC595 + `shiftOut()`, digit table, `for` loops counting up (`n++`) and down (`n--`) | Blank; Button 1 → 1, 2, 3, 4 (one per second) then blank; Button 2 → 7, 6, 5, 4, 3, 2, 1 then blank; Serial prints each digit. |
 
 ## Ultrasonic
 
 | # | File | What it teaches | Expected behaviour |
 |---|------|-----------------|--------------------|
-| 56 | `56_ultrasonic_serial.ino` | TRIG pulse, `pulseIn()`, cm formula | Every 300 ms `Distance: 49.7 cm` (50 cm obstacle). |
-| 57 | `57_ultrasonic_red_near.ino` | Threshold on a measurement | Red LED on + ` -> too close!` below 10 cm. |
-| 58 | `58_ultrasonic_green_far.ino` | The opposite comparison | Green LED on + ` -> free` above 10 cm. |
-| 59 | `59_ultrasonic_beep_rate.ino` | Measurement as a number: `constrain()`, `map()` | 50 ms beeps; pause 1000 ms at ≥ 100 cm … 50 ms at ≤ 5 cm; `Distance: 49.7 cm -> pause 490 ms`; `No echo` when unplugged. |
+| 52 | `52_ultrasonic_serial.ino` | TRIG pulse, `pulseIn()`, cm formula | Every 500 ms `Distance: 49.7 cm` (50 cm obstacle). |
+| 53 | `53_ultrasonic_red_green.ino` | Threshold on a measurement, two LEDs | Every 500 ms `Distance: 49.7 cm -> free` + green LED at 10 cm or more; `-> too close!` + red LED under 10 cm. |
+| 54 | `54_ultrasonic_beep_rate.ino` | Measurement as a number: 10 ms per cm, `constrain()` | 50 ms beeps; pause = distance × 10 ms kept between 50 and 1000 ms: `Distance: 49.7 cm -> pause 497 ms`; `No echo` when unplugged. |
 
 ## Servo Motor
 
 | # | File | What it teaches | Expected behaviour |
 |---|------|-----------------|--------------------|
-| 60 | `60_servo_button_a_0.ino` | Servo library, button → position | Starts at 90°; Button A → 0°, Serial `Servo -> 0`. |
-| 61 | `61_servo_button_b_90.ino` | Same, other button and angle | Starts at 0°; Button B → 90°, Serial `Servo -> 90`. |
-| 62 | `62_servo_ultrasonic_10_times.ino` | Sensor decides for an actuator, `for` loop of 10 checks | 10× every 500 ms: `Check i: 49.7 cm -> servo 0` (or `servo 180` under 10 cm), then `Done`. |
+| 55 | `55_servo_buttons.ino` | Servo library, button → position, a small function, waiting for the release | Starts at 0°; Button 1 → 0° (`Servo -> 0`), Button 2 → 90° (`Servo -> 90`); one move and one line per press, holding does not repeat. |
+| 56 | `56_servo_ultrasonic_10_times.ino` | Sensor decides for an actuator, `for` loop of 10 rounds | 10× one per second: `Round i: 49.7 cm -> servo 0` (or `servo 180` under 10 cm), then back to 0° and `Done`. |
 
 ## DHT Sensor
 
 | # | File | What it teaches | Expected behaviour |
 |---|------|-----------------|--------------------|
-| 63 | `63_dht_serial.ino` | DHT library, `float`, `isnan()` | Every 2 s `Temperature: 24.0 C` then `Humidity: 55.0 %`; `DHT22 error (is it plugged in?)` when unplugged. |
-| 64 | `64_dht_servo_slow.ino` | Moving a servo slowly (one degree per step), `while` | Every 2 s the temperature; > 28 °C → `Too warm: opening` and the servo climbs 0 → 180° at 20 ms/degree (≈ 3.6 s); otherwise `OK: closed`, servo 0°. |
+| 57 | `57_dht_serial.ino` | DHT library, `float`, `isnan()` | Every 2 s `Temperature: 24.0 C  Humidity: 55.0 %`; `DHT22 error (is it plugged in?)` when unplugged. |
+| 58 | `58_dht_servo_slow.ino` | Moving a servo slowly (one degree per step) with a `for` loop | Every 2 s the temperature; > 28 °C → `Too warm: opening` and the servo turns 0 → 180° at 15 ms/degree (≈ 2.7 s), again after each warm reading; otherwise `OK: closed`, servo 0°. |
 
 ## DC Motor
 
 | # | File | What it teaches | Expected behaviour |
 |---|------|-----------------|--------------------|
-| 65 | `65_motor_button_a_5_times.ino` | Motor on/off via A0, `for` loop started by a button | Button A → 5 runs of 500 ms with 500 ms stops; Serial `Run 1` … `Run 5`, `Done`. |
-| 66 | `66_motor_button_b_5_times_slow.ino` | Same sequence, slower rhythm; why the board cannot reverse the motor (only IN1 is wired) | Button B → 5 runs of 1 s with 1 s stops; Serial `Slow run 1` … `Slow run 5`, `Done`. |
+| 59 | `59_motor_buttons.ino` | Motor on/off via A0, `for` loops started by the buttons, a function with a parameter; why the board cannot reverse the motor (only IN1 is wired) | Button 1 → 5 runs of 500 ms with 500 ms stops (`Short run 1` … `Short run 5`); Button 2 → 5 runs of 1 s with 1 s stops (`Long run 1` … `Long run 5`); then `Done`. |
 
 ## Conventions used in every sketch
 

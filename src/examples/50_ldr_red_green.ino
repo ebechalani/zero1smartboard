@@ -1,6 +1,6 @@
 /*
-  ZERO1 Smart Board - 53 Red LED ON if LDR < 500; Green LED ON if LDR > 500
-  -------------------------------------------------------------------------
+  ZERO1 Smart Board - 50 Night light: red when dark, green when bright
+  --------------------------------------------------------------------
   WHAT IT TEACHES
     - A threshold: compare the measurement with a fixed number to decide.
     - Two LEDs show the decision: red = dark, green = bright.
@@ -11,7 +11,7 @@
     - Green LED .......... A2
 
   EXPECTED BEHAVIOUR
-    - Every 200 ms Serial prints the value, for example "LDR: 580 -> bright".
+    - Every 500 ms Serial prints the value, for example "Light: 580 -> bright".
     - Value below 500: red LED ON, green OFF, the line ends with "-> dark".
     - Value 500 or more: green LED ON, red OFF, the line ends with "-> bright".
     - In the simulator: switch on LDR, then drag the light slider below about
@@ -35,7 +35,7 @@ void setup() {
 
 void loop() {
   int light = analogRead(LDR_PIN);
-  Serial.print("LDR: ");
+  Serial.print("Light: ");
   Serial.print(light);
 
   if (light < THRESHOLD) {
@@ -47,5 +47,5 @@ void loop() {
     digitalWrite(LED_GREEN, HIGH);
     Serial.println(" -> bright");
   }
-  delay(200);
+  delay(500);
 }

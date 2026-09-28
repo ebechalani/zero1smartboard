@@ -1,6 +1,6 @@
 /*
-  ZERO1 Smart Board - 43 Short beeps (infinite)
-  ---------------------------------------------
+  ZERO1 Smart Board - 43 Short beeps forever
+  ------------------------------------------
   WHAT IT TEACHES
     - The board has an ACTIVE buzzer: it sounds as long as its pin is HIGH,
       exactly like an LED lights as long as its pin is HIGH.
@@ -10,7 +10,8 @@
     - Buzzer ............. D8
 
   EXPECTED BEHAVIOUR
-    - A 100 ms beep every 600 ms (100 ms of sound, 500 ms of silence), forever.
+    - A 100 ms beep followed by 400 ms of silence, forever: two beeps per
+      second (one every 500 ms).
 
   TRY THIS
     - Change PAUSE_TIME to 100 for an alarm sound.
@@ -19,7 +20,7 @@
 
 const int BUZZER = 8;
 const int BEEP_TIME = 100;    // milliseconds of sound
-const int PAUSE_TIME = 500;   // milliseconds of silence
+const int PAUSE_TIME = 400;   // milliseconds of silence
 
 void setup() {
   pinMode(BUZZER, OUTPUT);

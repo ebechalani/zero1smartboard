@@ -31,29 +31,22 @@ import ledBlinkRed from './40_led_blink_red.ino?raw';
 import ledRedGreen from './41_led_red_green.ino?raw';
 import ledBlink10 from './42_led_blink_10_times.ino?raw';
 import buzzerShortBeeps from './43_buzzer_short_beeps.ino?raw';
-import buzzerBeep10 from './44_buzzer_beep_10_times.ino?raw';
-import buzzerLed10 from './45_buzzer_led_10_times.ino?raw';
-import buttonARedLed from './46_button_a_red_led.ino?raw';
-import buttonBRedLed from './47_button_b_red_led.ino?raw';
-import buttonAShortBeep from './48_button_a_short_beep.ino?raw';
-import buttonBLongBeep from './49_button_b_long_beep.ino?raw';
-import rgbRedGreenBlue from './50_rgb_red_green_blue.ino?raw';
-import rgbButtons from './51_rgb_buttons.ino?raw';
-import ldrSerial from './52_ldr_serial.ino?raw';
-import ldrRedGreen from './53_ldr_red_green.ino?raw';
-import segButtonA1To4 from './54_seg_button_a_1_to_4.ino?raw';
-import segButtonB7To1 from './55_seg_button_b_7_to_1.ino?raw';
-import ultrasonicSerial from './56_ultrasonic_serial.ino?raw';
-import ultrasonicRedNear from './57_ultrasonic_red_near.ino?raw';
-import ultrasonicGreenFar from './58_ultrasonic_green_far.ino?raw';
-import ultrasonicBeepRate from './59_ultrasonic_beep_rate.ino?raw';
-import servoButtonA0 from './60_servo_button_a_0.ino?raw';
-import servoButtonB90 from './61_servo_button_b_90.ino?raw';
-import servoUltrasonic10 from './62_servo_ultrasonic_10_times.ino?raw';
-import dhtSerial from './63_dht_serial.ino?raw';
-import dhtServoSlow from './64_dht_servo_slow.ino?raw';
-import motorButtonA5 from './65_motor_button_a_5_times.ino?raw';
-import motorButtonB5Slow from './66_motor_button_b_5_times_slow.ino?raw';
+import buzzerLed10 from './44_buzzer_led_10_times.ino?raw';
+import buttonsLeds from './45_buttons_leds.ino?raw';
+import buttonsBeeps from './46_buttons_beeps.ino?raw';
+import rgbRedGreenBlue from './47_rgb_red_green_blue.ino?raw';
+import rgbButtons from './48_rgb_buttons.ino?raw';
+import ldrSerial from './49_ldr_serial.ino?raw';
+import ldrRedGreen from './50_ldr_red_green.ino?raw';
+import segButtonsCount from './51_seg_buttons_count.ino?raw';
+import ultrasonicSerial from './52_ultrasonic_serial.ino?raw';
+import ultrasonicRedGreen from './53_ultrasonic_red_green.ino?raw';
+import ultrasonicBeepRate from './54_ultrasonic_beep_rate.ino?raw';
+import servoButtons from './55_servo_buttons.ino?raw';
+import servoUltrasonic10 from './56_servo_ultrasonic_10_times.ino?raw';
+import dhtSerial from './57_dht_serial.ino?raw';
+import dhtServoSlow from './58_dht_servo_slow.ino?raw';
+import motorButtons from './59_motor_buttons.ino?raw';
 
 /** One example sketch as shown in the Examples menu. */
 export interface Example {
@@ -247,210 +240,161 @@ export const EXAMPLES: Example[] = [
   // --- LED -------------------------------------------------------------------
   {
     id: '40_led_blink_red',
-    title: 'Blinking red LED',
+    title: 'Blink the red LED',
     group: 'LED',
-    description: 'The red LED (A1) is on for 1 s and off for 1 s, forever.',
+    description: 'The red LED (A1) is on for 500 ms and off for 500 ms, forever.',
     source: ledBlinkRed,
   },
   {
     id: '41_led_red_green',
-    title: 'Blinking alternately between red and green',
+    title: 'Blink red and green alternately',
     group: 'LED',
-    description: 'Red (A1) and green (A2) take turns every 500 ms; they are never on together.',
+    description: 'Red (A1) and green (A2) take turns every 500 ms; the old one goes off before the new one comes on.',
     source: ledRedGreen,
   },
   {
     id: '42_led_blink_10_times',
-    title: 'Blinking 10 times',
+    title: 'Blink the red LED 10 times',
     group: 'LED',
-    description: 'A for loop in setup() blinks the red LED exactly 10 times, then the program stops.',
+    description: 'A for loop in setup() blinks the red LED exactly 10 times, then the program stops and prints Done.',
     source: ledBlink10,
   },
 
   // --- Buzzer ----------------------------------------------------------------
   {
     id: '43_buzzer_short_beeps',
-    title: 'Short beeps (infinite)',
+    title: 'Short beeps forever',
     group: 'Buzzer',
-    description: 'The active buzzer (D8) gives a 100 ms beep every 600 ms, forever.',
+    description: 'The active buzzer (D8) sounds 100 ms and rests 400 ms, forever.',
     source: buzzerShortBeeps,
   },
   {
-    id: '44_buzzer_beep_10_times',
-    title: 'Beep 10 times',
+    id: '44_buzzer_led_10_times',
+    title: 'Beep 10 times with the red LED',
     group: 'Buzzer',
-    description: 'A for loop beeps the buzzer exactly 10 times, then silence.',
-    source: buzzerBeep10,
-  },
-  {
-    id: '45_buzzer_led_10_times',
-    title: 'Beep with red LED 10 times',
-    group: 'Buzzer',
-    description: 'The buzzer and the red LED switch on and off together, 10 times.',
+    description: 'The buzzer and the red LED switch on (200 ms) and off (300 ms) together, exactly 10 times.',
     source: buzzerLed10,
   },
 
   // --- Push Button -----------------------------------------------------------
   {
-    id: '46_button_a_red_led',
-    title: 'Turn red LED ON with Button A',
+    id: '45_buttons_leds',
+    title: 'Buttons light the LEDs',
     group: 'Push Button',
-    description: 'The red LED is on while Button A (D6) is held down.',
-    source: buttonARedLed,
+    description: 'The red LED is on while Button 1 (D6) is held and the green LED while Button 2 (D7) is held.',
+    source: buttonsLeds,
   },
   {
-    id: '47_button_b_red_led',
-    title: 'Turn red LED ON with Button B',
+    id: '46_buttons_beeps',
+    title: 'Buttons: short beep and long beep',
     group: 'Push Button',
-    description: 'The red LED is on while Button B (D7) is held down.',
-    source: buttonBRedLed,
-  },
-  {
-    id: '48_button_a_short_beep',
-    title: 'Button A – short beep',
-    group: 'Push Button',
-    description: 'Pressing Button A gives a short 100 ms beep on the buzzer.',
-    source: buttonAShortBeep,
-  },
-  {
-    id: '49_button_b_long_beep',
-    title: 'Button B – long beep',
-    group: 'Push Button',
-    description: 'Pressing Button B gives a long 1 s beep on the buzzer.',
-    source: buttonBLongBeep,
+    description: 'A press of Button 1 gives one 100 ms beep, a press of Button 2 one 1 s beep; holding does not repeat.',
+    source: buttonsBeeps,
   },
 
   // --- RGB LED ---------------------------------------------------------------
   {
-    id: '50_rgb_red_green_blue',
-    title: 'Display patterns: Red → Green → Blue',
+    id: '47_rgb_red_green_blue',
+    title: 'RGB LED: red, green, blue',
     group: 'RGB LED',
-    description: 'The NeoPixel RGB LED (D9) shows red, green and blue for 500 ms each, forever.',
+    description: 'The NeoPixel RGB LED (D9) shows red, green and blue for 1 s each, forever.',
     source: rgbRedGreenBlue,
   },
   {
-    id: '51_rgb_buttons',
-    title: 'Button A → Red (RGB), Button B → Green (RGB)',
+    id: '48_rgb_buttons',
+    title: 'Buttons colour the RGB LED',
     group: 'RGB LED',
-    description: 'Button A makes the RGB LED red, Button B makes it green; otherwise it is off.',
+    description: 'Button 1 makes the RGB LED red, Button 2 makes it green; otherwise it is off.',
     source: rgbButtons,
   },
 
   // --- LDR -------------------------------------------------------------------
   {
-    id: '52_ldr_serial',
-    title: 'Display LDR value on Serial Monitor',
+    id: '49_ldr_serial',
+    title: 'Show the light level on the Serial Monitor',
     group: 'LDR',
-    description: 'Prints the light sensor value (A3, switch on LDR) every 200 ms.',
+    description: 'Prints the light sensor value (A3, switch on LDR) every 500 ms.',
     source: ldrSerial,
   },
   {
-    id: '53_ldr_red_green',
-    title: 'Red LED ON if LDR < 500; Green LED ON if LDR > 500',
+    id: '50_ldr_red_green',
+    title: 'Night light: red when dark, green when bright',
     group: 'LDR',
-    description: 'Below 500 the red LED is on, otherwise the green one (A3, switch on LDR).',
+    description: 'Below 500 the red LED is on, otherwise the green one; the value is printed every 500 ms (A3, switch on LDR).',
     source: ldrRedGreen,
   },
 
   // --- Seven-Segment ---------------------------------------------------------
   {
-    id: '54_seg_button_a_1_to_4',
-    title: 'On Button A → display numbers from 1 to 4',
+    id: '51_seg_buttons_count',
+    title: 'Count up and down with the buttons',
     group: 'Seven-Segment',
-    description: 'Pressing Button A counts 1, 2, 3, 4 on the 7-segment display, one digit per second.',
-    source: segButtonA1To4,
-  },
-  {
-    id: '55_seg_button_b_7_to_1',
-    title: 'On Button B → display numbers from 7 to 1',
-    group: 'Seven-Segment',
-    description: 'Pressing Button B counts down 7 to 1 on the 7-segment display, one digit per second.',
-    source: segButtonB7To1,
+    description: 'Button 1 counts 1, 2, 3, 4 and Button 2 counts 7 down to 1 on the 7-segment display, one digit per second.',
+    source: segButtonsCount,
   },
 
   // --- Ultrasonic ------------------------------------------------------------
   {
-    id: '56_ultrasonic_serial',
-    title: 'Display distance on the Serial Monitor',
+    id: '52_ultrasonic_serial',
+    title: 'Show the distance on the Serial Monitor',
     group: 'Ultrasonic',
-    description: 'Measures the distance with the HC-SR04 (TRIG D3, ECHO D2) and prints it every 300 ms.',
+    description: 'Measures the distance with the HC-SR04 (TRIG D3, ECHO D2) and prints it every 500 ms.',
     source: ultrasonicSerial,
   },
   {
-    id: '57_ultrasonic_red_near',
-    title: 'Red LED ON if distance < 10 cm',
+    id: '53_ultrasonic_red_green',
+    title: 'Distance alarm: red LED near, green LED far',
     group: 'Ultrasonic',
-    description: 'The red LED lights when an object is closer than 10 cm.',
-    source: ultrasonicRedNear,
+    description: 'The red LED lights when an object is closer than 10 cm, the green LED otherwise; the distance is printed.',
+    source: ultrasonicRedGreen,
   },
   {
-    id: '58_ultrasonic_green_far',
-    title: 'Green LED ON if distance > 10 cm',
+    id: '54_ultrasonic_beep_rate',
+    title: 'Parking beeper: faster beeps when closer',
     group: 'Ultrasonic',
-    description: 'The green LED lights when the closest object is farther than 10 cm.',
-    source: ultrasonicGreenFar,
-  },
-  {
-    id: '59_ultrasonic_beep_rate',
-    title: 'Speed up the buzzer tone as the distance decreases',
-    group: 'Ultrasonic',
-    description: 'The buzzer beeps faster as an object gets closer (parking sensor), using map().',
+    description: 'The buzzer beeps 50 ms, then waits 10 ms per centimetre (50 to 1000 ms): the closer, the faster.',
     source: ultrasonicBeepRate,
   },
 
   // --- Servo Motor -----------------------------------------------------------
   {
-    id: '60_servo_button_a_0',
-    title: 'Button A → move servo to 0°',
+    id: '55_servo_buttons',
+    title: 'Buttons move the servo (0° and 90°)',
     group: 'Servo Motor',
-    description: 'The servo (D4) starts at 90° and goes to 0° when Button A is pressed.',
-    source: servoButtonA0,
+    description: 'Button 1 sends the servo (D4) to 0 degrees and Button 2 to 90 degrees; Serial prints the angle.',
+    source: servoButtons,
   },
   {
-    id: '61_servo_button_b_90',
-    title: 'Button B → move servo to 90°',
+    id: '56_servo_ultrasonic_10_times',
+    title: 'Servo reacts to the ultrasonic sensor, 10 times',
     group: 'Servo Motor',
-    description: 'The servo (D4) starts at 0° and goes to 90° when Button B is pressed.',
-    source: servoButtonB90,
-  },
-  {
-    id: '62_servo_ultrasonic_10_times',
-    title: 'Object < 10 cm → servo 180°, otherwise 0°, repeat 10 times',
-    group: 'Servo Motor',
-    description: 'Ten times: an object closer than 10 cm sends the servo to 180°, otherwise to 0°.',
+    description: 'Ten rounds, one per second: an object closer than 10 cm sends the servo to 180 degrees, otherwise to 0.',
     source: servoUltrasonic10,
   },
 
   // --- DHT Sensor ------------------------------------------------------------
   {
-    id: '63_dht_serial',
-    title: 'Display temperature and humidity on the Serial Monitor',
+    id: '57_dht_serial',
+    title: 'Show temperature and humidity on the Serial Monitor',
     group: 'DHT Sensor',
-    description: 'Prints the DHT22 (D5) temperature and humidity every 2 s.',
+    description: 'Prints the DHT22 (D5) temperature and humidity on one line every 2 s.',
     source: dhtSerial,
   },
   {
-    id: '64_dht_servo_slow',
-    title: 'If temperature > 28 °C → move servo to 180° slowly',
+    id: '58_dht_servo_slow',
+    title: 'Servo turns slowly when it is hot (above 28 °C)',
     group: 'DHT Sensor',
-    description: 'Above 28 °C the servo turns slowly (one degree every 20 ms) from 0° to 180°.',
+    description: 'Above 28 C the servo turns slowly (one degree every 15 ms) from 0 to 180 degrees; otherwise it is at 0.',
     source: dhtServoSlow,
   },
 
   // --- DC Motor --------------------------------------------------------------
   {
-    id: '65_motor_button_a_5_times',
-    title: 'Button A → turn forward 5 times',
+    id: '59_motor_buttons',
+    title: 'Buttons run the motor',
     group: 'DC Motor',
-    description: 'Button A runs the DC motor (A0) 5 times for 500 ms with 500 ms stops.',
-    source: motorButtonA5,
-  },
-  {
-    id: '66_motor_button_b_5_times_slow',
-    title: 'Button B → turn 5 times, slower rhythm',
-    group: 'DC Motor',
-    description: 'Button B runs the motor 5 times with 1 s runs and 1 s stops (the board cannot reverse the motor: only IN1 is wired).',
-    source: motorButtonB5Slow,
+    description: 'Button 1 runs the DC motor (A0) 5 times for 500 ms, Button 2 5 times for 1 s (the board cannot reverse the motor: only IN1 is wired).',
+    source: motorButtons,
   },
 ];
 

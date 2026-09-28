@@ -25,9 +25,9 @@ No installation is needed for students: the simulator is a static web page.
 - **New** starts from the same blank sketch as the Arduino IDE's
   *File > New* (or an empty blocks program), asking first if work would be
   lost (an example that was not changed never asks, even after a reload).
-- **48 example sketches**, each with its expected behaviour written in the
+- **41 example sketches**, each with its expected behaviour written in the
   header comment: 21 lesson sketches grouped by Outputs, Inputs, Display and
-  Projects, then 27 short part-by-part sketches grouped by LED, Buzzer, Push
+  Projects, then 20 short part-by-part sketches grouped by LED, Buzzer, Push
   Button, RGB LED, LDR, Seven-Segment, Ultrasonic, Servo Motor, DHT Sensor
   and DC Motor (the same groups exist as block programs in Blocks mode).
 - **Share ▾** — a menu: copy a link to the work, download it as an `.ino`

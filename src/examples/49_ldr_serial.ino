@@ -1,6 +1,6 @@
 /*
-  ZERO1 Smart Board - 52 Display LDR value on Serial Monitor
-  ----------------------------------------------------------
+  ZERO1 Smart Board - 49 Show the light level on the Serial Monitor
+  -----------------------------------------------------------------
   WHAT IT TEACHES
     - An LDR (light sensor) changes its resistance with the light.
     - analogRead() turns it into a number from 0 to 1023.
@@ -14,7 +14,7 @@
       full light).
 
   EXPECTED BEHAVIOUR
-    - Every 200 ms Serial prints the light value, for example "LDR: 580".
+    - Every 500 ms Serial prints the light value, for example "Light: 580".
     - In the simulator, move the light slider: the number follows it.
       Cover the sensor on the real board: the number drops.
 
@@ -31,7 +31,7 @@ void setup() {
 
 void loop() {
   int light = analogRead(LDR_PIN);   // 0 (dark) .. 1023 (very bright)
-  Serial.print("LDR: ");
+  Serial.print("Light: ");
   Serial.println(light);
-  delay(200);
+  delay(500);
 }

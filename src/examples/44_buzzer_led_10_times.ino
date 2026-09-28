@@ -1,10 +1,12 @@
 /*
-  ZERO1 Smart Board - 45 Beep with red LED 10 times
-  -------------------------------------------------
+  ZERO1 Smart Board - 44 Beep 10 times with the red LED
+  -----------------------------------------------------
   WHAT IT TEACHES
+    - A for loop counts the beeps: the same code, repeated exactly 10 times.
     - Two outputs driven together: the LED and the buzzer switch at the same
       moment, so you see and hear every beep.
-    - A small function (beep) keeps loop code short and readable.
+    - A small function (beep) keeps the code short and readable, and putting
+      the loop in setup() makes the program do its job once and stop.
 
   PARTS AND PINS
     - Buzzer ............. D8
@@ -16,7 +18,7 @@
 
   TRY THIS
     - Light the green LED during the silence instead.
-    - Count down on Serial: 10, 9, 8, ... 1.
+    - Print the number of each beep, or count down on Serial: 10, 9, 8, ... 1.
 */
 
 const int BUZZER = 8;

@@ -285,14 +285,48 @@ Groups as the text examples. Each is a workspace JSON with the two hats:
    < 30 cm, print distance), `b31_reaction` (wait for button 1, random wait
    1–3 s, green LED on, measure time until button 2 with millis, print it).
 
-Then the part-by-part groups, one block program per text sketch 40–66 (same
-ids with a `b` prefix, same titles; see docs/ARCHITECTURE.md §9): **LED**
-(`b40`–`b42`, the 10-times one is a *repeat* in the setup hat), **Buzzer**
-(`b43`–`b45`, *buzzer on/off* + waits), **Push Button** (`b46`–`b49`),
-**RGB LED** (`b50`, `b51`), **LDR** (`b52`, `b53`, `LDR read` compared with
-500), **Seven-Segment** (`b54`, `b55`, a *count with n from 1 to 4* / *from 7
-to 1 by -1* feeding *show digit*), **Ultrasonic** (`b56`–`b59`, the beep pause
-is *distance × 10* ms), **Servo Motor** (`b60`–`b62`), **DHT Sensor** (`b63`,
-`b64`, a *count with angle from 1 to 180* with a 20 ms wait), **DC Motor**
-(`b65`, `b66`, *repeat 5* of *motor on/off*). Every bullet of the list could
-be expressed with the existing block set; no block was added.
+Then the part-by-part groups, one block program per text sketch 40–59 (same
+ids with a `b` prefix, same titles and behaviour; see docs/ARCHITECTURE.md
+§9). "Button 1" is D6 and "Button 2" is D7; when a sketch answers both
+buttons, both branches are in the one program:
+
+5. **LED** — `b40_led_blink_red` (red on 500 ms / off 500 ms),
+   `b41_led_red_green` (red then green, 500 ms each, the old one off before
+   the new one on), `b42_led_blink_10_times` (a *repeat 10* in the setup hat,
+   300 ms / 300 ms, then print `Done`).
+6. **Buzzer** — `b43_buzzer_short_beeps` (*buzzer on* 100 ms / *off* 400 ms),
+   `b44_buzzer_led_10_times` (*repeat 10* in the setup hat: buzzer + red LED
+   on 200 ms, both off 300 ms, then `Done`).
+7. **Push Button** — `b45_buttons_leds` (if button 1 → red on else off; if
+   button 2 → green on else off), `b46_buttons_beeps` (button 1 → one 100 ms
+   beep, button 2 → one 1000 ms beep, each followed by *repeat while button
+   pressed: wait 10 ms* so that holding does not repeat).
+8. **RGB LED** — `b47_rgb_red_green_blue` (red, green, blue, 1 s each),
+   `b48_rgb_buttons` (if button 1 → red, else if button 2 → green, else off).
+9. **LDR** — `b49_ldr_serial` (print `Light: <LDR read>` every 500 ms),
+   `b50_ldr_red_green` (`LDR read` < 500 → red, else green; value printed
+   every 500 ms).
+10. **Seven-Segment** — `b51_seg_buttons_count` (button 1 → *count with n from
+    1 to 4*, button 2 → *count with n from 7 to 1 by -1*, each step *show
+    digit n* + print n + wait 1 s, then *clear*).
+11. **Ultrasonic** — `b52_ultrasonic_serial` (print `Distance: <cm> cm` every
+    500 ms), `b53_ultrasonic_red_green` (< 10 cm → red, else green; distance
+    printed), `b54_ultrasonic_beep_rate` (50 ms beep, then wait *constrain
+    (distance × 10, 50, 1000)* ms).
+12. **Servo Motor** — `b55_servo_buttons` (starts at 0°; button 1 → 0°,
+    button 2 → 90°, `Servo angle: <n>` printed once per press thanks to the
+    wait-for-release loop), `b56_servo_ultrasonic_10_times` (setup hat: *count
+    with turn from 1 to 10*: < 10 cm → 180° else 0°, print `Round` and
+    `Angle`, wait 1 s; then 0°).
+13. **DHT Sensor** — `b57_dht_serial` (one joined line `Temperature: <t> C
+    Humidity: <h> %` every 2 s), `b58_dht_servo_slow` (every 2 s print the
+    temperature; > 28 °C → *count with angle from 0 to 180* with a 15 ms
+    wait, else 0°).
+14. **DC Motor** — `b59_motor_buttons` (button 1 → *count with run from 1 to
+    5*: print `Short run <n>`, motor on 500 ms / off 500 ms; button 2 → the
+    same with `Long run <n>` and 1 s / 1 s).
+
+Every bullet could be expressed with the existing block set (the parking
+beeper uses *constrain* from the Math category, the wait-for-release is a
+*repeat while* loop); no block was added and no numeric detail of the text
+sketches had to be simplified.

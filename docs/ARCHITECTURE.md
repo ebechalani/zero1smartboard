@@ -930,42 +930,43 @@ teacher would show a beginner: comments, constants for pins, small functions):
    `34_i2c_scanner.ino` (Wire scanner printing found addresses — expected 0x27).
 
 Part-by-part groups (listed after the four lesson groups, one short beginner
-sketch per bullet of the teacher's list; "Button A" / "Button B" are Button 1
-on D6 / Button 2 on D7):
+sketch per item of the teacher's list; items that only differed by the button
+are merged into one sketch with both buttons; "Button 1" / "Button 2" are the
+buttons the teacher calls A / B, on D6 / D7):
 
-5. **LED** — `40_led_blink_red.ino` (1 s on / 1 s off); `41_led_red_green.ino`
+5. **LED** — `40_led_blink_red.ino` (500 ms on / 500 ms off); `41_led_red_green.ino`
    (red and green alternate every 500 ms, never both on);
    `42_led_blink_10_times.ino` (for loop in setup() blinks 10 times, prints `Done`).
-6. **Buzzer** — `43_buzzer_short_beeps.ino` (100 ms beep every 600 ms, active
-   buzzer via digitalWrite); `44_buzzer_beep_10_times.ino` (exactly 10 beeps);
-   `45_buzzer_led_10_times.ino` (buzzer + red LED together, 10 times).
-7. **Push Button** — `46_button_a_red_led.ino` / `47_button_b_red_led.ino`
-   (red LED while the button is held); `48_button_a_short_beep.ino` (100 ms
-   beep) / `49_button_b_long_beep.ino` (1 s beep).
-8. **RGB LED** — `50_rgb_red_green_blue.ino` (red → green → blue, 500 ms each);
-   `51_rgb_buttons.ino` (Button A red, Button B green, else off).
-9. **LDR** — `52_ldr_serial.ino` (prints `LDR: <adc>` every 200 ms);
-   `53_ldr_red_green.ino` (red below 500, green at 500 or above); both tell the
-   student to flip the POT / LDR switch to LDR.
-10. **Seven-Segment** — `54_seg_button_a_1_to_4.ino` (Button A → 1, 2, 3, 4, one
-    per second, then blank); `55_seg_button_b_7_to_1.ino` (Button B → 7 … 1);
-    same `DIGITS[]` table and `shiftOut()` as `05`.
-11. **Ultrasonic** — `56_ultrasonic_serial.ino` (distance every 300 ms);
-    `57_ultrasonic_red_near.ino` (red < 10 cm); `58_ultrasonic_green_far.ino`
-    (green > 10 cm); `59_ultrasonic_beep_rate.ino` (50 ms beeps, pause =
-    `map(constrain(cm, 5, 100), 5, 100, 50, 1000)` ms).
-12. **Servo Motor** — `60_servo_button_a_0.ino` (starts at 90°, Button A → 0°);
-    `61_servo_button_b_90.ino` (starts at 0°, Button B → 90°);
-    `62_servo_ultrasonic_10_times.ino` (10 checks every 500 ms: < 10 cm → 180°
-    else 0°, then `Done`).
-13. **DHT Sensor** — `63_dht_serial.ino` (temperature and humidity on two lines
-    every 2 s); `64_dht_servo_slow.ino` (> 28 °C → servo 0° → 180° one degree
-    every 20 ms, else 0°).
-14. **DC Motor** — `65_motor_button_a_5_times.ino` (Button A → 5 runs of 500 ms
-    with 500 ms stops); `66_motor_button_b_5_times_slow.ino` (Button B → 5 runs
-    of 1 s with 1 s stops). The board wires only IN1 of the motor driver (A0),
-    so the motor cannot run backward: the second sketch changes the rhythm
-    instead of the direction and its header explains why.
+6. **Buzzer** — `43_buzzer_short_beeps.ino` (100 ms beep, 400 ms silence, active
+   buzzer via digitalWrite); `44_buzzer_led_10_times.ino` (buzzer + red LED
+   together, exactly 10 times, then `Done`).
+7. **Push Button** — `45_buttons_leds.ino` (red LED while Button 1 is held, green
+   LED while Button 2 is held); `46_buttons_beeps.ino` (Button 1 → one 100 ms
+   beep, Button 2 → one 1 s beep; waits for the release so holding does not
+   repeat).
+8. **RGB LED** — `47_rgb_red_green_blue.ino` (red → green → blue, 1 s each);
+   `48_rgb_buttons.ino` (Button 1 red, Button 2 green, else off).
+9. **LDR** — `49_ldr_serial.ino` (prints `Light: <adc>` every 500 ms);
+   `50_ldr_red_green.ino` (red below 500, green at 500 or above, prints the
+   value every 500 ms); both tell the student to flip the POT / LDR switch to LDR.
+10. **Seven-Segment** — `51_seg_buttons_count.ino` (Button 1 → 1, 2, 3, 4, one
+    per second, then blank; Button 2 → 7 … 1, then blank; Serial prints each
+    digit); same `DIGITS[]` table and `shiftOut()` as `05`.
+11. **Ultrasonic** — `52_ultrasonic_serial.ino` (distance every 500 ms);
+    `53_ultrasonic_red_green.ino` (red < 10 cm, green otherwise);
+    `54_ultrasonic_beep_rate.ino` (50 ms beeps, pause =
+    `constrain(distance * 10, 50, 1000)` ms).
+12. **Servo Motor** — `55_servo_buttons.ino` (starts at 0°, Button 1 → 0°,
+    Button 2 → 90°, prints the angle); `56_servo_ultrasonic_10_times.ino`
+    (10 rounds 1 s apart: < 10 cm → 180° else 0°, then back to 0° and `Done`).
+13. **DHT Sensor** — `57_dht_serial.ino` (temperature and humidity on one line
+    every 2 s); `58_dht_servo_slow.ino` (> 28 °C → servo 0° → 180° one degree
+    every 15 ms, else 0°).
+14. **DC Motor** — `59_motor_buttons.ino` (Button 1 → 5 runs of 500 ms with
+    500 ms stops, `Short run 1` … `Short run 5`; Button 2 → 5 runs of 1 s with
+    1 s stops, `Long run 1` … `Long run 5`; then `Done`). The board wires only
+    IN1 of the motor driver (A0), so the motor cannot run backward: Button 2
+    changes the rhythm instead of the direction and the header explains why.
 
 Every sketch must transpile and run in the simulator; the examples agent
 cannot run them yet, so keep to the subset in §4.2 and the APIs in §5–6, and
