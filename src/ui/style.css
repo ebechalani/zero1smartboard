@@ -160,7 +160,7 @@ p {
   white-space: nowrap;
 }
 /* Below 1536 px the brand reads "ZERO1 Simulator" so that the header (with
-   Hand in · <name>) stays on one row; the full name stays for screen readers. */
+   Share · <name>) stays on one row; the full name stays for screen readers. */
 .z1-title-short {
   display: none;
 }
@@ -185,7 +185,7 @@ p {
   gap: 4px;
 }
 /* Header buttons are a little narrower than dialog buttons: brand, mode
-   switch, the eight actions and the run status fit one row at 1366 px. */
+   switch, the seven actions and the run status fit one row at 1366 px. */
 .z1-toolbar .z1-btn {
   gap: 5px;
   padding-inline: 10px;
@@ -406,6 +406,13 @@ input::placeholder {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   box-shadow: var(--shadow);
+}
+
+/* The short Settings and Share menus are as wide as their items (they fit a phone). */
+.z1-menu-list.z1-menu-compact {
+  min-width: 0;
+  width: max-content;
+  max-width: calc(100vw - 24px);
 }
 
 .z1-menu-group + .z1-menu-group {
@@ -1023,60 +1030,6 @@ input[type='range'] {
   }
 }
 
-/* ---------------------------------------------------------- share dialog */
-/* share-dialog.ts: the link row, the "Save as a file" group, the Hand in
-   hint and the status line. The rest comes from .z1-dialog. */
-
-.z1-dialog.z1-share {
-  width: min(660px, calc(100vw - 32px));
-}
-
-.z1-share-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-}
-.z1-share-row > input {
-  flex: 1 1 260px;
-  min-width: 0;
-  font-family: var(--mono);
-  font-size: 12px;
-}
-.z1-share-row > .z1-setting-help {
-  flex: 1 1 220px;
-}
-
-/* A group with a heading and a divider line above it. */
-.z1-share-section {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  min-width: 0;
-  margin: 0;
-  padding: 14px 0 0;
-  border: 0;
-  border-top: 1px solid var(--border);
-}
-.z1-share-section > legend {
-  float: left; /* a normal heading line instead of a label sitting on the border */
-  width: 100%;
-  padding: 0;
-  font-weight: 600;
-}
-
-/* "To send your work to your teacher, use Hand in." */
-.z1-share-handin {
-  padding-top: 14px;
-  border-top: 1px solid var(--border);
-}
-.z1-share-status {
-  align-self: center;
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--accent-soft);
-}
-
 /* ---------------------------------------------------- arduino ide dialog */
 /* arduino-ide-dialog.ts: the download button with its numbered steps, the
    other ways (folder, copy) and the status line. The rest comes from
@@ -1180,7 +1133,6 @@ input[type='range'] {
 /* File names and paths are one long word: let them wrap anywhere rather
    than push the Close button out of the dialog. */
 .z1-ide-status,
-.z1-share-status,
 .z1-handin-status {
   min-width: 0;
   overflow-wrap: anywhere;
@@ -1291,8 +1243,8 @@ input[type='range'] {
   color: var(--error);
 }
 
-/* Header: the remembered student name after "Hand in", cut with an ellipsis. */
-.z1-toolbar [data-slot='handin'] .z1-handin-name {
+/* Header: the remembered student name after "Share", cut with an ellipsis. */
+.z1-toolbar [data-slot='share'] .z1-handin-name {
   display: inline-block;
   max-width: 14ch;
   overflow: hidden;

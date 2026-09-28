@@ -62,8 +62,8 @@ src/
   ui/
     board-view.ts board-svg.ts  interactive SVG board                       [board-svg]
     app.ts editor.ts serial-monitor.ts pinmap.ts console-panel.ts
-    controls.ts settings.ts examples-menu.ts audio.ts style.css             [ui-app]
-    share-dialog.ts arduino-ide-dialog.ts sketch-file.ts                    [ui-app]
+    controls.ts settings.ts menu.ts examples-menu.ts audio.ts style.css     [ui-app]
+    arduino-ide-dialog.ts sketch-file.ts                                    [ui-app]
     handin-dialog.ts            the student side of the class platform      [ui-app / B]
   share-link.ts                 #code= / #blocks= / #class= links, review payload (pure) [A]
   firebase-config.ts            public Firebase web config (empty = classes off) [A]
@@ -694,8 +694,10 @@ WCAG AA on its background). Responsive grid:
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
 │ header: ZERO1 Simulator · [Code|Blocks] · [＋ New] [Examples ▾] [▶ Run] │
-│   [■ Stop] [↺ Reset] [⚙ Settings] [📥 Hand in · Ali K…] [🔗 Share]    │
-│   [∞ Arduino IDE] · run status                                        │
+│   [■ Stop] [⚙ Settings ▾] [🔗 Share · Ali K… ▾] [∞ Arduino IDE]        │
+│   · run status        Settings ▾: Reset the board · Board settings…     │
+│                       Share ▾: Hand in to my teacher · Copy link ·      │
+│                                Download .ino                            │
 ├───────────────────────────────┬─────────────────────────────────────┤
 │ board SVG (scales to fit)     │ tabs: Code | Serial Monitor |       │
 │                               │       Pin Map | Generated JS        │
@@ -712,10 +714,13 @@ Code | Blocks switch, the actions, run status) is one row from 1366 px wide
 stay short, e.g. "2 errors", "Error at 1523 ms"); narrower, the actions
 move to rows of their own under the brand, the mode switch and the status.
 Below 1536 px the brand reads "ZERO1 Simulator" (`.z1-title-short`); the full
-name stays in `<title>` and in visually hidden text. **Hand in** exists only
-when the class platform is configured (`isClassroomConfigured()`,
-docs/CLASSROOM.md §1.1); while a name is remembered it reads "Hand in · Ali
-Khoury" (the name part is cut at 14ch with an ellipsis, the `aria-label` has
+name stays in `<title>` and in visually hidden text. Settings and Share are
+dropdown menus (fewer header buttons, by teacher request): **Settings ▾** holds
+Reset the board and Board settings…, **Share ▾** holds Hand in to my teacher,
+Copy link and Download .ino. The Hand in item exists only when the class
+platform is configured (`isClassroomConfigured()`, docs/CLASSROOM.md §1.1);
+while a name is remembered the Share button reads "Share · Ali Khoury" (the
+name part is cut at 14ch with an ellipsis, the `aria-label` and `title` have
 it whole).
 
 ### 8.2 Board view (`board-view.ts`, `board-svg.ts`) — owner: board-svg
@@ -763,15 +768,25 @@ export function createBoardView(container: HTMLElement, board: Zero1Board): Boar
   (`BLANK_SKETCH`, File > New) in the editor, with the same confirmation; in
   Blocks mode it resets the workspace to `DEFAULT_WORKSPACE`. Neither stops a
   running sketch. URL hash `#code=<base64url>` loads shared code.
-- Share dialog (`share-dialog.ts`, opened by the "Share" button): the
-  `#code=` / `#blocks=` link with **Copy link**, and **Download .ino**, which
-  saves `sketchFileName()` (`sketch-file.ts`) named after the student's
-  remembered name (`currentStudentName()`, `src/classroom/session-store.ts`). When the
-  class platform is configured one line points to Hand in; a small line
-  always tells teachers about the class dashboard (`teacher.html`). The
-  former email sending (a Google Apps Script relay) is gone; `main.ts`
-  removes its two legacy `localStorage` keys once.
-- Hand in dialog (`handin-dialog.ts`, opened by the "Hand in" button, spec
+- Header menus (`menu.ts`: a "Label ▾" trigger with `aria-haspopup="menu"`
+  and an absolutely positioned `role="menu"` list, optionally in titled
+  groups; opens on click or ArrowDown, arrows / Home / End move between the
+  items, Esc closes it and refocuses the trigger, Tab or a pointer down
+  outside closes it, an item click closes it then runs its action). Three
+  header menus are built on it: Examples (`examples-menu.ts`), **Settings ▾**
+  (Reset the board = `App.reset()`; Board settings… = the settings dialog)
+  and **Share ▾**. The Share menu acts at once, without a dialog: **Copy
+  link** puts the `#code=` / `#blocks=` link on the clipboard and toasts
+  "Link copied" (when the clipboard refuses or is missing: a toast and a
+  `window.prompt` with the link selected, "Press Ctrl+C to copy the link");
+  **Download .ino** saves `sketchFileName()` (`sketch-file.ts`) named after
+  the student's remembered name (`currentStudentName()`,
+  `src/classroom/session-store.ts`) and toasts the file name; **Hand in to my
+  teacher** (only when the class platform is configured) opens the Hand in
+  dialog. The former Share dialog and the email sending (a Google Apps Script
+  relay) are gone; `main.ts` removes the relay's two legacy `localStorage`
+  keys once.
+- Hand in dialog (`handin-dialog.ts`, opened by Share ▾ → Hand in to my teacher, spec
   docs/CLASSROOM.md §1.2 and §4.10). The App builds a `HandinWork` from the
   same `exportSketch()` as Share (the sketch, in Blocks mode also the
   workspace JSON), plus `unchanged` (the blank sketch / empty program, or an
@@ -790,7 +805,7 @@ export function createBoardView(container: HTMLElement, board: Zero1Board): Boar
   after a timeout reuses it; after the request timeout the status reads
   "Checking whether it arrived…". Every error shows its §1.5 text;
   `device_removed`, `class_deleted` and `handins_closed` get their own button.
-  `onSessionChange` updates the header label. A `#class=<code>` link
+  `onSessionChange` updates the header label ("Share · Ali Khoury"). A `#class=<code>` link
   (`takeHashPayload`, also on `hashchange`) opens the dialog with the code
   prefilled, or shows the "Classes are not set up on this site." toast when
   not configured. All class strings are rendered with `textContent`.
@@ -817,7 +832,8 @@ export function createBoardView(container: HTMLElement, board: Zero1Board): Boar
 - Run: `transpile()` → on error show diagnostics in the editor and console,
   else `board.reset()`, `executor.run(js)`; buttons reflect status; the
   header shows a running indicator and elapsed `millis()`.
-  Stop: `executor.stop()`. Reset: stop + `board.reset()` + clear serial.
+  Stop: `executor.stop()`. Reset (Settings ▾ → Reset the board): stop +
+  `board.reset()` + clear serial.
 - Serial monitor (`serial-monitor.ts`): output area (monospace, autoscroll
   toggle, clear, max 5000 lines), input line + Send (Enter), line-ending
   select (No line ending / Newline / Carriage return / Both; default
@@ -835,15 +851,15 @@ export function createBoardView(container: HTMLElement, board: Zero1Board): Boar
   and humidity (0..100) sliders, ultrasonic distance slider (2..400 cm),
   checkboxes "Servo plugged", "Ultrasonic plugged", "DHT22 plugged",
   "Mute buzzer".
-- Settings (`settings.ts`, a dialog): the `BoardConfig` options with plain
-  explanations, persisted to `localStorage` (`z1.config`), applied via
-  `board.applyConfig`.
+- Settings (`settings.ts`, a dialog opened by Settings ▾ → Board settings…):
+  the `BoardConfig` options with plain explanations, persisted to
+  `localStorage` (`z1.config`), applied via `board.applyConfig`.
 - Audio (`audio.ts`): WebAudio square-wave oscillator following
   `buzzer.state.freq` (start on first user gesture; gain 0.05; mute toggle).
-- Examples menu (`examples-menu.ts`): grouped list from `src/examples/index.ts`.
+- Examples menu (`examples-menu.ts`, on `menu.ts`): grouped list from `src/examples/index.ts`.
 - Keyboard: `Ctrl/Cmd+Enter` run, `Esc` stop — both ignored while the
-  Settings, Share, Hand in or Arduino IDE dialog is open (Esc then closes the
-  dialog).
+  Settings, Hand in, Arduino IDE or Upload dialog is open (Esc then closes the
+  dialog), and Esc is ignored while a header menu is open (it closes the menu).
 - Mode from links: a `#code=` / `#blocks=` link decides the mode at start-up
   (`this.mode = fromLink.kind`), so a saved Blocks mode never hides a shared
   sketch; only without a link is `loadMode()` used.
@@ -851,7 +867,8 @@ export function createBoardView(container: HTMLElement, board: Zero1Board): Boar
   opaque origin, i.e. review.html's `<iframe sandbox="allow-scripts">`): the
   App reads and writes no storage (editor `persist: false`, no mode / blocks /
   mute / config writes; `main.ts` skips `loadConfig()`), hides New, Examples,
-  Hand in, Share and Arduino IDE, has no `hashchange` listener, posts
+  Share (Hand in included) and Arduino IDE (the Settings menu stays), has no
+  `hashchange` listener, posts
   `{ type: 'z1-review-ready' }` to the parent and accepts `{ type: 'z1-review',
   payload }` only from `window.parent` on the site's own origin; the payload
   decides the mode (blocks from `workspaceJson`, else the sketch with the

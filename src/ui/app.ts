@@ -1,6 +1,6 @@
 /**
- * Application shell: header with actions (including Hand in, the class
- * platform's button, when it is configured) and the Code | Blocks mode switch,
+ * Application shell: header with actions (the Share menu carries Hand in,
+ * the class platform's entry, when it is configured) and the Code | Blocks mode switch,
  * board + inputs on the left, tabbed blocks/editor/monitors on the right,
  * console below. Wires the transpiler, the executor and the virtual board
  * together and drives the animation loop.
@@ -39,7 +39,8 @@ import { createPinMap, type PinMap } from './pinmap';
 import { createConsolePanel, type ConsolePanel } from './console-panel';
 import { createControls, type Controls } from './controls';
 import { createSettingsDialog, type SettingsDialog } from './settings';
-import { createShareDialog, type ShareDialog } from './share-dialog';
+import { createMenu, type Menu } from './menu';
+import { downloadTextFile, sketchFileName } from './sketch-file';
 import { createArduinoIdeDialog, type ArduinoIdeDialog } from './arduino-ide-dialog';
 import { createHandinDialog, type HandinDialog, type HandinWork } from './handin-dialog';
 import { createExamplesMenu, type ExamplesMenu } from './examples-menu';
@@ -49,6 +50,12 @@ import { STUDENT_ERROR_TEXT } from '../classroom/errors';
 import { currentStudentName } from '../classroom/session-store';
 import { classFromHash, parseWorkspaceJson } from '../share-link';
 import { installUploadButton, type InstalledUploadButton } from '../upload';
+
+/** Tooltip of the Share ▾ button; the Hand in item exists only when the class platform is configured. */
+const SHARE_TITLE = 'Share: copy the link or download an .ino file';
+const SHARE_TITLE_CLASS = 'Share: copy the link, download an .ino file or hand in to your teacher';
+/** Shown when the clipboard refuses the link. */
+export const COPY_FALLBACK = 'Press Ctrl+C to copy the link';
 
 /** What "New" puts in the editor: exactly the Arduino IDE's File > New. */
 export const BLANK_SKETCH = `void setup() {
@@ -152,11 +159,14 @@ export class App {
   private readonly consolePanel: ConsolePanel;
   private readonly controls: Controls;
   private readonly settings: SettingsDialog;
-  private readonly shareDialog: ShareDialog;
+  /** Header "Share ▾": Hand in (when configured), Copy link, Download .ino. */
+  private readonly shareMenu: Menu;
+  /** Header "Settings ▾": Reset the board, Board settings…. */
+  private readonly settingsMenu: Menu;
   private readonly ideDialog: ArduinoIdeDialog;
   /** "Upload to board" (shown only in browsers with Web Serial and when the toolchain is deployed). */
   private readonly uploadButton: InstalledUploadButton;
-  /** The Hand in dialog of the class platform; null while it is not configured (no button either). */
+  /** The Hand in dialog of the class platform; null while it is not configured (no menu item either). */
   private readonly handinDialog: HandinDialog | null;
   private readonly examplesMenu: ExamplesMenu<Example | BlockExample>;
   private readonly audio: BuzzerAudio;
@@ -281,7 +291,6 @@ export class App {
       },
     });
 
-    this.shareDialog = createShareDialog(root);
     this.ideDialog = createArduinoIdeDialog(root);
     this.uploadButton = installUploadButton({
       button: this.slot<HTMLButtonElement>('upload'),
@@ -304,18 +313,38 @@ export class App {
       else void this.loadBlockExample(example);
     });
 
+    this.settingsMenu = createMenu(
+      this.slot('settings'),
+      { icon: '⚙', label: 'Settings', ariaLabel: 'Open the settings menu', title: 'Settings: reset the board, board settings', listLabel: 'Settings', compact: true },
+      [
+        {
+          items: [
+            { label: 'Reset the board', title: 'Stop and reset the board: all pins and peripherals back to their power-on state', onSelect: () => void this.reset() },
+            { label: 'Board settings…', title: 'How the real board is wired', onSelect: () => this.settings.open() },
+          ],
+        },
+      ],
+    );
+    this.shareMenu = createMenu(
+      this.slot('share'),
+      { icon: '🔗', label: 'Share', ariaLabel: 'Open the share menu', title: this.handinDialog ? SHARE_TITLE_CLASS : SHARE_TITLE, listLabel: 'Share your work', compact: true },
+      [
+        {
+          items: [
+            ...(this.handinDialog ? [{ label: 'Hand in to my teacher', title: 'Send this work to your teacher', onSelect: () => this.handIn() }] : []),
+            { label: 'Copy link', title: 'Anyone who opens the link sees your work in the simulator', onSelect: () => this.copyLink() },
+            { label: 'Download .ino', title: 'Save the sketch for the Arduino IDE', onSelect: () => this.downloadSketch() },
+          ],
+        },
+      ],
+    );
+
     // --- header actions ---------------------------------------------------
     this.slot('new').addEventListener('click', () => void this.newSketch());
     this.runButton.addEventListener('click', () => void this.run());
     this.stopButton.addEventListener('click', () => void this.stop());
-    this.slot('reset').addEventListener('click', () => void this.reset());
-    this.slot('settings').addEventListener('click', () => this.settings.open());
-    this.slot('share').addEventListener('click', () => this.share());
     this.slot('ide').addEventListener('click', () => this.openInIde());
-    if (this.handinDialog) {
-      this.slot('handin').addEventListener('click', () => this.handIn());
-      this.setHandinName(currentStudentName()); // the previous student's name shows until they press Change
-    }
+    if (this.handinDialog) this.setHandinName(currentStudentName()); // the previous student's name shows until they press Change
     this.slot('reload').addEventListener('click', () => location.reload());
     if (review) {
       // The teacher reviews one hand-in: no new work, no examples, no links out of the sandbox.
@@ -847,18 +876,35 @@ export class App {
   }
 
   /**
-   * Header "Share": build the `#code=` / `#blocks=` link and open the share
-   * dialog (copy the link, download the sketch as an .ino file).
+   * Share ▾ → Copy link: the `#code=` / `#blocks=` link onto the clipboard.
+   * When the clipboard refuses (no permission, http://), a prompt shows the
+   * link selected, ready for Ctrl+C.
    */
-  private share(): void {
+  private copyLink(): void {
     const sketch = this.exportSketch();
     if (!sketch) return;
     const url = `${location.origin}${location.pathname}${location.search}${sketch.hash}`;
-    this.shareDialog.open({ url, code: sketch.code, kind: sketch.kind });
+    const copy = navigator.clipboard ? navigator.clipboard.writeText(url) : Promise.reject(new Error('clipboard unavailable'));
+    copy.then(
+      () => this.toast('Link copied'),
+      () => {
+        this.toast(COPY_FALLBACK);
+        if (typeof window.prompt === 'function') window.prompt(COPY_FALLBACK, url);
+      },
+    );
+  }
+
+  /** Share ▾ → Download .ino: `sketchFileName()` named after the remembered student (sketch-file.ts). */
+  private downloadSketch(): void {
+    const sketch = this.exportSketch();
+    if (!sketch) return;
+    const fileName = sketchFileName(currentStudentName(), new Date());
+    downloadTextFile(fileName, sketch.code);
+    this.toast(`Downloading ${fileName}`);
   }
 
   /**
-   * Header "Hand in": the same work as Share, plus what the dialog warns
+   * Share ▾ → Hand in to my teacher: the same work as Share, plus what the dialog warns
    * about (an untouched example or blank sketch, transpiler errors), then the
    * Hand in dialog (docs/CLASSROOM.md §1.2).
    */
@@ -906,13 +952,18 @@ export class App {
     return example ? { kind: 'example', title: example.title } : null;
   }
 
-  /** The header button reads "Hand in · Ali Khoury" while a name is remembered, "Hand in" otherwise. */
+  /** The Share button reads "Share · Ali Khoury" while a name is remembered, "Share" otherwise. */
   private setHandinName(studentName: string): void {
-    const button = this.slot<HTMLButtonElement>('handin');
-    const name = button.querySelector<HTMLElement>('.z1-handin-name')!;
+    const button = this.shareMenu.trigger;
+    let name = button.querySelector<HTMLElement>('.z1-handin-name');
+    if (!name) {
+      name = document.createElement('span');
+      name.className = 'z1-handin-name';
+      button.querySelector('.z1-btn-label')!.after(name);
+    }
     name.textContent = studentName ? ` · ${studentName}` : '';
-    button.setAttribute('aria-label', studentName ? `Hand in as ${studentName} to your class` : 'Hand in your work to your teacher');
-    button.title = studentName ? `Hand in: send this work to your teacher as ${studentName}` : 'Hand in: send this work to your teacher';
+    button.setAttribute('aria-label', studentName ? `Open the share menu (hand in as ${studentName})` : 'Open the share menu');
+    button.title = studentName ? `Share: copy the link, download an .ino file or hand in as ${studentName}` : SHARE_TITLE_CLASS;
   }
 
   /** Header "Arduino IDE": download / save / copy the sketch for the desktop Arduino IDE. */
@@ -998,7 +1049,6 @@ export class App {
     // Keys pressed in a dialog are for the dialog (Esc closes it), never for the sketch behind it.
     if (
       this.settings.element.open ||
-      this.shareDialog.isOpen() ||
       this.ideDialog.isOpen() ||
       this.uploadButton.isOpen() ||
       this.handinDialog?.isOpen()
@@ -1009,7 +1059,8 @@ export class App {
       e.preventDefault();
       void this.run();
     } else if (e.key === 'Escape') {
-      if (this.examplesMenu.isOpen()) return;
+      // Esc in an open header menu closes the menu (menu.ts), never the sketch.
+      if (this.examplesMenu.isOpen() || this.shareMenu.isOpen() || this.settingsMenu.isOpen()) return;
       void this.stop();
     }
   };
@@ -1100,6 +1151,8 @@ export class App {
     this.audio.dispose();
     this.boardView.destroy();
     this.examplesMenu.destroy();
+    this.shareMenu.destroy();
+    this.settingsMenu.destroy();
     this.blocksPanel?.destroy();
     this.blocksPanel = null;
     this.editor.destroy();
@@ -1135,11 +1188,6 @@ export class App {
           t.id === initialTab ? '' : ' hidden'
         }>${panelContent[t.id] ?? ''}</div>`,
     ).join('');
-    // The class platform's button exists only when the platform is configured (docs/CLASSROOM.md §1.1).
-    const handin =
-      !this.review && isClassroomConfigured()
-        ? '<button type="button" class="z1-btn" data-slot="handin" aria-label="Hand in your work to your teacher" title="Hand in: send this work to your teacher"><span aria-hidden="true">📥</span> <span class="z1-handin-label">Hand in</span><span class="z1-handin-name"></span></button>'
-      : '';
     const modeSwitch = MODES.map(
       (m) =>
         `<button type="button" class="z1-btn z1-mode-btn" data-slot="mode-${m}" aria-pressed="${m === this.mode}" title="${
@@ -1161,10 +1209,8 @@ export class App {
             <div data-slot="examples"></div>
             <button type="button" class="z1-btn z1-btn-run" data-slot="run" aria-label="Run the sketch (Ctrl+Enter)" title="Run (Ctrl+Enter)"><span aria-hidden="true">▶</span> Run</button>
             <button type="button" class="z1-btn z1-btn-stop" data-slot="stop" aria-label="Stop the sketch (Esc)" title="Stop (Esc)" disabled><span aria-hidden="true">■</span> Stop</button>
-            <button type="button" class="z1-btn" data-slot="reset" aria-label="Reset the board" title="Stop and reset the board"><span aria-hidden="true">↺</span> Reset</button>
-            <button type="button" class="z1-btn" data-slot="settings" aria-label="Open board settings" title="Board settings"><span aria-hidden="true">⚙</span> <span class="z1-btn-label">Settings</span></button>
-            ${handin}
-            <button type="button" class="z1-btn" data-slot="share" aria-label="Share your work" title="Share: copy the link or download an .ino file"><span aria-hidden="true">🔗</span> Share</button>
+            <div data-slot="settings"></div>
+            <div data-slot="share"></div>
             <button type="button" class="z1-btn" data-slot="ide" aria-label="Open this sketch in the Arduino IDE" title="Open in the Arduino IDE"><span aria-hidden="true">∞</span> Arduino IDE</button>
             <button type="button" class="z1-btn" data-slot="upload" aria-label="Upload this sketch to the ZERO1 board" title="Compile in the browser and upload to the board over USB" hidden><span aria-hidden="true">⬆</span> Upload to board</button>
           </nav>

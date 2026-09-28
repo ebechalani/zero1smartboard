@@ -30,10 +30,12 @@ No installation is needed for students: the simulator is a static web page.
   Projects, then 27 short part-by-part sketches grouped by LED, Buzzer, Push
   Button, RGB LED, LDR, Seven-Segment, Ultrasonic, Servo Motor, DHT Sensor
   and DC Motor (the same groups exist as block programs in Blocks mode).
-- **Share** — copy a link to the work or download it as an `.ino` file.
+- **Share ▾** — a menu: copy a link to the work, download it as an `.ino`
+  file, or hand it in to the teacher (when classes are set up).
 - **Classes** — teachers create a class on the teacher page and share the
-  class code or link. Students press *Hand in*, type the code and their first
-  and last name, and their sketch or blocks are handed in. The teacher sees who handed in, runs each hand-in
+  class code or link. Students choose *Share ▾ → Hand in to my teacher*, type
+  the code and their first and last name, and their sketch or blocks are
+  handed in. The teacher sees who handed in, runs each hand-in
   safely in the simulator and downloads the `.ino`. See
   [docs/CLASSROOM.md](docs/CLASSROOM.md) (set up once by the site maintainer,
   free Firebase plan).
@@ -44,9 +46,10 @@ No installation is needed for students: the simulator is a static web page.
   *Documents › Arduino* sketchbook (Chrome and Edge), or copy the code to
   paste into *File › New Sketch*. Without the IDE (Chromebooks), the Arduino
   Cloud Editor can import the downloaded file.
-- **Settings** for the few hardware details that differ between board
-  revisions (button wiring, 7-segment polarity and bit order, LCD address,
-  buzzer type, LDR direction).
+- **Settings ▾** — a menu with *Reset the board* (all pins and peripherals
+  back to their power-on state) and *Board settings…* for the few hardware
+  details that differ between board revisions (button wiring, 7-segment
+  polarity and bit order, LCD address, buzzer type, LDR direction).
 - **Blocks or code.** A *Blocks* mode (Google Blockly) lets beginners snap
   together board blocks such as "turn red LED on", "wait 1 second", "button 1
   is pressed?" or "LCD show … on line 1". The blocks are turned into a normal

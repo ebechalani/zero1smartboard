@@ -3,12 +3,13 @@
  * App header tests (happy-dom): the whole app is mounted on a virtual-clock
  * board to check the toolbar — New replaces the sketch with the Arduino IDE's
  * blank sketch (asking only when hand-written work would be lost), there is
- * no GitHub link, Share opens the share dialog with the `#code=` /
- * `#blocks=` link, Arduino IDE opens its dialog with the sketch, Hand in
- * exists only when the class platform is configured and opens its dialog with
- * the work (docs/CLASSROOM.md §7.3), `#class=` links open it with the code prefilled, the
- * run status stays short, and the global keys leave a sketch alone while a
- * dialog is open.
+ * no GitHub link, the Share menu copies the `#code=` / `#blocks=` link and
+ * downloads the .ino, Arduino IDE opens its dialog with the sketch, the
+ * Settings menu resets the board or opens the settings dialog, "Hand in to my
+ * teacher" exists only when the class platform is configured and opens the
+ * Hand in dialog with the work (docs/CLASSROOM.md §7.3), `#class=` links open
+ * it with the code prefilled, the run status stays short, and the global keys
+ * leave a sketch alone while a dialog or a menu is open.
  *
  * Blockly is never loaded: in Blocks mode `createBlocksPanel` returns a small
  * fake panel whose "blocks" are a list of block types and whose sketch lists
@@ -17,7 +18,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { EditorView } from '@codemirror/view';
 import { makeBoard, settle } from './helpers';
-import { BLANK_SKETCH, mountApp, type App } from '../src/ui/app';
+import { BLANK_SKETCH, COPY_FALLBACK, mountApp, type App } from '../src/ui/app';
 import { CODE_STORAGE_KEY, encodeShareCode } from '../src/ui/editor';
 import {
   BLOCKS_BASELINE_STORAGE_KEY,
@@ -190,6 +191,8 @@ afterEach(() => {
   sessionStorage.clear();
   location.hash = '';
   Reflect.deleteProperty(window, 'confirm');
+  Reflect.deleteProperty(window, 'prompt');
+  Reflect.deleteProperty(navigator, 'clipboard');
   vi.restoreAllMocks();
 });
 
@@ -264,13 +267,37 @@ function catchDownloads(): { files(): Promise<{ name: string; text: string }[]> 
   };
 }
 
-/** Open the Examples menu and pick `title`. */
-function pickExample(root: HTMLElement, title: string): void {
-  root.querySelector<HTMLButtonElement>('[data-slot="examples"] > button')!.click();
-  const item = Array.from(root.querySelectorAll<HTMLButtonElement>('.z1-menu-item')).find((b) => b.textContent === title);
-  expect(item, title).toBeDefined();
+/** The "Label ▾" trigger of a header menu (Examples, Settings, Share). */
+function menuButton(root: HTMLElement, slot: string): HTMLButtonElement {
+  return root.querySelector<HTMLButtonElement>(`[data-slot="${slot}"] > button`)!;
+}
+
+/** The labels of the items of a header menu. */
+function menuItems(root: HTMLElement, slot: string): string[] {
+  return Array.from(root.querySelectorAll(`[data-slot="${slot}"] [role="menuitem"]`), (b) => b.textContent ?? '');
+}
+
+/** Open the header menu `slot` and pick the item `label`. */
+function pick(root: HTMLElement, slot: string, label: string): void {
+  menuButton(root, slot).click();
+  const item = Array.from(root.querySelectorAll<HTMLButtonElement>(`[data-slot="${slot}"] .z1-menu-item`)).find((b) => b.textContent === label);
+  expect(item, label).toBeDefined();
   item!.click();
 }
+
+/** Open the Examples menu and pick `title`. */
+function pickExample(root: HTMLElement, title: string): void {
+  pick(root, 'examples', title);
+}
+
+/** A clipboard whose writeText resolves (or rejects); happy-dom has none. */
+function stubClipboard(ok = true) {
+  const writeText = vi.fn<(text: string) => Promise<void>>(() => (ok ? Promise.resolve() : Promise.reject(new Error('denied'))));
+  Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+  return writeText;
+}
+
+const settingsDialog = (root: HTMLElement): HTMLDialogElement => root.querySelector<HTMLDialogElement>('dialog.z1-dialog:not(.z1-ide):not(.z1-handin)')!;
 
 const MY_SKETCH = 'void setup() {\n  pinMode(A1, OUTPUT);\n}\n\nvoid loop() {\n  // my own work\n}\n';
 /** What the Arduino IDE dialog names a download: `zero1_MMDD_HHMMSS.ino` (no student name saved). */
@@ -281,7 +308,7 @@ const SKETCH_FILE = /^zero1_\d{4}_\d{6}\.ino$/;
 // ---------------------------------------------------------------------------
 
 describe('header toolbar', () => {
-  it('starts with New, has no GitHub link and ends with Hand in, Share and Arduino IDE', () => {
+  it('starts with New, has no GitHub link and ends with the Settings and Share menus and Arduino IDE', () => {
     const root = start();
     const toolbar = root.querySelector('.z1-toolbar')!;
     const first = toolbar.firstElementChild as HTMLElement;
@@ -293,20 +320,28 @@ describe('header toolbar', () => {
       'examples',
       'run',
       'stop',
-      'reset',
       'settings',
-      'handin',
       'share',
       'ide',
       'upload',
     ]);
     // "Upload to board" only shows itself in browsers with Web Serial and a deployed toolchain.
     expect((toolbar.lastElementChild as HTMLElement).hidden).toBe(true);
-    const handin = button(root, 'handin');
-    expect(handin.textContent!.replace(/\s+/g, ' ').trim()).toBe('📥 Hand in');
-    expect(handin.getAttribute('aria-label')).toBe('Hand in your work to your teacher');
-    expect(handin.title).toBe('Hand in: send this work to your teacher');
-    expect(button(root, 'share').title).toBe('Share: copy the link or download an .ino file');
+    // No separate Reset or Hand in buttons: they live in the Settings and Share menus.
+    expect(root.querySelector('[data-slot="reset"], [data-slot="handin"]')).toBeNull();
+    const settings = menuButton(root, 'settings');
+    expect(settings.textContent!.replace(/\s+/g, ' ').trim()).toBe('⚙ Settings ▾');
+    expect(settings.getAttribute('aria-haspopup')).toBe('menu');
+    expect(settings.getAttribute('aria-label')).toBe('Open the settings menu');
+    expect(settings.querySelector('.z1-btn-label')!.textContent).toBe('Settings'); // hidden at 1366-1439 px by the CSS
+    expect(menuItems(root, 'settings')).toEqual(['Reset the board', 'Board settings…']);
+    const share = menuButton(root, 'share');
+    expect(share.textContent!.replace(/\s+/g, ' ').trim()).toBe('🔗 Share ▾');
+    expect(share.getAttribute('aria-haspopup')).toBe('menu');
+    expect(share.getAttribute('aria-label')).toBe('Open the share menu');
+    expect(share.title).toBe('Share: copy the link, download an .ino file or hand in to your teacher');
+    expect(menuItems(root, 'share')).toEqual(['Hand in to my teacher', 'Copy link', 'Download .ino']);
+    for (const slot of ['settings', 'share']) expect(root.querySelector(`[data-slot="${slot}"] [role="menu"]`)!.classList.contains('z1-menu-compact'), slot).toBe(true);
     // The brand: the full name for assistive technology, the short one on smaller screens.
     expect(root.querySelector('.z1-title-full')!.textContent).toBe('ZERO1 Smart Board Simulator');
     expect(root.querySelector('.z1-title-short')!.textContent).toBe('ZERO1 Simulator');
@@ -319,17 +354,18 @@ describe('header toolbar', () => {
     expect(root.querySelector('header')!.textContent).not.toContain('GitHub');
   });
 
-  it('has no Hand in button at all while the class platform is not configured', () => {
+  it('has no Hand in item at all while the class platform is not configured', () => {
     fake.configured = false;
     const root = start();
-    expect(root.querySelector('[data-slot="handin"]')).toBeNull();
     expect(root.querySelector('dialog.z1-handin')).toBeNull();
+    expect(menuItems(root, 'share')).toEqual(['Copy link', 'Download .ino']);
+    expect(menuButton(root, 'share').title).toBe('Share: copy the link or download an .ino file');
+    expect(menuButton(root, 'share').querySelector('.z1-handin-name')).toBeNull();
     expect(Array.from(root.querySelectorAll('.z1-toolbar > *'), (el) => (el as HTMLElement).dataset.slot)).toEqual([
       'new',
       'examples',
       'run',
       'stop',
-      'reset',
       'settings',
       'share',
       'ide',
@@ -337,13 +373,14 @@ describe('header toolbar', () => {
     ]);
   });
 
-  it('reads "Hand in · Ali Khoury" from the saved class session', () => {
+  it('reads "Share · Ali Khoury" from the saved class session', () => {
     saveSession({ v: 2, code: 'BKT4M9', className: '8B Robotics', firstName: 'Ali', lastName: 'Khoury', uid: 'u1', lastUsedAt: 0, lastHandinAt: 0 });
     const root = start();
-    const handin = button(root, 'handin');
-    expect(handin.querySelector('.z1-handin-name')!.textContent).toBe(' · Ali Khoury');
-    expect(handin.textContent!.replace(/\s+/g, ' ').trim()).toBe('📥 Hand in · Ali Khoury');
-    expect(handin.getAttribute('aria-label')).toBe('Hand in as Ali Khoury to your class');
+    const share = menuButton(root, 'share');
+    expect(share.querySelector('.z1-handin-name')!.textContent).toBe(' · Ali Khoury');
+    expect(share.textContent!.replace(/\s+/g, ' ').trim()).toBe('🔗 Share · Ali Khoury ▾');
+    expect(share.getAttribute('aria-label')).toBe('Open the share menu (hand in as Ali Khoury)');
+    expect(share.title).toBe('Share: copy the link, download an .ino file or hand in as Ali Khoury');
   });
 
   it('is exactly the Arduino IDE blank sketch', () => {
@@ -400,30 +437,89 @@ describe('New', () => {
   });
 });
 
-describe('Share', () => {
-  it('opens the share dialog with the #code= link, and Esc there does not stop the sketch', () => {
+describe('Share menu', () => {
+  it('Copy link puts the #code= link on the clipboard and closes the menu; Esc in the open menu does not stop the sketch', async () => {
     const root = start(MY_SKETCH);
-    button(root, 'share').click();
-    const dialog = root.querySelector<HTMLDialogElement>('dialog.z1-share')!;
-    expect(dialog.open).toBe(true);
-    const link = dialog.querySelector<HTMLInputElement>('#z1-share-url')!.value;
-    expect(link.endsWith(`#code=${encodeShareCode(MY_SKETCH)}`)).toBe(true);
-
+    const writeText = stubClipboard();
     const stop = vi.spyOn(app!, 'stop');
+    menuButton(root, 'share').click();
+    expect(menuButton(root, 'share').getAttribute('aria-expanded')).toBe('true');
     key({ key: 'Escape' });
     expect(stop).not.toHaveBeenCalled();
 
-    dialog.querySelector<HTMLButtonElement>('[data-action="close"]')!.click();
-    expect(dialog.open).toBe(false);
+    menuButton(root, 'share').click(); // closed again
+    expect(menuButton(root, 'share').getAttribute('aria-expanded')).toBe('false');
+    pick(root, 'share', 'Copy link');
+    expect(menuButton(root, 'share').getAttribute('aria-expanded')).toBe('false');
+    expect(writeText).toHaveBeenCalledTimes(1);
+    const link = writeText.mock.calls[0][0];
+    expect(link.startsWith(`${location.origin}${location.pathname}`)).toBe(true);
+    expect(link.endsWith(`#code=${encodeShareCode(MY_SKETCH)}`)).toBe(true);
+    await settle();
+    expect(toastText(root)).toBe('Link copied');
+
     key({ key: 'Escape' });
     expect(stop).toHaveBeenCalledTimes(1);
+  });
+
+  it('asks for Ctrl+C with the link in a prompt when the clipboard refuses or is missing', async () => {
+    const root = start(MY_SKETCH);
+    const prompt = vi.fn((_text?: string, _value?: string) => null);
+    window.prompt = prompt;
+    stubClipboard(false);
+    pick(root, 'share', 'Copy link');
+    await settle();
+    expect(toastText(root)).toBe(COPY_FALLBACK);
+    expect(prompt).toHaveBeenCalledTimes(1);
+    expect(prompt.mock.calls[0][0]).toBe(COPY_FALLBACK);
+    expect(prompt.mock.calls[0][1]!.endsWith(`#code=${encodeShareCode(MY_SKETCH)}`)).toBe(true);
+
+    Object.defineProperty(navigator, 'clipboard', { value: undefined, configurable: true }); // http://, old browsers
+    pick(root, 'share', 'Copy link');
+    await settle();
+    expect(prompt).toHaveBeenCalledTimes(2);
+  });
+
+  it('Download .ino saves the sketch under a unique name that carries the remembered student name', async () => {
+    const root = start(MY_SKETCH);
+    const downloads = catchDownloads();
+    pick(root, 'share', 'Download .ino');
+    let [file] = await downloads.files();
+    expect(file.name).toMatch(SKETCH_FILE);
+    expect(file.text).toBe(MY_SKETCH);
+    expect(toastText(root)).toBe(`Downloading ${file.name}`);
+
+    app!.destroy();
+    app = null;
+    document.body.innerHTML = '';
+    saveSession({ v: 2, code: 'BKT4M9', className: '8B', firstName: 'Élise', lastName: 'M', uid: 'u1', lastUsedAt: 0, lastHandinAt: 0 });
+    const again = start(MY_SKETCH);
+    pick(again, 'share', 'Download .ino');
+    [, file] = await downloads.files();
+    expect(file.name).toMatch(/^zero1_Elise_M_\d{4}_\d{6}\.ino$/);
+  });
+});
+
+describe('Settings menu', () => {
+  it('Reset the board resets at once; Board settings… opens the settings dialog', () => {
+    const root = start(MY_SKETCH);
+    const reset = vi.spyOn(app!, 'reset').mockResolvedValue(undefined);
+    pick(root, 'settings', 'Reset the board');
+    expect(reset).toHaveBeenCalledTimes(1);
+    expect(menuButton(root, 'settings').getAttribute('aria-expanded')).toBe('false');
+    expect(settingsDialog(root).open).toBe(false);
+
+    pick(root, 'settings', 'Board settings…');
+    expect(settingsDialog(root).open).toBe(true);
+    expect(settingsDialog(root).querySelector('h2')!.textContent).toBe('Board settings');
+    expect(reset).toHaveBeenCalledTimes(1);
   });
 });
 
 describe('Hand in', () => {
   it('opens the Hand in dialog with the editor text and the untouched-example / error facts', async () => {
     const root = start(MY_SKETCH);
-    button(root, 'handin').click();
+    pick(root, 'share', 'Hand in to my teacher');
     await settle();
     const dialog = root.querySelector<HTMLDialogElement>('dialog.z1-handin')!;
     expect(dialog.open).toBe(true);
@@ -440,17 +536,17 @@ describe('Hand in', () => {
     // An untouched example, and a sketch with errors.
     stubConfirm(true);
     pickExample(root, EXAMPLES[0].title);
-    button(root, 'handin').click();
+    pick(root, 'share', 'Hand in to my teacher');
     expect(fake.handinOpens[1].work.unchanged).toEqual({ kind: 'example', title: EXAMPLES[0].title });
     expect(fake.handinOpens[1].work.errorCount).toBe(0);
     dialog.close();
     button(root, 'new').click();
     await Promise.resolve();
-    button(root, 'handin').click();
+    pick(root, 'share', 'Hand in to my teacher');
     expect(fake.handinOpens[2].work.unchanged).toEqual({ kind: 'blank' });
     dialog.close();
     EditorView.findFromDOM(root.querySelector<HTMLElement>('.cm-editor')!)!.dispatch({ changes: { from: 0, insert: 'int x = ;\n' } });
-    button(root, 'handin').click();
+    pick(root, 'share', 'Hand in to my teacher');
     expect(fake.handinOpens[3].work.unchanged).toBeNull();
     expect(fake.handinOpens[3].work.errorCount).toBeGreaterThan(0);
   });
@@ -526,31 +622,46 @@ describe('run status', () => {
   });
 });
 
-describe('global keys with a dialog open', () => {
-  it('leave the sketch alone while the Arduino IDE, Share, Hand in or Settings dialog is open', () => {
+describe('global keys with a dialog or a menu open', () => {
+  it('leave the sketch alone while the Arduino IDE, Hand in or Settings dialog is open', () => {
     const root = start(MY_SKETCH);
     const run = vi.spyOn(app!, 'run').mockResolvedValue(undefined);
     const stop = vi.spyOn(app!, 'stop').mockResolvedValue(undefined);
 
-    for (const [slot, selector] of [
-      ['ide', 'dialog.z1-ide'],
-      ['share', 'dialog.z1-share'],
-      ['handin', 'dialog.z1-handin'],
-      ['settings', 'dialog.z1-dialog:not(.z1-share):not(.z1-ide):not(.z1-handin)'],
+    for (const [name, open, selector] of [
+      ['ide', () => button(root, 'ide').click(), 'dialog.z1-ide'],
+      ['handin', () => pick(root, 'share', 'Hand in to my teacher'), 'dialog.z1-handin'],
+      ['settings', () => pick(root, 'settings', 'Board settings…'), 'dialog.z1-dialog:not(.z1-ide):not(.z1-handin)'],
     ] as const) {
-      button(root, slot).click();
+      open();
       const dialog = root.querySelector<HTMLDialogElement>(selector)!;
-      expect(dialog.open, slot).toBe(true);
+      expect(dialog.open, name).toBe(true);
       key({ key: 'Enter', ctrlKey: true });
       key({ key: 'Enter', metaKey: true });
       key({ key: 'Escape' });
-      expect(run, slot).not.toHaveBeenCalled();
-      expect(stop, slot).not.toHaveBeenCalled();
+      expect(run, name).not.toHaveBeenCalled();
+      expect(stop, name).not.toHaveBeenCalled();
       dialog.close();
     }
 
     key({ key: 'Enter', ctrlKey: true });
     expect(run).toHaveBeenCalledTimes(1);
+    key({ key: 'Escape' });
+    expect(stop).toHaveBeenCalledTimes(1);
+  });
+
+  it('Esc does not stop the sketch while the Examples, Settings or Share menu is open', () => {
+    const root = start(MY_SKETCH);
+    const stop = vi.spyOn(app!, 'stop').mockResolvedValue(undefined);
+    for (const slot of ['examples', 'settings', 'share']) {
+      const trigger = menuButton(root, slot);
+      trigger.click();
+      expect(trigger.getAttribute('aria-expanded'), slot).toBe('true');
+      key({ key: 'Escape' });
+      expect(stop, slot).not.toHaveBeenCalled();
+      trigger.click();
+      expect(trigger.getAttribute('aria-expanded'), slot).toBe('false');
+    }
     key({ key: 'Escape' });
     expect(stop).toHaveBeenCalledTimes(1);
   });
@@ -569,19 +680,18 @@ describe('Blocks mode', () => {
     expect(editorText(root)).toBe(sketchOf(MY_WS));
   });
 
-  it('Share opens the dialog with the #blocks= link, and Download .ino saves the generated sketch', async () => {
+  it('Copy link copies the #blocks= link, and Download .ino saves the generated sketch', async () => {
     const root = await startBlocks();
     panel().edit(MY_WS);
     const downloads = catchDownloads();
-    button(root, 'share').click();
-    const dialog = root.querySelector<HTMLDialogElement>('dialog.z1-share')!;
-    expect(dialog.open).toBe(true);
-    const link = dialog.querySelector<HTMLInputElement>('#z1-share-url')!.value;
+    const writeText = stubClipboard();
+    pick(root, 'share', 'Copy link');
+    const link = writeText.mock.calls[0][0];
     const hash = link.slice(link.indexOf('#'));
     expect(hash.startsWith('#blocks=')).toBe(true);
     expect(fingerprint(blocksFromHash(hash)!)).toBe(fingerprint(MY_WS));
 
-    dialog.querySelector<HTMLButtonElement>('[data-action="download"]')!.click();
+    pick(root, 'share', 'Download .ino');
     const [file] = await downloads.files();
     expect(file.name).toMatch(/^zero1_\w*\.ino$/);
     expect(file.text).toBe(sketchOf(MY_WS));
@@ -603,7 +713,7 @@ describe('Blocks mode', () => {
 
   it('Hand in gets the generated sketch, the workspace JSON and the example / blank facts', async () => {
     const root = await startBlocks();
-    button(root, 'handin').click();
+    pick(root, 'share', 'Hand in to my teacher');
     expect(fake.handinOpens[0].work).toEqual({
       kind: 'blocks',
       code: sketchOf(panel().getWorkspaceJson()),
@@ -614,23 +724,28 @@ describe('Blocks mode', () => {
     root.querySelector<HTMLDialogElement>('dialog.z1-handin')!.close();
     pickExample(root, BLINK_EXAMPLE.title);
     await settle();
-    button(root, 'handin').click();
+    pick(root, 'share', 'Hand in to my teacher');
     expect(fake.handinOpens[1].work.unchanged).toEqual({ kind: 'example', title: BLINK_EXAMPLE.title });
     root.querySelector<HTMLDialogElement>('dialog.z1-handin')!.close();
     panel().edit(MY_WS);
-    button(root, 'handin').click();
+    pick(root, 'share', 'Hand in to my teacher');
     expect(fake.handinOpens[2].work.unchanged).toBeNull();
     expect(fake.handinOpens[2].work.workspaceJson).toBe(JSON.stringify(panel().getWorkspaceJson()));
   });
 
-  it('asks to wait while the blocks are still loading', () => {
+  it('asks to wait while the blocks are still loading', async () => {
     localStorage.setItem(MODE_STORAGE_KEY, 'blocks');
     const root = start();
-    for (const slot of ['share', 'ide', 'handin']) {
-      button(root, slot).click();
-      expect(toastText(root), slot).toBe('The blocks are still loading — try again in a moment');
+    const writeText = stubClipboard();
+    const downloads = catchDownloads();
+    for (const item of ['Hand in to my teacher', 'Copy link', 'Download .ino']) {
+      pick(root, 'share', item);
+      expect(toastText(root), item).toBe('The blocks are still loading — try again in a moment');
     }
-    expect(root.querySelector<HTMLDialogElement>('dialog.z1-share')!.open).toBe(false);
+    button(root, 'ide').click();
+    expect(toastText(root)).toBe('The blocks are still loading — try again in a moment');
+    expect(writeText).not.toHaveBeenCalled();
+    expect(await downloads.files()).toEqual([]);
     expect(root.querySelector<HTMLDialogElement>('dialog.z1-ide')!.open).toBe(false);
     expect(root.querySelector<HTMLDialogElement>('dialog.z1-handin')!.open).toBe(false);
     expect(fake.handinOpens).toEqual([]);
@@ -643,11 +758,10 @@ describe('Blocks mode', () => {
     expect(editorText(root)).toBe(ERROR_SKETCH);
     const downloads = catchDownloads();
 
-    button(root, 'share').click();
-    const share = root.querySelector<HTMLDialogElement>('dialog.z1-share')!;
-    expect(share.querySelector<HTMLInputElement>('#z1-share-url')!.value).toContain('#blocks=');
-    share.querySelector<HTMLButtonElement>('[data-action="download"]')!.click();
-    share.close();
+    const writeText = stubClipboard();
+    pick(root, 'share', 'Copy link');
+    expect(writeText.mock.calls[0][0]).toContain('#blocks=');
+    pick(root, 'share', 'Download .ino');
 
     button(root, 'ide').click();
     root.querySelector<HTMLButtonElement>('dialog.z1-ide [data-action="download"]')!.click();
