@@ -113,7 +113,7 @@ describe('review mode', () => {
     expect(isReviewFrame()).toBe(true);
   });
 
-  it('touches no storage at all, announces itself to the parent and hides New, Examples, Hand in, Share and Arduino IDE', () => {
+  it('touches no storage at all, announces itself to the parent and hides New, Examples, Share (with Hand in) and Arduino IDE', () => {
     localStorage.setItem(MODE_STORAGE_KEY, 'blocks');
     localStorage.setItem(CODE_STORAGE_KEY, 'void setup() { /* saved */ }');
     sandbox();
@@ -125,8 +125,11 @@ describe('review mode', () => {
     expect(document.body.dataset.mode).toBe('code'); // not the saved Blocks mode: storage was never read
     expect(editorText(root)).toBe('');
     for (const name of ['new', 'examples', 'share', 'ide']) expect(slot(root, name).hidden, name).toBe(true);
-    expect(root.querySelector('[data-slot="handin"]')).toBeNull();
-    for (const name of ['run', 'stop', 'reset', 'settings', 'mode-code', 'mode-blocks']) expect(slot(root, name).hidden, name).toBe(false);
+    expect(root.querySelector('dialog.z1-handin')).toBeNull();
+    expect(Array.from(root.querySelectorAll('[data-slot="share"] [role="menuitem"]'), (b) => b.textContent)).toEqual(['Copy link', 'Download .ino']);
+    // The Settings menu (Reset the board, Board settings…) stays: the teacher may reset and rewire the board.
+    for (const name of ['run', 'stop', 'settings', 'mode-code', 'mode-blocks']) expect(slot(root, name).hidden, name).toBe(false);
+    expect(Array.from(root.querySelectorAll('[data-slot="settings"] [role="menuitem"]'), (b) => b.textContent)).toEqual(['Reset the board', 'Board settings…']);
     expect(location.hash).toBe('#review'); // the hash is not a share link and stays
   });
 

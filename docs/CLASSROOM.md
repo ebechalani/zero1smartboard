@@ -31,7 +31,7 @@ A hand-in platform for the ZERO1 simulator, modelled on Tinkercad Classrooms.
   - Creates a class and gets a 6-character **class code** (`BKT-4M9`) and a **class
     link** (`…/zero1smartboard/#class=BKT4M9`). There is nothing else to prepare.
 - **Student**
-  - Opens the class link, or presses **Hand in** and types the code.
+  - Opens the class link, or chooses **Share ▾ → Hand in to my teacher** and types the code.
   - **Types their first name and last name.** There is no email and no password: the
     student uses Firebase Anonymous Authentication. The device remembers the code and
     the name, so the next time it is one click ("Hand in as Ali Khoury to class BKT-4M9").
@@ -45,9 +45,9 @@ A hand-in platform for the ZERO1 simulator, modelled on Tinkercad Classrooms.
 - **Backend**: Firebase Authentication and Cloud Firestore on the free **Spark** plan.
   There is no server code: all logic is client code plus Firestore Security Rules.
 - **Email relay**: the platform **replaces** it (tools/email-relay, docs/EMAIL.md,
-  `EMAIL_RELAY_URL`, "Send to teacher"). Share keeps **Copy link** and **Download .ino**.
+  `EMAIL_RELAY_URL`, "Send to teacher"). The Share menu keeps **Copy link** and **Download .ino**.
 - **Not configured**: until `src/firebase-config.ts` is filled in, the simulator has no
-  Hand in button and never downloads Firebase. The teacher page says "not set up yet".
+  Hand in menu item and never downloads Firebase. The teacher page says "not set up yet".
 
 ### 0.2 Fixed decisions (from the teacher; not re-opened)
 
@@ -90,7 +90,7 @@ A hand-in platform for the ZERO1 simulator, modelled on Tinkercad Classrooms.
 ```
  simulator (index.html)                    teacher.html                       review.html
  ┌────────────────────────────────┐        ┌────────────────────────────┐     ┌─────────────────────────────┐
- │ header: [Hand in · Ali Khoury]   │       │ src/teacher/* (vanilla DOM) │     │ trusted banner + Download   │
+ │ header: [Share · Ali Khoury ▾]   │       │ src/teacher/* (vanilla DOM) │     │ trusted banner + Download   │
  │ src/ui/handin-dialog.ts         │        │  uses TeacherApi            │ ──► │ <iframe sandbox=allow-scripts│
  │  uses StudentApi (lazy)         │        │  <a href=review.html#review=│  a  │   src=index.html#review>     │
  │ review mode (#review, sandboxed)│◄───────┼──── postMessage payload ────┼─────│  simulator, opaque origin   │
@@ -197,10 +197,10 @@ the tests. B and C may polish the wording later; the codes stay.
 ### 1.1 Not configured (`isClassroomConfigured() === false`)
 
 - **Simulator**
-  - No Hand in button: it is absent from the DOM, not hidden.
+  - No **Hand in to my teacher** item in the Share menu: it is absent from the DOM, not hidden.
   - `src/classroom/*` is never imported, and no request goes to a Google host.
   - A `#class=` link shows the toast "Classes are not set up on this site." and is ignored.
-  - Share shows Copy link and Download .ino.
+  - The Share menu shows Copy link and Download .ino only.
 - **teacher.html**: one card, with no Firebase download:
   - "The class platform is not set up on this site yet."
   - For the maintainer: "Follow docs/CLASSROOM.md to create the Firebase project and
@@ -214,12 +214,14 @@ the tests. B and C may polish the wording later; the codes stay.
 One short flow: **class code → first name + last name → Hand in**. The device remembers
 the code and the name.
 
-**Header.**
-- While a name is remembered, the button reads **Hand in · Ali Khoury**. Otherwise **Hand in**.
+**Header.** The entry point is the **Share ▾** menu (Copy link, Download .ino and, when
+the class platform is configured, **Hand in to my teacher**); there is no separate Hand in
+button.
+- While a name is remembered, the Share button reads **Share · Ali Khoury**. Otherwise **Share**.
 - The name comes from the saved session, read synchronously at start-up. So the next
   student at a lab PC sees the previous student's name until they press **Change**.
-- Clicking it builds the work like Share does (`exportSketch()`) and opens the dialog in
-  **Loading** ("Connecting to your class…"), which calls `api.restore()`.
+- Choosing **Hand in to my teacher** builds the work like Copy link does (`exportSketch()`)
+  and opens the dialog in **Loading** ("Connecting to your class…"), which calls `api.restore()`.
 - If the blocks are still loading, the app shows the toast "The blocks are still
   loading — try again in a moment" and opens no dialog.
 
