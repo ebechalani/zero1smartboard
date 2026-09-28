@@ -109,6 +109,18 @@ function untilLoop(condition: BlockJson, body: BlockJson[]): BlockJson {
   return { type: 'controls_whileUntil', fields: { MODE: 'UNTIL' }, inputs };
 }
 
+function whileLoop(condition: BlockJson, body: BlockJson[]): BlockJson {
+  const inputs: Record<string, InputJson> = { BOOL: v(condition) };
+  if (body.length) inputs['DO'] = v(chain(body));
+  return { type: 'controls_whileUntil', fields: { MODE: 'WHILE' }, inputs };
+}
+
+/** constrain(value, low, high). */
+const constrain = (value: BlockJson, low: number, high: number): BlockJson => ({
+  type: 'math_constrain',
+  inputs: { VALUE: v(value), LOW: n(low), HIGH: n(high) },
+});
+
 /** Link statement blocks with `next`. */
 function chain(blocks: BlockJson[]): BlockJson {
   const [first, ...rest] = blocks;
@@ -158,6 +170,8 @@ const ldrRead = (): BlockJson => ({ type: 'z1_ldr_read' });
 const distanceCm = (): BlockJson => ({ type: 'z1_ultrasonic_cm' });
 const dhtRead = (what: 'TEMPERATURE' | 'HUMIDITY'): BlockJson => ({ type: 'z1_dht_read', fields: { WHAT: what } });
 const beep = (ms: number): BlockJson[] => [buzzer('ON'), waitMs(ms), buzzer('OFF')];
+/** Wait until the button is released, so that one press does one thing (holding does not repeat). */
+const waitForRelease = (button: '1' | '2'): BlockJson => whileLoop(buttonPressed(button), [waitMs(10)]);
 
 /** An empty program: the two hats and nothing else. */
 export const DEFAULT_WORKSPACE: object = workspace([], []);
@@ -330,115 +344,110 @@ export const BLOCK_EXAMPLES: BlockExample[] = [
   // --- LED ---------------------------------------------------------------------
   {
     id: 'b40_led_blink_red',
-    title: 'Blinking red LED',
+    title: 'Blink the red LED',
     group: 'LED',
-    description: 'The red LED (A1) is on for 1 second and off for 1 second, forever.',
-    workspace: workspace([], [led('RED', 'ON'), waitS(1), led('RED', 'OFF'), waitS(1)]),
+    description: 'The simplest program: the red LED (A1) is on for 500 ms and off for 500 ms, forever.',
+    workspace: workspace([], [led('RED', 'ON'), waitMs(500), led('RED', 'OFF'), waitMs(500)]),
   },
   {
     id: 'b41_led_red_green',
-    title: 'Blinking alternately between red and green',
+    title: 'Blink red and green alternately',
     group: 'LED',
-    description: 'Red (A1) and green (A2) take turns every 500 ms; the old one goes off before the new one comes on.',
+    description: 'Red (A1) and green (A2) take turns every 500 ms; the old one goes off before the new one comes on, so they are never on together.',
     workspace: workspace([], [led('GREEN', 'OFF'), led('RED', 'ON'), waitMs(500), led('RED', 'OFF'), led('GREEN', 'ON'), waitMs(500)]),
   },
   {
     id: 'b42_led_blink_10_times',
-    title: 'Blinking 10 times',
+    title: 'Blink the red LED 10 times',
     group: 'LED',
-    description: 'When the board starts, a repeat block blinks the red LED exactly 10 times; then nothing else happens.',
-    workspace: workspace([repeat(10, [led('RED', 'ON'), waitMs(300), led('RED', 'OFF'), waitMs(300)])], []),
+    description: 'When the board starts, a repeat block blinks the red LED exactly 10 times (300 ms on, 300 ms off), prints "Done" and the LED stays off.',
+    workspace: workspace([repeat(10, [led('RED', 'ON'), waitMs(300), led('RED', 'OFF'), waitMs(300)]), printLine(text('Done'))], []),
   },
 
   // --- Buzzer ------------------------------------------------------------------
   {
     id: 'b43_buzzer_short_beeps',
-    title: 'Short beeps (infinite)',
+    title: 'Short beeps forever',
     group: 'Buzzer',
-    description: 'The buzzer (D8) is switched on for 100 ms and off for 500 ms, forever.',
-    workspace: workspace([], [...beep(100), waitMs(500)]),
+    description: 'The buzzer (D8) is switched on for 100 ms and off for 400 ms, forever: one short beep every half second.',
+    workspace: workspace([], [...beep(100), waitMs(400)]),
   },
   {
-    id: 'b44_buzzer_beep_10_times',
-    title: 'Beep 10 times',
+    id: 'b44_buzzer_led_10_times',
+    title: 'Beep 10 times with the red LED',
     group: 'Buzzer',
-    description: 'When the board starts, a repeat block beeps the buzzer exactly 10 times (200 ms on, 200 ms off).',
-    workspace: workspace([repeat(10, [...beep(200), waitMs(200)])], []),
-  },
-  {
-    id: 'b45_buzzer_led_10_times',
-    title: 'Beep with red LED 10 times',
-    group: 'Buzzer',
-    description: 'Ten times: the red LED and the buzzer come on together for 200 ms, then both go off for 300 ms.',
-    workspace: workspace([repeat(10, [led('RED', 'ON'), buzzer('ON'), waitMs(200), led('RED', 'OFF'), buzzer('OFF'), waitMs(300)])], []),
+    description: 'When the board starts, 10 times: the buzzer and the red LED come on together for 200 ms, then both go off for 300 ms; then "Done" is printed and all stays silent.',
+    workspace: workspace(
+      [repeat(10, [buzzer('ON'), led('RED', 'ON'), waitMs(200), buzzer('OFF'), led('RED', 'OFF'), waitMs(300)]), printLine(text('Done'))],
+      [],
+    ),
   },
 
   // --- Push Button -------------------------------------------------------------
   {
-    id: 'b46_button_a_red_led',
-    title: 'Turn red LED ON with Button A',
+    id: 'b45_buttons_leds',
+    title: 'Buttons light the LEDs',
     group: 'Push Button',
-    description: 'The red LED (A1) is on while button 1 (D6) is pressed, off otherwise.',
-    workspace: workspace([], [ifBlock([[buttonPressed('1'), [led('RED', 'ON')]]], [led('RED', 'OFF')])]),
+    description: 'The red LED (A1) is on while button 1 (D6) is held and the green LED (A2) while button 2 (D7) is held; a released button switches its LED off.',
+    workspace: workspace(
+      [],
+      [
+        ifBlock([[buttonPressed('1'), [led('RED', 'ON')]]], [led('RED', 'OFF')]),
+        ifBlock([[buttonPressed('2'), [led('GREEN', 'ON')]]], [led('GREEN', 'OFF')]),
+        waitMs(20),
+      ],
+    ),
   },
   {
-    id: 'b47_button_b_red_led',
-    title: 'Turn red LED ON with Button B',
+    id: 'b46_buttons_beeps',
+    title: 'Buttons: short beep and long beep',
     group: 'Push Button',
-    description: 'The red LED (A1) is on while button 2 (D7) is pressed, off otherwise.',
-    workspace: workspace([], [ifBlock([[buttonPressed('2'), [led('RED', 'ON')]]], [led('RED', 'OFF')])]),
-  },
-  {
-    id: 'b48_button_a_short_beep',
-    title: 'Button A – short beep',
-    group: 'Push Button',
-    description: 'While button 1 is pressed the buzzer gives short 100 ms beeps with 200 ms of rest between them.',
-    workspace: workspace([], [ifBlock([[buttonPressed('1'), [...beep(100), waitMs(200)]]])]),
-  },
-  {
-    id: 'b49_button_b_long_beep',
-    title: 'Button B – long beep',
-    group: 'Push Button',
-    description: 'While button 2 is pressed the buzzer gives long 1 s beeps with 200 ms of rest between them.',
-    workspace: workspace([], [ifBlock([[buttonPressed('2'), [...beep(1000), waitMs(200)]]])]),
+    description: 'A press of button 1 gives one short beep (100 ms) and a press of button 2 one long beep (1 s); the program then waits for the release, so holding does not repeat the beep.',
+    workspace: workspace(
+      [],
+      [
+        ifBlock([[buttonPressed('1'), [...beep(100), waitForRelease('1')]]]),
+        ifBlock([[buttonPressed('2'), [...beep(1000), waitForRelease('2')]]]),
+      ],
+    ),
   },
 
   // --- RGB LED -----------------------------------------------------------------
   {
-    id: 'b50_rgb_red_green_blue',
-    title: 'Display patterns: Red → Green → Blue',
+    id: 'b47_rgb_red_green_blue',
+    title: 'RGB LED: red, green, blue',
     group: 'RGB LED',
-    description: 'The RGB LED (D9) shows red, green and blue for half a second each, forever.',
-    workspace: workspace([], [rgb('RED'), waitMs(500), rgb('GREEN'), waitMs(500), rgb('BLUE'), waitMs(500)]),
+    description: 'The RGB LED (D9) shows red, green and blue for one second each, forever.',
+    workspace: workspace([], [rgb('RED'), waitS(1), rgb('GREEN'), waitS(1), rgb('BLUE'), waitS(1)]),
   },
   {
-    id: 'b51_rgb_buttons',
-    title: 'Button A → Red (RGB), Button B → Green (RGB)',
+    id: 'b48_rgb_buttons',
+    title: 'Buttons colour the RGB LED',
     group: 'RGB LED',
-    description: 'Button 1 makes the RGB LED red, button 2 makes it green, and it is off when no button is pressed.',
+    description: 'While button 1 is held the RGB LED is red, while button 2 is held it is green, and it is off when no button is pressed.',
     workspace: workspace([], [ifBlock([[buttonPressed('1'), [rgb('RED')]], [buttonPressed('2'), [rgb('GREEN')]]], [rgb('OFF')]), waitMs(20)]),
   },
 
   // --- LDR ---------------------------------------------------------------------
   {
-    id: 'b52_ldr_serial',
-    title: 'Display LDR value on Serial Monitor',
+    id: 'b49_ldr_serial',
+    title: 'Show the light level on the Serial Monitor',
     group: 'LDR',
-    description: 'Prints the light sensor value (A3) every 200 ms. Flip the POT / LDR switch to LDR, or you read the knob.',
-    workspace: workspace([], [printLabeled('LDR', ldrRead()), waitMs(200)]),
+    description: 'Prints "Light: <value>" from the light sensor (A3) every 500 ms. Flip the POT / LDR slide switch to LDR, or you read the knob instead.',
+    workspace: workspace([], [printLabeled('Light', ldrRead()), waitMs(500)]),
   },
   {
-    id: 'b53_ldr_red_green',
-    title: 'Red LED ON if LDR < 500; Green LED ON if LDR > 500',
+    id: 'b50_ldr_red_green',
+    title: 'Night light: red when dark, green when bright',
     group: 'LDR',
-    description: 'Below 500 the red LED is on, otherwise the green one; the value is printed. Flip the POT / LDR switch to LDR.',
+    description: 'Below 500 (dark) the red LED is on, otherwise the green one; the value is printed every 500 ms. Flip the POT / LDR slide switch to LDR.',
     workspace: workspace(
       [],
       [
         setVar('light', ldrRead()),
-        printLabeled('LDR', getVar('light')),
-        ifBlock([[compare('LT', getVar('light'), num(500)), [led('RED', 'ON'), led('GREEN', 'OFF')]]], [led('RED', 'OFF'), led('GREEN', 'ON')]),
-        waitMs(200),
+        printLabeled('Light', getVar('light')),
+        ifBlock([[compare('LT', getVar('light'), num(500)), [led('RED', 'ON'), led('GREEN', 'OFF')]]], [led('GREEN', 'ON'), led('RED', 'OFF')]),
+        waitMs(500),
       ],
       [{ name: 'light', id: 'light' }],
     ),
@@ -446,148 +455,147 @@ export const BLOCK_EXAMPLES: BlockExample[] = [
 
   // --- Seven-Segment -----------------------------------------------------------
   {
-    id: 'b54_seg_button_a_1_to_4',
-    title: 'On Button A → display numbers from 1 to 4',
+    id: 'b51_seg_buttons_count',
+    title: 'Count up and down with the buttons',
     group: 'Seven-Segment',
-    description: 'When button 1 is pressed, a count loop shows 1, 2, 3, 4 on the 7-segment display (one per second), then clears it.',
+    description: 'Button 1 counts 1, 2, 3, 4 and button 2 counts 7, 6, 5, 4, 3, 2, 1 on the 7-segment display (one digit per second, each one printed too); then the display goes blank again.',
     workspace: workspace(
       [sevenSegClear()],
-      [ifBlock([[buttonPressed('1'), [forLoop('n', 1, 4, 1, [sevenSegDigit(1, getVar('n')), waitS(1)]), sevenSegClear()]]])],
-      [{ name: 'n', id: 'n' }],
-    ),
-  },
-  {
-    id: 'b55_seg_button_b_7_to_1',
-    title: 'On Button B → display numbers from 7 to 1',
-    group: 'Seven-Segment',
-    description: 'When button 2 is pressed, a count loop (by -1) shows 7, 6, 5, 4, 3, 2, 1 on the display, then clears it.',
-    workspace: workspace(
-      [sevenSegClear()],
-      [ifBlock([[buttonPressed('2'), [forLoop('n', 7, 1, -1, [sevenSegDigit(7, getVar('n')), waitS(1)]), sevenSegClear()]]])],
+      [
+        ifBlock([[buttonPressed('1'), [forLoop('n', 1, 4, 1, [sevenSegDigit(1, getVar('n')), printLine(getVar('n')), waitS(1)]), sevenSegClear()]]]),
+        ifBlock([[buttonPressed('2'), [forLoop('n', 7, 1, -1, [sevenSegDigit(7, getVar('n')), printLine(getVar('n')), waitS(1)]), sevenSegClear()]]]),
+      ],
       [{ name: 'n', id: 'n' }],
     ),
   },
 
   // --- Ultrasonic --------------------------------------------------------------
   {
-    id: 'b56_ultrasonic_serial',
-    title: 'Display distance on the Serial Monitor',
+    id: 'b52_ultrasonic_serial',
+    title: 'Show the distance on the Serial Monitor',
     group: 'Ultrasonic',
-    description: 'Prints the distance measured by the ultrasonic sensor (D3/D2) every 300 ms.',
-    workspace: workspace([], [printLabeled('distance (cm)', distanceCm()), waitMs(300)]),
+    description: 'Prints "Distance: <cm> cm" measured by the ultrasonic sensor (TRIG D3 / ECHO D2) every 500 ms.',
+    workspace: workspace([], [printLine(join(text('Distance: '), distanceCm(), text(' cm'))), waitMs(500)]),
   },
   {
-    id: 'b57_ultrasonic_red_near',
-    title: 'Red LED ON if distance < 10 cm',
+    id: 'b53_ultrasonic_red_green',
+    title: 'Distance alarm: red LED near, green LED far',
     group: 'Ultrasonic',
-    description: 'The red LED is on when the ultrasonic sensor sees something closer than 10 cm; the distance is printed.',
+    description: 'Closer than 10 cm the red LED is on, otherwise the green one; the distance is printed every 500 ms.',
     workspace: workspace(
       [],
       [
         setVar('distance', distanceCm()),
-        printLabeled('distance (cm)', getVar('distance')),
-        ifBlock([[compare('LT', getVar('distance'), num(10)), [led('RED', 'ON')]]], [led('RED', 'OFF')]),
-        waitMs(200),
+        printLine(join(text('Distance: '), getVar('distance'), text(' cm'))),
+        ifBlock([[compare('LT', getVar('distance'), num(10)), [led('RED', 'ON'), led('GREEN', 'OFF')]]], [led('GREEN', 'ON'), led('RED', 'OFF')]),
+        waitMs(500),
       ],
       [{ name: 'distance', id: 'distance' }],
     ),
   },
   {
-    id: 'b58_ultrasonic_green_far',
-    title: 'Green LED ON if distance > 10 cm',
+    id: 'b54_ultrasonic_beep_rate',
+    title: 'Parking beeper: faster beeps when closer',
     group: 'Ultrasonic',
-    description: 'The green LED is on when the closest object is farther than 10 cm; the distance is printed.',
+    description: 'A 50 ms beep, then a pause of distance x 10 ms kept between 50 and 1000 ms with a constrain block: the closer the object, the faster the beeps.',
     workspace: workspace(
       [],
       [
         setVar('distance', distanceCm()),
-        printLabeled('distance (cm)', getVar('distance')),
-        ifBlock([[compare('GT', getVar('distance'), num(10)), [led('GREEN', 'ON')]]], [led('GREEN', 'OFF')]),
-        waitMs(200),
-      ],
-      [{ name: 'distance', id: 'distance' }],
-    ),
-  },
-  {
-    id: 'b59_ultrasonic_beep_rate',
-    title: 'Speed up the buzzer tone as the distance decreases',
-    group: 'Ultrasonic',
-    description: 'A 50 ms beep, then a pause of distance x 10 ms: the closer the object, the faster the beeps.',
-    workspace: workspace(
-      [],
-      [
-        setVar('pause', arithmetic('MULTIPLY', distanceCm(), num(10))),
-        printLabeled('pause (ms)', getVar('pause')),
+        setVar('pause', constrain(arithmetic('MULTIPLY', getVar('distance'), num(10)), 50, 1000)),
+        printLine(join(text('Distance: '), getVar('distance'), text(' cm'))),
         ...beep(50),
         waitMs(500, getVar('pause')),
       ],
-      [{ name: 'pause', id: 'pause' }],
+      [
+        { name: 'distance', id: 'distance' },
+        { name: 'pause', id: 'pause' },
+      ],
     ),
   },
 
   // --- Servo Motor -------------------------------------------------------------
   {
-    id: 'b60_servo_button_a_0',
-    title: 'Button A → move servo to 0°',
+    id: 'b55_servo_buttons',
+    title: 'Buttons move the servo (0° and 90°)',
     group: 'Servo Motor',
-    description: 'The servo (D4) starts at 90 degrees; pressing button 1 sends it to 0 degrees.',
-    workspace: workspace([servo(90)], [ifBlock([[buttonPressed('1'), [servo(0)]]])]),
-  },
-  {
-    id: 'b61_servo_button_b_90',
-    title: 'Button B → move servo to 90°',
-    group: 'Servo Motor',
-    description: 'The servo (D4) starts at 0 degrees; pressing button 2 sends it to 90 degrees.',
-    workspace: workspace([servo(0)], [ifBlock([[buttonPressed('2'), [servo(90)]]])]),
-  },
-  {
-    id: 'b62_servo_ultrasonic_10_times',
-    title: 'Object < 10 cm → servo 180°, otherwise 0°, repeat 10 times',
-    group: 'Servo Motor',
-    description: 'When the board starts, 10 times: if the ultrasonic sensor sees something under 10 cm the servo goes to 180, else to 0.',
+    description: 'The servo (D4) starts at 0 degrees; a press of button 1 sends it to 0 degrees and a press of button 2 to 90 degrees; the angle is printed on each move.',
     workspace: workspace(
-      [repeat(10, [ifBlock([[compare('LT', distanceCm(), num(10)), [servo(180)]]], [servo(0)]), waitMs(500)])],
+      [servo(0)],
+      [
+        ifBlock([[buttonPressed('1'), [servo(0), printLabeled('Servo angle', num(0)), waitForRelease('1')]]]),
+        ifBlock([[buttonPressed('2'), [servo(90), printLabeled('Servo angle', num(90)), waitForRelease('2')]]]),
+      ],
+    ),
+  },
+  {
+    id: 'b56_servo_ultrasonic_10_times',
+    title: 'Servo reacts to the ultrasonic sensor, 10 times',
+    group: 'Servo Motor',
+    description: 'When the board starts, 10 rounds one second apart: closer than 10 cm the servo goes to 180 degrees, otherwise to 0; the round number and the angle are printed, then the servo stops at 0.',
+    workspace: workspace(
+      [
+        forLoop('turn', 1, 10, 1, [
+          ifBlock([[compare('LT', distanceCm(), num(10)), [setVar('angle', num(180))]]], [setVar('angle', num(0))]),
+          servo(0, getVar('angle')),
+          printLabeled('Round', getVar('turn')),
+          printLabeled('Angle', getVar('angle')),
+          waitS(1),
+        ]),
+        servo(0),
+      ],
       [],
+      [
+        { name: 'turn', id: 'turn' },
+        { name: 'angle', id: 'angle' },
+      ],
     ),
   },
 
   // --- DHT Sensor --------------------------------------------------------------
   {
-    id: 'b63_dht_serial',
-    title: 'Display temperature and humidity on the Serial Monitor',
+    id: 'b57_dht_serial',
+    title: 'Show temperature and humidity on the Serial Monitor',
     group: 'DHT Sensor',
-    description: 'Prints the temperature and the humidity of the DHT22 (D5) every 2 seconds.',
-    workspace: workspace([], [printLabeled('temperature (C)', dhtRead('TEMPERATURE')), printLabeled('humidity (%)', dhtRead('HUMIDITY')), waitS(2)]),
+    description: 'Every 2 seconds prints "Temperature: <t> C  Humidity: <h> %" measured by the DHT22 (D5).',
+    workspace: workspace(
+      [],
+      [printLine(join(text('Temperature: '), dhtRead('TEMPERATURE'), text(' C  Humidity: '), dhtRead('HUMIDITY'), text(' %'))), waitS(2)],
+    ),
   },
   {
-    id: 'b64_dht_servo_slow',
-    title: 'If temperature > 28 °C → move servo to 180° slowly',
+    id: 'b58_dht_servo_slow',
+    title: 'Servo turns slowly when it is hot (above 28 °C)',
     group: 'DHT Sensor',
-    description: 'Every 2 s: above 28 degrees a count loop moves the servo one degree every 20 ms up to 180; otherwise it goes to 0.',
+    description: 'Every 2 s the temperature is printed; above 28 degrees a count loop moves the servo one degree every 15 ms from 0 to 180 (slowly), otherwise it goes back to 0.',
     workspace: workspace(
       [servo(0)],
       [
-        printLabeled('temperature (C)', dhtRead('TEMPERATURE')),
-        ifBlock([[compare('GT', dhtRead('TEMPERATURE'), num(28)), [forLoop('angle', 1, 180, 1, [servo(0, getVar('angle')), waitMs(20)])]]], [servo(0)]),
+        setVar('temperature', dhtRead('TEMPERATURE')),
+        printLabeled('Temperature', getVar('temperature')),
+        ifBlock([[compare('GT', getVar('temperature'), num(28)), [forLoop('angle', 0, 180, 1, [servo(0, getVar('angle')), waitMs(15)])]]], [servo(0)]),
         waitS(2),
       ],
-      [{ name: 'angle', id: 'angle' }],
+      [
+        { name: 'temperature', id: 'temperature' },
+        { name: 'angle', id: 'angle' },
+      ],
     ),
   },
 
   // --- DC Motor ----------------------------------------------------------------
   {
-    id: 'b65_motor_button_a_5_times',
-    title: 'Button A → turn forward 5 times',
+    id: 'b59_motor_buttons',
+    title: 'Buttons run the motor',
     group: 'DC Motor',
-    description: 'When button 1 is pressed the DC motor (A0) runs 5 times for 500 ms with 500 ms stops.',
-    workspace: workspace([], [ifBlock([[buttonPressed('1'), [repeat(5, [motor('ON'), waitMs(500), motor('OFF'), waitMs(500)])]]])]),
-  },
-  {
-    id: 'b66_motor_button_b_5_times_slow',
-    title: 'Button B → turn 5 times, slower rhythm',
-    group: 'DC Motor',
-    description: 'When button 2 is pressed the motor runs 5 times for 1 s with 1 s stops (only IN1 is wired, so it cannot run backward).',
-    workspace: workspace([], [ifBlock([[buttonPressed('2'), [repeat(5, [motor('ON'), waitS(1), motor('OFF'), waitS(1)])]]])]),
+    description: 'Button 1 starts 5 short runs of the DC motor (A0): on 500 ms, off 500 ms; button 2 starts 5 long runs: on 1 s, off 1 s. Only IN1 is wired, so the motor runs forward or stops, never backward.',
+    workspace: workspace(
+      [],
+      [
+        ifBlock([[buttonPressed('1'), [forLoop('run', 1, 5, 1, [printLine(join(text('Short run '), getVar('run'))), motor('ON'), waitMs(500), motor('OFF'), waitMs(500)])]]]),
+        ifBlock([[buttonPressed('2'), [forLoop('run', 1, 5, 1, [printLine(join(text('Long run '), getVar('run'))), motor('ON'), waitS(1), motor('OFF'), waitS(1)])]]]),
+      ],
+      [{ name: 'run', id: 'run' }],
+    ),
   },
 ];

@@ -1,6 +1,6 @@
 /*
-  ZERO1 Smart Board - 41 Blinking alternately between red and green
-  -----------------------------------------------------------------
+  ZERO1 Smart Board - 41 Blink red and green alternately
+  ------------------------------------------------------
   WHAT IT TEACHES
     - Driving two outputs: while one LED is on, the other one is off.
     - Switch the old LED OFF before the new one ON, so both are never lit together.

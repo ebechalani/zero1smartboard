@@ -1,6 +1,6 @@
 /*
-  ZERO1 Smart Board - 42 Blinking 10 times
-  ----------------------------------------
+  ZERO1 Smart Board - 42 Blink the red LED 10 times
+  -------------------------------------------------
   WHAT IT TEACHES
     - A for loop repeats a block of code a fixed number of times.
     - Code in setup() runs only once: the blinking stops after 10 times
@@ -10,7 +10,8 @@
     - Red LED ............ A1
 
   EXPECTED BEHAVIOUR
-    - The red LED blinks 10 times (300 ms on, 300 ms off), then stays off.
+    - The red LED blinks exactly 10 times (300 ms on, 300 ms off), then
+      stays off.
     - Serial prints "Blink 1" ... "Blink 10" and finally "Done".
 
   TRY THIS

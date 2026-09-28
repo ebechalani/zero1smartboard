@@ -1,23 +1,23 @@
 /*
-  ZERO1 Smart Board - 63 Display temperature and humidity on the Serial Monitor
-  -----------------------------------------------------------------------------
+  ZERO1 Smart Board - 57 Show temperature and humidity on the Serial Monitor
+  --------------------------------------------------------------------------
   WHAT IT TEACHES
     - The DHT22 sends the temperature and the humidity as numbers on one wire;
       the DHT library reads them for us.
     - float variables hold numbers with a decimal point.
+    - isnan() checks that the sensor really answered before we print.
 
   PARTS AND PINS
     - DHT22 .............. D5  (external "DHT22" header, keep it plugged in)
 
   EXPECTED BEHAVIOUR
-    - Every 2 s Serial prints two lines, for example:
-        Temperature: 24.0 C
-        Humidity: 55.0 %
+    - Every 2 s Serial prints one line, for example:
+        Temperature: 24.0 C  Humidity: 55.0 %
     - In the simulator, change the temperature and humidity sliders.
     - If the sensor is unplugged: "DHT22 error (is it plugged in?)".
 
   TRY THIS
-    - Print both values on one line.
+    - Print the two values on two lines.
     - Print the temperature in Fahrenheit: dht.readTemperature(true).
 */
 
@@ -44,9 +44,8 @@ void loop() {
   }
 
   Serial.print("Temperature: ");
-  Serial.print(temperature, 1);
-  Serial.println(" C");
-  Serial.print("Humidity: ");
+  Serial.print(temperature, 1);   // 1 digit after the point
+  Serial.print(" C  Humidity: ");
   Serial.print(humidity, 1);
   Serial.println(" %");
 }

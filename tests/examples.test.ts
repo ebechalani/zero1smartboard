@@ -54,9 +54,9 @@ async function drive(id: string, steps: (board: Zero1Board, wait: (ms: number) =
 }
 
 describe('example manifest', () => {
-  it('lists 48 sketches with unique ids and non-empty sources', () => {
-    expect(EXAMPLES).toHaveLength(48);
-    expect(new Set(EXAMPLES.map((e) => e.id)).size).toBe(48);
+  it('lists 41 sketches with unique ids and non-empty sources', () => {
+    expect(EXAMPLES).toHaveLength(41);
+    expect(new Set(EXAMPLES.map((e) => e.id)).size).toBe(41);
     for (const e of EXAMPLES) {
       expect(e.source.length).toBeGreaterThan(100);
       expect(e.title.length).toBeGreaterThan(3);
@@ -72,8 +72,43 @@ describe('example manifest', () => {
     // The examples are listed group by group, in that order.
     const order = EXAMPLES.map((e) => EXAMPLE_GROUPS.indexOf(e.group));
     expect(order).toEqual([...order].sort((a, b) => a - b));
-    expect(EXAMPLES.filter((e) => e.group === 'LED').map((e) => e.id)).toEqual(['40_led_blink_red', '41_led_red_green', '42_led_blink_10_times']);
-    expect(EXAMPLES.filter((e) => e.group === 'DC Motor')).toHaveLength(2);
+    expect(EXAMPLES.slice(21).map((e) => `${e.group}: ${e.id}`)).toEqual([
+      'LED: 40_led_blink_red', 'LED: 41_led_red_green', 'LED: 42_led_blink_10_times',
+      'Buzzer: 43_buzzer_short_beeps', 'Buzzer: 44_buzzer_led_10_times',
+      'Push Button: 45_buttons_leds', 'Push Button: 46_buttons_beeps',
+      'RGB LED: 47_rgb_red_green_blue', 'RGB LED: 48_rgb_buttons',
+      'LDR: 49_ldr_serial', 'LDR: 50_ldr_red_green',
+      'Seven-Segment: 51_seg_buttons_count',
+      'Ultrasonic: 52_ultrasonic_serial', 'Ultrasonic: 53_ultrasonic_red_green', 'Ultrasonic: 54_ultrasonic_beep_rate',
+      'Servo Motor: 55_servo_buttons', 'Servo Motor: 56_servo_ultrasonic_10_times',
+      'DHT Sensor: 57_dht_serial', 'DHT Sensor: 58_dht_servo_slow',
+      'DC Motor: 59_motor_buttons',
+    ]);
+  });
+
+  it('gives the part-by-part sketches the menu titles of the lesson plan', () => {
+    expect(EXAMPLES.slice(21).map((e) => e.title)).toEqual([
+      'Blink the red LED',
+      'Blink red and green alternately',
+      'Blink the red LED 10 times',
+      'Short beeps forever',
+      'Beep 10 times with the red LED',
+      'Buttons light the LEDs',
+      'Buttons: short beep and long beep',
+      'RGB LED: red, green, blue',
+      'Buttons colour the RGB LED',
+      'Show the light level on the Serial Monitor',
+      'Night light: red when dark, green when bright',
+      'Count up and down with the buttons',
+      'Show the distance on the Serial Monitor',
+      'Distance alarm: red LED near, green LED far',
+      'Parking beeper: faster beeps when closer',
+      'Buttons move the servo (0° and 90°)',
+      'Servo reacts to the ultrasonic sensor, 10 times',
+      'Show temperature and humidity on the Serial Monitor',
+      'Servo turns slowly when it is hot (above 28 °C)',
+      'Buttons run the motor',
+    ]);
   });
 
   it('LDR sketches tell the student to flip the POT / LDR switch', () => {
@@ -307,24 +342,38 @@ describe('example behaviour', () => {
   });
 });
 
-// --- Part-by-part groups (40 ... 66) --------------------------------------------
+// --- Part-by-part groups (40 ... 59) --------------------------------------------
 
 const PIN = { MOTOR: 14, RED: 15, GREEN: 16, BUZZER: 8, SERVO: 4 } as const;
 
 /** The Serial Monitor text with plain newlines (Serial.println() sends CR LF). */
 const text = (r: { serial: string }): string => r.serial.replace(/\r\n/g, '\n');
 
-/** [level, virtual time in ms] of every digitalWrite on `pin`. */
-function writes(r: { events: BoardEvent[] }, pin: number): number[] {
-  return r.events.filter((e) => e.type === 'digitalWrite' && e.pin === pin).map((e) => (e as { level: number }).level);
-}
-
 /** Number of rising edges (off -> on) on `pin`. */
 function risingEdges(r: { events: BoardEvent[] }, pin: number): number {
   return r.events.filter((e) => e.type === 'digitalWrite' && e.pin === pin && e.level === 1 && e.prev === 0).length;
 }
 
-/** Durations (ms) of every HIGH pulse on `pin`, measured on the virtual clock. */
+/**
+ * Runs a sketch and collects [level, virtual ms] of every level change on
+ * `pin`, rounded to the millisecond (a tick costs a few hundredths of a ms on
+ * the virtual clock).
+ */
+function timeline(id: string, pin: number, opts: RunOptions = {}) {
+  const changes: Array<[number, number]> = [];
+  const before = opts.before;
+  return runExample(id, {
+    ...opts,
+    before: (board, clock) => {
+      board.on((e) => {
+        if (e.type === 'digitalWrite' && e.pin === pin && e.level !== e.prev) changes.push([e.level, Math.round(clock.now())]);
+      });
+      before?.(board, clock);
+    },
+  }).then((r) => ({ changes, r }));
+}
+
+/** Durations (ms) of every HIGH pulse on the buzzer, measured on the virtual clock. */
 function highPulses(id: string, opts: RunOptions): Promise<{ pulses: number[]; serial: string }> {
   const pulses: number[] = [];
   let since: number | null = null;
@@ -336,7 +385,7 @@ function highPulses(id: string, opts: RunOptions): Promise<{ pulses: number[]; s
         if (e.type !== 'digitalWrite' || e.pin !== PIN.BUZZER) return;
         if (e.level === 1 && e.prev === 0) since = clock.now();
         if (e.level === 0 && e.prev === 1 && since !== null) {
-          pulses.push(clock.now() - since);
+          pulses.push(Math.round(clock.now() - since)); // ticks add hundredths of a ms, and floats drift
           since = null;
         }
       });
@@ -345,38 +394,44 @@ function highPulses(id: string, opts: RunOptions): Promise<{ pulses: number[]; s
   }).then((r) => ({ pulses, serial: r.serial }));
 }
 
-/** Every distinct servo target in the order it was written. */
+/** Every servo target in the order it was written. */
 function servoTargets(r: { events: BoardEvent[] }): number[] {
   return r.events.filter((e) => e.type === 'servo' && e.pin === PIN.SERVO).map((e) => (e as { angle: number | null }).angle ?? -1);
 }
 
+/** Releases `button` once `pin` has gone LOW `count` times (the end of a sequence of runs). */
+function releaseAfterFallingEdges(board: Zero1Board, pin: number, count: number, button: { release(): void }): void {
+  let seen = 0;
+  board.on((e) => {
+    if (e.type === 'digitalWrite' && e.pin === pin && e.level === 0 && e.prev === 1 && ++seen === count) button.release();
+  });
+}
+
 describe('LED examples', () => {
-  it('40_led_blink_red blinks with a 1 s on / 1 s off rhythm', async () => {
-    const timeline: Array<[number, number]> = [];
-    await runExample('40_led_blink_red', {
-      stopAfterMs: 2500,
-      before: (b, clock) => b.on((e) => e.type === 'digitalWrite' && e.pin === PIN.RED && timeline.push([e.level, clock.now()])),
-    });
-    // A tick costs a few hundredths of a ms on the virtual clock, hence Math.round().
-    expect(timeline.slice(0, 4).map(([level, at]) => [level, Math.round(at)])).toEqual([[1, 0], [0, 1000], [1, 2000], [0, 3000]]);
+  it('40_led_blink_red blinks with a 500 ms on / 500 ms off rhythm', async () => {
+    const { changes } = await timeline('40_led_blink_red', PIN.RED, { stopAfterMs: 1800 });
+    expect(changes.slice(0, 4)).toEqual([[1, 0], [0, 500], [1, 1000], [0, 1500]]);
   });
 
-  it('41_led_red_green alternates the two LEDs and never lights both', async () => {
+  it('41_led_red_green alternates the two LEDs every 500 ms and never lights both', async () => {
     const seen: string[] = [];
-    const r = await runExample('41_led_red_green', {
+    const red = await timeline('41_led_red_green', PIN.RED, {
       stopAfterMs: 2200,
       before: (b) => b.on((e) => e.type === 'digitalWrite' && (e.pin === PIN.RED || e.pin === PIN.GREEN) && seen.push(`${b.ledRed.state.on ? 'R' : '-'}${b.ledGreen.state.on ? 'G' : '-'}`)),
     });
+    expect(red.changes.slice(0, 4)).toEqual([[1, 0], [0, 500], [1, 1000], [0, 1500]]);
     expect(seen).toContain('R-');
     expect(seen).toContain('-G');
     expect(seen).not.toContain('RG');
-    expect(risingEdges(r, PIN.RED)).toBeGreaterThanOrEqual(2);
-    expect(risingEdges(r, PIN.GREEN)).toBeGreaterThanOrEqual(2);
+    const green = await timeline('41_led_red_green', PIN.GREEN, { stopAfterMs: 2200 });
+    expect(green.changes.slice(0, 4)).toEqual([[1, 500], [0, 1000], [1, 1500], [0, 2000]]);
   });
 
-  it('42_led_blink_10_times blinks exactly 10 times and stops', async () => {
-    const r = await runExample('42_led_blink_10_times', { stopAfterMs: 8000 });
+  it('42_led_blink_10_times blinks exactly 10 times (300 ms / 300 ms) and stops', async () => {
+    const { changes, r } = await timeline('42_led_blink_10_times', PIN.RED, { stopAfterMs: 8000 });
     expect(risingEdges(r, PIN.RED)).toBe(10);
+    expect(changes).toHaveLength(20);
+    expect(changes.slice(0, 4)).toEqual([[1, 0], [0, 300], [1, 600], [0, 900]]);
     expect(r.board.ledRed.state.on).toBe(false);
     expect(text(r)).toContain('Blink 1\n');
     expect(text(r)).toContain('Blink 10\nDone');
@@ -384,101 +439,119 @@ describe('LED examples', () => {
 });
 
 describe('Buzzer examples', () => {
-  it('43_buzzer_short_beeps gives 100 ms beeps every 600 ms', async () => {
-    const { pulses } = await highPulses('43_buzzer_short_beeps', { stopAfterMs: 2500 });
-    expect(pulses.length).toBeGreaterThanOrEqual(4); // 0, 600, 1200, 1800 ms
+  it('43_buzzer_short_beeps gives 100 ms beeps with 400 ms pauses, forever', async () => {
+    const { pulses } = await highPulses('43_buzzer_short_beeps', { stopAfterMs: 2100 });
+    expect(pulses.length).toBeGreaterThanOrEqual(4); // 0, 500, 1000, 1500, 2000 ms
     expect(pulses.every((p) => p === 100)).toBe(true);
+    const { changes } = await timeline('43_buzzer_short_beeps', PIN.BUZZER, { stopAfterMs: 1100 });
+    expect(changes.slice(0, 4)).toEqual([[1, 0], [0, 100], [1, 500], [0, 600]]);
   });
 
-  it('44_buzzer_beep_10_times beeps exactly 10 times and stops', async () => {
-    const r = await runExample('44_buzzer_beep_10_times', { stopAfterMs: 6000 });
-    expect(risingEdges(r, PIN.BUZZER)).toBe(10);
-    expect(r.board.buzzer.state.freq).toBeNull();
-    expect(text(r)).toContain('Beep 10\nDone');
-  });
-
-  it('45_buzzer_led_10_times switches the LED and the buzzer together, 10 times', async () => {
-    const r = await runExample('45_buzzer_led_10_times', { stopAfterMs: 6000 });
+  it('44_buzzer_led_10_times switches the LED and the buzzer together, exactly 10 times', async () => {
+    const { changes, r } = await timeline('44_buzzer_led_10_times', PIN.BUZZER, { stopAfterMs: 6000 });
     expect(risingEdges(r, PIN.BUZZER)).toBe(10);
     expect(risingEdges(r, PIN.RED)).toBe(10);
+    expect(changes.slice(0, 4)).toEqual([[1, 0], [0, 200], [1, 500], [0, 700]]);
     expect(r.board.ledRed.state.on).toBe(false);
     expect(r.board.buzzer.state.freq).toBeNull();
-    expect(text(r)).toContain('Done');
+    expect(text(r)).toBe('Done\n');
   });
 });
 
 describe('Push Button examples', () => {
-  it('46_button_a_red_led follows Button A only', async () => {
-    const idle = await runExample('46_button_a_red_led', { stopAfterMs: 200 });
+  it('45_buttons_leds lights the red LED for Button 1 and the green LED for Button 2', async () => {
+    const idle = await runExample('45_buttons_leds', { stopAfterMs: 200 });
     expect(idle.board.ledRed.state.on).toBe(false);
-    const a = await runExample('46_button_a_red_led', { stopAfterMs: 200, before: (b) => b.buttonA.press() });
+    expect(idle.board.ledGreen.state.on).toBe(false);
+    const a = await runExample('45_buttons_leds', { stopAfterMs: 200, before: (b) => b.buttonA.press() });
     expect(a.board.ledRed.state.on).toBe(true);
-    const b = await runExample('46_button_a_red_led', { stopAfterMs: 200, before: (bd) => bd.buttonB.press() });
+    expect(a.board.ledGreen.state.on).toBe(false);
+    const b = await runExample('45_buttons_leds', { stopAfterMs: 200, before: (bd) => bd.buttonB.press() });
     expect(b.board.ledRed.state.on).toBe(false);
+    expect(b.board.ledGreen.state.on).toBe(true);
+    const both = await runExample('45_buttons_leds', { stopAfterMs: 200, before: (bd) => { bd.buttonA.press(); bd.buttonB.press(); } });
+    expect(both.board.ledRed.state.on).toBe(true);
+    expect(both.board.ledGreen.state.on).toBe(true);
+    // Released: the LED goes off again (real clock, so the button can be released while it runs).
+    await drive('45_buttons_leds', async (board, wait) => {
+      board.buttonA.press();
+      await wait(60);
+      expect(board.ledRed.state.on).toBe(true);
+      board.buttonA.release();
+      await wait(60);
+      expect(board.ledRed.state.on).toBe(false);
+    });
   });
 
-  it('47_button_b_red_led follows Button B only', async () => {
-    const a = await runExample('47_button_b_red_led', { stopAfterMs: 200, before: (b) => b.buttonA.press() });
-    expect(a.board.ledRed.state.on).toBe(false);
-    const b = await runExample('47_button_b_red_led', { stopAfterMs: 200, before: (bd) => bd.buttonB.press() });
-    expect(b.board.ledRed.state.on).toBe(true);
-  });
-
-  it('48_button_a_short_beep beeps 100 ms while Button A is held, and stays silent otherwise', async () => {
-    const quiet = await highPulses('48_button_a_short_beep', { stopAfterMs: 500 });
+  it('46_buttons_beeps gives one 100 ms beep per press of Button 1 and one 1 s beep per press of Button 2', async () => {
+    const quiet = await highPulses('46_buttons_beeps', { stopAfterMs: 500 });
     expect(quiet.pulses).toEqual([]);
-    const { pulses } = await highPulses('48_button_a_short_beep', { stopAfterMs: 650, before: (b) => b.buttonA.press() });
-    expect(pulses.length).toBeGreaterThanOrEqual(2); // 0, 300, 600 ms
-    expect(pulses.every((p) => p === 100)).toBe(true);
-  });
-
-  it('49_button_b_long_beep beeps 1 s while Button B is held', async () => {
-    const { pulses } = await highPulses('49_button_b_long_beep', { stopAfterMs: 1500, before: (b) => b.buttonB.press() });
-    expect(pulses.length).toBeGreaterThanOrEqual(1);
-    expect(pulses.every((p) => p === 1000)).toBe(true);
-    const wrong = await highPulses('49_button_b_long_beep', { stopAfterMs: 1500, before: (b) => b.buttonA.press() });
-    expect(wrong.pulses).toEqual([]);
+    // Held down for the whole run: still exactly one beep.
+    const a = await highPulses('46_buttons_beeps', { stopAfterMs: 1500, before: (b) => b.buttonA.press() });
+    expect(a.pulses).toEqual([100]);
+    const b = await highPulses('46_buttons_beeps', { stopAfterMs: 3000, before: (bd) => bd.buttonB.press() });
+    expect(b.pulses).toEqual([1000]);
+    // Release and press again: one more beep each time (real clock, so the button can be released).
+    let beeps = 0;
+    await drive('46_buttons_beeps', async (board, wait) => {
+      board.on((e) => {
+        if (e.type === 'digitalWrite' && e.pin === PIN.BUZZER && e.level === 1 && e.prev === 0) beeps++;
+      });
+      board.buttonA.press();
+      await wait(150);
+      board.buttonA.release();
+      await wait(60);
+      expect(beeps).toBe(1);
+      board.buttonA.press();
+      await wait(150);
+      board.buttonA.release();
+      await wait(60);
+      expect(beeps).toBe(2);
+    });
   });
 });
 
 describe('RGB LED examples', () => {
-  it('50_rgb_red_green_blue cycles red, green, blue every 500 ms', async () => {
-    const colours: string[] = [];
-    await runExample('50_rgb_red_green_blue', {
-      stopAfterMs: 1700,
-      before: (b) => b.on((e) => e.type === 'pixels' && colours.push(`${b.rgb.state.r},${b.rgb.state.g},${b.rgb.state.b}`)),
+  it('47_rgb_red_green_blue cycles red, green, blue every second', async () => {
+    const colours: Array<[string, number]> = [];
+    await runExample('47_rgb_red_green_blue', {
+      stopAfterMs: 3200,
+      before: (b, clock) => b.on((e) => e.type === 'pixels' && colours.push([`${b.rgb.state.r},${b.rgb.state.g},${b.rgb.state.b}`, Math.round(clock.now())])),
     });
     // setBrightness(80) scales 255 down to 80
-    expect(colours.slice(0, 4)).toEqual(['80,0,0', '0,80,0', '0,0,80', '80,0,0']);
+    expect(colours.slice(0, 4)).toEqual([['80,0,0', 0], ['0,80,0', 1000], ['0,0,80', 2000], ['80,0,0', 3000]]);
   });
 
-  it('51_rgb_buttons shows red for Button A, green for Button B, off otherwise', async () => {
-    const idle = await runExample('51_rgb_buttons', { stopAfterMs: 200 });
+  it('48_rgb_buttons shows red for Button 1, green for Button 2, off otherwise', async () => {
+    const idle = await runExample('48_rgb_buttons', { stopAfterMs: 200 });
     expect([idle.board.rgb.state.r, idle.board.rgb.state.g, idle.board.rgb.state.b]).toEqual([0, 0, 0]);
-    const a = await runExample('51_rgb_buttons', { stopAfterMs: 200, before: (b) => b.buttonA.press() });
+    const a = await runExample('48_rgb_buttons', { stopAfterMs: 200, before: (b) => b.buttonA.press() });
     expect(a.board.rgb.state.r).toBeGreaterThan(0);
     expect(a.board.rgb.state.g).toBe(0);
-    const b = await runExample('51_rgb_buttons', { stopAfterMs: 200, before: (bd) => bd.buttonB.press() });
+    const b = await runExample('48_rgb_buttons', { stopAfterMs: 200, before: (bd) => bd.buttonB.press() });
     expect(b.board.rgb.state.g).toBeGreaterThan(0);
     expect(b.board.rgb.state.r).toBe(0);
+    const both = await runExample('48_rgb_buttons', { stopAfterMs: 200, before: (bd) => { bd.buttonA.press(); bd.buttonB.press(); } });
+    expect(both.board.rgb.state.r).toBeGreaterThan(0); // Button 1 wins
+    expect(both.board.rgb.state.g).toBe(0);
   });
 });
 
 describe('LDR examples', () => {
-  it('52_ldr_serial prints the light value every 200 ms', async () => {
-    const r = await runExample('52_ldr_serial', { stopAfterMs: 650, before: (b) => b.potLdr.setSource('ldr') });
-    expect(text(r).split('\n').filter((l) => l.startsWith('LDR: 580'))).toHaveLength(4);
-    const dark = await runExample('52_ldr_serial', { stopAfterMs: 300, before: (b) => { b.potLdr.setSource('ldr'); b.potLdr.setLight(0); } });
-    expect(text(dark)).toContain('LDR: 40');
+  it('49_ldr_serial prints the light value every 500 ms', async () => {
+    const r = await runExample('49_ldr_serial', { stopAfterMs: 1600, before: (b) => b.potLdr.setSource('ldr') });
+    expect(text(r).split('\n').filter((l) => l === 'Light: 580')).toHaveLength(4); // 0, 500, 1000, 1500 ms
+    const dark = await runExample('49_ldr_serial', { stopAfterMs: 300, before: (b) => { b.potLdr.setSource('ldr'); b.potLdr.setLight(0); } });
+    expect(text(dark)).toContain('Light: 40\n');
   });
 
-  it('53_ldr_red_green lights red below 500 and green above', async () => {
-    const bright = await runExample('53_ldr_red_green', { stopAfterMs: 300, before: (b) => b.potLdr.setSource('ldr') });
-    expect(text(bright)).toContain('LDR: 580 -> bright');
+  it('50_ldr_red_green lights red below 500 and green at 500 or above', async () => {
+    const bright = await runExample('50_ldr_red_green', { stopAfterMs: 600, before: (b) => b.potLdr.setSource('ldr') });
+    expect(text(bright)).toContain('Light: 580 -> bright');
     expect(bright.board.ledGreen.state.on).toBe(true);
     expect(bright.board.ledRed.state.on).toBe(false);
-    const dark = await runExample('53_ldr_red_green', { stopAfterMs: 300, before: (b) => { b.potLdr.setSource('ldr'); b.potLdr.setLight(20); } });
-    expect(text(dark)).toContain('LDR: 220 -> dark');
+    const dark = await runExample('50_ldr_red_green', { stopAfterMs: 600, before: (b) => { b.potLdr.setSource('ldr'); b.potLdr.setLight(20); } });
+    expect(text(dark)).toContain('Light: 220 -> dark');
     expect(dark.board.ledRed.state.on).toBe(true);
     expect(dark.board.ledGreen.state.on).toBe(false);
   });
@@ -500,130 +573,183 @@ describe('Seven-Segment examples', () => {
     }).then((r) => ({ seen, r }));
   }
 
-  it('54_seg_button_a_1_to_4 stays blank until Button A, then counts 1..4', async () => {
-    const idle = await latchedSequence('54_seg_button_a_1_to_4', () => {}, 500);
+  it('51_seg_buttons_count stays blank, counts 1..4 on Button 1 and 7..1 on Button 2', async () => {
+    const idle = await latchedSequence('51_seg_buttons_count', () => {}, 500);
     expect(idle.seen).toEqual([0]);
-    const { seen, r } = await latchedSequence('54_seg_button_a_1_to_4', (b) => b.buttonA.press(), 4500);
-    expect(seen.slice(0, 6)).toEqual([0, DIGIT[1], DIGIT[2], DIGIT[3], DIGIT[4], 0]);
-    expect(text(r)).toMatch(/^1\n2\n3\n4\n/);
-  });
-
-  it('55_seg_button_b_7_to_1 counts down 7..1 on Button B', async () => {
-    const { seen, r } = await latchedSequence('55_seg_button_b_7_to_1', (b) => b.buttonB.press(), 7500);
-    expect(seen.slice(0, 9)).toEqual([0, DIGIT[7], DIGIT[6], DIGIT[5], DIGIT[4], DIGIT[3], DIGIT[2], DIGIT[1], 0]);
-    expect(text(r)).toMatch(/^7\n6\n5\n4\n3\n2\n1\n/);
-    const wrong = await latchedSequence('55_seg_button_b_7_to_1', (b) => b.buttonA.press(), 500);
-    expect(wrong.seen).toEqual([0]);
+    const up = await latchedSequence('51_seg_buttons_count', (b) => b.buttonA.press(), 4500);
+    expect(up.seen.slice(0, 6)).toEqual([0, DIGIT[1], DIGIT[2], DIGIT[3], DIGIT[4], 0]);
+    expect(text(up.r)).toMatch(/^1\n2\n3\n4\n/);
+    const down = await latchedSequence('51_seg_buttons_count', (b) => b.buttonB.press(), 7500);
+    expect(down.seen.slice(0, 9)).toEqual([0, DIGIT[7], DIGIT[6], DIGIT[5], DIGIT[4], DIGIT[3], DIGIT[2], DIGIT[1], 0]);
+    expect(text(down.r)).toMatch(/^7\n6\n5\n4\n3\n2\n1\n/);
   });
 });
 
 describe('Ultrasonic examples', () => {
-  it('56_ultrasonic_serial prints the distance every 300 ms and follows the slider', async () => {
-    const r = await runExample('56_ultrasonic_serial', { stopAfterMs: 1000 });
-    expect(text(r).split('\n').filter((l) => l === 'Distance: 49.7 cm')).toHaveLength(4);
-    const near = await runExample('56_ultrasonic_serial', { stopAfterMs: 100, before: (b) => b.ultrasonic.setDistance(20) });
+  it('52_ultrasonic_serial prints the distance every 500 ms and follows the slider', async () => {
+    const r = await runExample('52_ultrasonic_serial', { stopAfterMs: 1600 });
+    expect(text(r).split('\n').filter((l) => l === 'Distance: 49.7 cm')).toHaveLength(4); // 0, 500, 1000, 1500 ms
+    const near = await runExample('52_ultrasonic_serial', { stopAfterMs: 100, before: (b) => b.ultrasonic.setDistance(20) });
     expect(text(near)).toMatch(/Distance: (19|20)\.\d cm/);
   });
 
-  it('57_ultrasonic_red_near lights the red LED under 10 cm', async () => {
-    const far = await runExample('57_ultrasonic_red_near', { stopAfterMs: 300 });
+  it('53_ultrasonic_red_green lights green at 10 cm or more and red under 10 cm', async () => {
+    const far = await runExample('53_ultrasonic_red_green', { stopAfterMs: 300 });
+    expect(far.board.ledGreen.state.on).toBe(true);
     expect(far.board.ledRed.state.on).toBe(false);
-    expect(text(far)).toContain('Distance: 49.7 cm\n');
-    const near = await runExample('57_ultrasonic_red_near', { stopAfterMs: 300, before: (b) => b.ultrasonic.setDistance(5) });
+    expect(text(far)).toContain('Distance: 49.7 cm -> free\n');
+    const near = await runExample('53_ultrasonic_red_green', { stopAfterMs: 300, before: (b) => b.ultrasonic.setDistance(5) });
     expect(near.board.ledRed.state.on).toBe(true);
+    expect(near.board.ledGreen.state.on).toBe(false);
     expect(text(near)).toContain('-> too close!');
   });
 
-  it('58_ultrasonic_green_far lights the green LED over 10 cm', async () => {
-    const far = await runExample('58_ultrasonic_green_far', { stopAfterMs: 300 });
-    expect(far.board.ledGreen.state.on).toBe(true);
-    expect(text(far)).toContain('-> free');
-    const near = await runExample('58_ultrasonic_green_far', { stopAfterMs: 300, before: (b) => b.ultrasonic.setDistance(5) });
-    expect(near.board.ledGreen.state.on).toBe(false);
-  });
-
-  it('59_ultrasonic_beep_rate beeps faster as the object gets closer', async () => {
-    const far = await runExample('59_ultrasonic_beep_rate', { stopAfterMs: 3000 });
-    expect(text(far)).toContain('Distance: 49.7 cm -> pause 490 ms');
+  it('54_ultrasonic_beep_rate pauses 10 ms per centimetre (50 ... 1000 ms) between 50 ms beeps', async () => {
+    const far = await runExample('54_ultrasonic_beep_rate', { stopAfterMs: 3000 });
+    expect(text(far)).toContain('Distance: 49.7 cm -> pause 497 ms');
     const farBeeps = risingEdges(far, PIN.BUZZER);
-    expect(farBeeps).toBeGreaterThanOrEqual(5); // 3000 / 540
-    const near = await runExample('59_ultrasonic_beep_rate', { stopAfterMs: 3000, before: (b) => b.ultrasonic.setDistance(5) });
+    expect(farBeeps).toBeGreaterThanOrEqual(5); // 3000 / 547
+    const { pulses } = await highPulses('54_ultrasonic_beep_rate', { stopAfterMs: 3000 });
+    expect(pulses.length).toBeGreaterThanOrEqual(5);
+    expect(pulses.every((p) => p === 50)).toBe(true);
+    const mid = await runExample('54_ultrasonic_beep_rate', { stopAfterMs: 500, before: (b) => b.ultrasonic.setDistance(20) });
+    expect(text(mid)).toMatch(/-> pause (19\d|200) ms/);
+    const near = await runExample('54_ultrasonic_beep_rate', { stopAfterMs: 3000, before: (b) => b.ultrasonic.setDistance(5) });
     expect(text(near)).toContain('pause 50 ms');
     expect(risingEdges(near, PIN.BUZZER)).toBeGreaterThan(farBeeps * 3);
-    const none = await runExample('59_ultrasonic_beep_rate', { stopAfterMs: 1500, before: (b) => b.ultrasonic.setConnected(false) });
+    const veryFar = await runExample('54_ultrasonic_beep_rate', { stopAfterMs: 500, before: (b) => b.ultrasonic.setDistance(200) });
+    expect(text(veryFar)).toContain('pause 1000 ms');
+    const none = await runExample('54_ultrasonic_beep_rate', { stopAfterMs: 1500, before: (b) => b.ultrasonic.setConnected(false) });
     expect(text(none)).toContain('No echo');
     expect(risingEdges(none, PIN.BUZZER)).toBe(0);
   });
 });
 
 describe('Servo Motor examples', () => {
-  it('60_servo_button_a_0 starts at 90 and goes to 0 on Button A', async () => {
-    const idle = await runExample('60_servo_button_a_0', { stopAfterMs: 300 });
-    expect(idle.board.servo.state.target).toBe(90);
-    const a = await runExample('60_servo_button_a_0', { stopAfterMs: 300, before: (b) => b.buttonA.press() });
-    expect(a.board.servo.state.target).toBe(0);
-    expect(text(a)).toContain('Servo -> 0');
-  });
-
-  it('61_servo_button_b_90 starts at 0 and goes to 90 on Button B', async () => {
-    const idle = await runExample('61_servo_button_b_90', { stopAfterMs: 300 });
+  it('55_servo_buttons starts at 0, Button 2 -> 90 and Button 1 -> 0, printing the angle', async () => {
+    const idle = await runExample('55_servo_buttons', { stopAfterMs: 300 });
     expect(idle.board.servo.state.target).toBe(0);
-    const b = await runExample('61_servo_button_b_90', { stopAfterMs: 300, before: (bd) => bd.buttonB.press() });
+    expect(text(idle)).toBe('');
+    // A button held for the whole run: one move and one line only (waits for the release).
+    const b = await runExample('55_servo_buttons', { stopAfterMs: 1000, before: (bd) => bd.buttonB.press() });
     expect(b.board.servo.state.target).toBe(90);
-    expect(text(b)).toContain('Servo -> 90');
+    expect(text(b)).toBe('Servo -> 90\n');
+    const a = await runExample('55_servo_buttons', { stopAfterMs: 1000, before: (bd) => bd.buttonA.press() });
+    expect(a.board.servo.state.target).toBe(0);
+    expect(text(a)).toBe('Servo -> 0\n');
+    // Button 2, then Button 1 (real clock): to 90 and back to 0.
+    await drive('55_servo_buttons', async (board, wait) => {
+      board.buttonB.press();
+      await wait(60);
+      board.buttonB.release();
+      expect(board.servo.state.target).toBe(90);
+      await wait(350);
+      board.buttonA.press();
+      await wait(60);
+      board.buttonA.release();
+      expect(board.servo.state.target).toBe(0);
+    });
   });
 
-  it('62_servo_ultrasonic_10_times checks the distance 10 times and moves the servo', async () => {
-    const far = await runExample('62_servo_ultrasonic_10_times', { stopAfterMs: 6000 });
+  it('56_servo_ultrasonic_10_times checks the distance 10 times, one second apart, then rests at 0', async () => {
+    const far = await runExample('56_servo_ultrasonic_10_times', { stopAfterMs: 11000 });
     expect(text(far).match(/-> servo 0\n/g)).toHaveLength(10);
-    expect(text(far)).toContain('Check 10: 49.7 cm -> servo 0\nDone');
+    expect(text(far)).toContain('Round 1: 49.7 cm -> servo 0\n');
+    expect(text(far)).toContain('Round 10: 49.7 cm -> servo 0\nDone');
     expect(far.board.servo.state.target).toBe(0);
-    const near = await runExample('62_servo_ultrasonic_10_times', { stopAfterMs: 6000, before: (b) => b.ultrasonic.setDistance(5) });
+    const near = await runExample('56_servo_ultrasonic_10_times', { stopAfterMs: 11000, before: (b) => b.ultrasonic.setDistance(5) });
     expect(text(near).match(/-> servo 180\n/g)).toHaveLength(10);
     expect(servoTargets(near).filter((a) => a === 180)).toHaveLength(10);
-    expect(near.board.servo.state.target).toBe(180);
+    expect(text(near)).toContain('Done');
+    expect(near.board.servo.state.target).toBe(0); // back to the rest position
   });
 });
 
 describe('DHT Sensor examples', () => {
-  it('63_dht_serial prints the temperature and the humidity on two lines', async () => {
-    const r = await runExample('63_dht_serial', { stopAfterMs: 2500 });
-    expect(text(r)).toContain('Temperature: 24.0 C\nHumidity: 55.0 %\n');
-    const hot = await runExample('63_dht_serial', { stopAfterMs: 2500, before: (b) => b.dht.set(31.5, 70) });
-    expect(text(hot)).toContain('Temperature: 31.5 C\nHumidity: 70.0 %\n');
-    const unplugged = await runExample('63_dht_serial', { stopAfterMs: 2500, before: (b) => b.dht.setConnected(false) });
+  it('57_dht_serial prints the temperature and the humidity on one line every 2 s', async () => {
+    // Each finished line with the virtual time it was printed at (the deadline
+    // is only checked at ticks, so a plain line count would include the line
+    // printed right after the delay() that crosses it).
+    const lines: Array<[string, number]> = [];
+    let pending = '';
+    await runExample('57_dht_serial', {
+      stopAfterMs: 3900,
+      before: (b, clock) => b.serial.onTx((chunk) => {
+        pending += chunk;
+        if (pending.endsWith('\n')) {
+          lines.push([pending.replace(/\r\n/g, '\n'), Math.round(clock.now())]);
+          pending = '';
+        }
+      }),
+    });
+    expect(lines).toEqual([['Temperature: 24.0 C  Humidity: 55.0 %\n', 2000], ['Temperature: 24.0 C  Humidity: 55.0 %\n', 4000]]);
+    const hot = await runExample('57_dht_serial', { stopAfterMs: 2500, before: (b) => b.dht.set(31.5, 70) });
+    expect(text(hot)).toContain('Temperature: 31.5 C  Humidity: 70.0 %\n');
+    const unplugged = await runExample('57_dht_serial', { stopAfterMs: 2500, before: (b) => b.dht.setConnected(false) });
     expect(text(unplugged)).toContain('DHT22 error');
   });
 
-  it('64_dht_servo_slow opens the servo one degree at a time above 28 C', async () => {
-    const cool = await runExample('64_dht_servo_slow', { stopAfterMs: 2500 });
-    expect(text(cool)).toContain('OK: closed');
+  it('58_dht_servo_slow sweeps the servo 0..180 one degree every 15 ms above 28 C, else rests at 0', async () => {
+    const cool = await runExample('58_dht_servo_slow', { stopAfterMs: 2500 });
+    expect(text(cool)).toContain('Temperature: 24.0 C\nOK: closed');
     expect(cool.board.servo.state.target).toBe(0);
-    const warm = await runExample('64_dht_servo_slow', { stopAfterMs: 6000, before: (b) => b.dht.set(30, 55) });
-    expect(text(warm)).toContain('Too warm: opening');
+    const stamps: Array<[number, number]> = [];
+    const warm = await runExample('58_dht_servo_slow', {
+      stopAfterMs: 6000,
+      before: (b, clock) => {
+        b.dht.set(30, 55);
+        b.on((e) => e.type === 'servo' && e.pin === PIN.SERVO && stamps.push([(e as { angle: number | null }).angle ?? -1, clock.now()]));
+      },
+    });
+    expect(text(warm)).toContain('Temperature: 30.0 C\nToo warm: opening');
     const targets = servoTargets(warm);
-    const climb = targets.slice(targets.indexOf(1));
-    expect(climb).toEqual(Array.from({ length: 180 }, (_, i) => i + 1)); // one write per degree, 1 .. 180
-    expect(warm.board.servo.state.target).toBe(180);
+    const sweep = targets.slice(targets.indexOf(1), targets.indexOf(1) + 180);
+    expect(sweep).toEqual(Array.from({ length: 180 }, (_, i) => i + 1)); // one write per degree, 1 .. 180
+    const first = stamps.findIndex(([angle]) => angle === 1);
+    expect(Math.round(stamps[first + 1]![1] - stamps[first]![1])).toBe(15);
+    const turn = stamps[first + 179]![1] - stamps[first]![1]; // 2.7 s for the whole turn (ticks add hundredths of a ms)
+    expect(turn).toBeGreaterThanOrEqual(179 * 15);
+    expect(turn).toBeLessThan(179 * 15 + 10);
+    expect(warm.board.servo.state.target).toBe(180); // the turn (2000 .. 4715 ms) is over, the next reading is at 6715 ms
+    // Still warm at the next reading (6715 ms): the servo turns slowly again, from 0 (stop half-way through that turn).
+    const twice = await runExample('58_dht_servo_slow', { stopAfterMs: 8000, before: (b) => b.dht.set(30, 55) });
+    expect(text(twice).match(/Too warm: opening\n/g)).toHaveLength(2);
+    expect(servoTargets(twice).filter((a) => a === 180)).toHaveLength(1); // the first turn finished ...
+    expect(servoTargets(twice).filter((a) => a === 0)).toHaveLength(3); // ... setup() and the start of each turn
+    expect(twice.board.servo.state.target).toBeGreaterThan(0);
+    expect(twice.board.servo.state.target).toBeLessThan(180); // ... and the second one is under way
+    // Cooling down closes the window at once.
+    const cooled = await runExample('58_dht_servo_slow', {
+      stopAfterMs: 7000,
+      before: (b) => {
+        b.dht.set(30, 55);
+        let lines = 0;
+        b.serial.onTx((chunk) => { if (chunk.includes('\n') && ++lines === 2) b.dht.set(24, 55); }); // after "Too warm: opening"
+      },
+    });
+    expect(text(cooled)).toContain('Too warm: opening\nTemperature: 24.0 C\nOK: closed');
+    expect(cooled.board.servo.state.target).toBe(0);
   });
 });
 
 describe('DC Motor examples', () => {
-  it('65_motor_button_a_5_times runs the motor 5 times on Button A', async () => {
-    const idle = await runExample('65_motor_button_a_5_times', { stopAfterMs: 500 });
+  it('59_motor_buttons runs the motor 5 times: short runs for Button 1, long runs for Button 2', async () => {
+    const idle = await runExample('59_motor_buttons', { stopAfterMs: 500 });
     expect(risingEdges(idle, PIN.MOTOR)).toBe(0);
-    const r = await runExample('65_motor_button_a_5_times', { stopAfterMs: 5200, before: (b) => b.buttonA.press() });
-    expect(text(r)).toContain('Run 5\nDone');
-    expect(writes(r, PIN.MOTOR).slice(0, 10)).toEqual([1, 0, 1, 0, 1, 0, 1, 0, 1, 0]);
-    expect(r.board.motor.state.running).toBe(false);
-  });
-
-  it('66_motor_button_b_5_times_slow runs the motor 5 times with 1 s runs on Button B', async () => {
-    const r = await runExample('66_motor_button_b_5_times_slow', { stopAfterMs: 10200, before: (b) => b.buttonB.press() });
-    expect(text(r)).toContain('Slow run 5\nDone');
-    expect(writes(r, PIN.MOTOR).slice(0, 10)).toEqual([1, 0, 1, 0, 1, 0, 1, 0, 1, 0]);
-    expect(r.board.motor.state.running).toBe(false);
-    const wrong = await runExample('66_motor_button_b_5_times_slow', { stopAfterMs: 500, before: (b) => b.buttonA.press() });
-    expect(risingEdges(wrong, PIN.MOTOR)).toBe(0);
+    expect(text(idle)).toBe('');
+    const short = await timeline('59_motor_buttons', PIN.MOTOR, {
+      stopAfterMs: 7000,
+      before: (b) => { b.buttonA.press(); releaseAfterFallingEdges(b, PIN.MOTOR, 5, b.buttonA); },
+    });
+    expect(short.changes).toEqual([[1, 0], [0, 500], [1, 1000], [0, 1500], [1, 2000], [0, 2500], [1, 3000], [0, 3500], [1, 4000], [0, 4500]]);
+    expect(text(short.r)).toBe('Short run 1\nShort run 2\nShort run 3\nShort run 4\nShort run 5\nDone\n');
+    expect(short.r.board.motor.state.running).toBe(false);
+    const long = await timeline('59_motor_buttons', PIN.MOTOR, {
+      stopAfterMs: 12000,
+      before: (b) => { b.buttonB.press(); releaseAfterFallingEdges(b, PIN.MOTOR, 5, b.buttonB); },
+    });
+    expect(long.changes).toEqual([[1, 0], [0, 1000], [1, 2000], [0, 3000], [1, 4000], [0, 5000], [1, 6000], [0, 7000], [1, 8000], [0, 9000]]);
+    expect(text(long.r)).toBe('Long run 1\nLong run 2\nLong run 3\nLong run 4\nLong run 5\nDone\n');
+    expect(long.r.board.motor.state.running).toBe(false);
   });
 });

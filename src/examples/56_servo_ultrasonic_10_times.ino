@@ -1,6 +1,6 @@
 /*
-  ZERO1 Smart Board - 62 Object closer than 10 cm -> servo 180, else 0 (10 times)
-  -------------------------------------------------------------------------------
+  ZERO1 Smart Board - 56 Servo reacts to the ultrasonic sensor, 10 times
+  ----------------------------------------------------------------------
   WHAT IT TEACHES
     - A sensor decides what an actuator does: an automatic barrier.
     - A for loop repeats "measure, decide, move" exactly 10 times, then stops.
@@ -11,15 +11,16 @@
     - Servo (SG90) ....... D4  (keep the servo plugged in)
 
   EXPECTED BEHAVIOUR
-    - 10 times, once every 500 ms: the distance is measured; if an object is
+    - 10 rounds, one every second: the distance is measured; if an object is
       closer than 10 cm the servo goes to 180 degrees, otherwise to 0 degrees.
-      Serial prints e.g. "Check 3: 49.7 cm -> servo 0".
-    - After the 10 checks Serial prints "Done" and the servo stays where it is.
+      Serial prints e.g. "Round 3: 49.7 cm -> servo 0".
+    - After the 10 rounds the servo goes back to 0 degrees and Serial prints
+      "Done".
     - In the simulator, move the distance slider under 10 cm while it runs.
 
   TRY THIS
     - Check forever: move the for loop into loop().
-    - Open the barrier slowly (see sketch 64).
+    - Open the barrier slowly (see sketch 58).
 */
 
 #include <Servo.h>
@@ -56,17 +57,18 @@ void setup() {
     }
     myServo.write(angle);
 
-    Serial.print("Check ");
+    Serial.print("Round ");
     Serial.print(i);
     Serial.print(": ");
     Serial.print(distance, 1);
     Serial.print(" cm -> servo ");
     Serial.println(angle);
-    delay(500);
+    delay(1000);
   }
+  myServo.write(0);   // back to the rest position
   Serial.println("Done");
 }
 
 void loop() {
-  // The 10 checks were done in setup(); nothing more happens.
+  // The 10 rounds were done in setup(); nothing more happens.
 }
