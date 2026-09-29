@@ -223,12 +223,17 @@ change (debounced 150 ms) → `onChange`.
 
 App behaviour:
 
-- Header gains a **mode switch** (segmented control "Code | Blocks",
+- Header gains a **mode switch** (segmented control "Code | Blocks | Python",
   `aria-pressed`), persisted in `localStorage['z1.mode']` (default `code`).
-- In **Blocks mode** the right column tabs are *Blocks · Code · Serial Monitor
-  · Pin Map · Generated JS*; the Blocks tab is selected by default; the Code
-  tab shows the generated sketch in the editor **read-only** with a banner
-  "Generated from your blocks. Switch to Code mode to edit it by hand."
+  Everything mode-dependent lives in the mode registry (`src/ui/modes/`,
+  `blocks-mode.ts` for this mode; docs/PYTHON.md §7.1).
+- In **Blocks mode** the right column tabs are *Blocks · Code (padlock) ·
+  Serial Monitor · Pin Map · Generated JS*; the Blocks tab is selected by
+  default; the Code tab shows the generated sketch in a second, **read-only**
+  editor (the mirror: focusable and copyable, never saved; typing into it
+  toasts "This sketch is made from your blocks — change the blocks") under the
+  banner "Made from your blocks — read only." with the button **Edit a copy in
+  Code mode** (docs/PYTHON.md §7.5).
   **Run** transpiles `blocksPanel.getCode()`; diagnostics go to the console
   (an error there means a generator bug: prefix the message with "Block code
   error:"). The workspace is persisted to `localStorage['z1.blocks']`
@@ -244,11 +249,20 @@ App behaviour:
   same sketch); loading such a hash switches to Blocks mode. New resets
   the workspace to `DEFAULT_WORKSPACE` (same confirmation as an example).
 - In **Code mode** the Blocks tab is hidden and everything works as today.
-- Switching **Blocks → Code** puts the generated sketch into the editor,
-  editable (the blocks stay saved). Switching **Code → Blocks** restores the
-  saved workspace; if the editor text differs from the last generated sketch,
-  confirm: "Your text changes stay in the Code editor but are not converted to
-  blocks. Switch to Blocks?".
+- **Each mode keeps its own program** (docs/PYTHON.md §7.6, decision D2):
+  switching Code ↔ Blocks (↔ Python) shows the target mode's own program —
+  the hand-written sketch (`z1.code`) in Code mode, the saved blocks in Blocks
+  mode — and never copies or asks anything. The generated sketch reaches the
+  Code editor only through **Edit a copy in Code mode**: when `z1.code` holds
+  hand-written text (not blank, not an example, not the last loaded or copied
+  text) it first confirms "Replace your Arduino code in Code mode with this
+  sketch?\nYour current Arduino code can be brought back with Undo."; the old
+  text goes to `z1.code.previous`, the sketch into the Code editor (saved),
+  the app switches to Code mode and toasts "Copied into Code mode · Undo"
+  (Undo, 8 s, brings the old text back). The button is disabled while the
+  generator fails. (The former Blocks → Code hand-off and its
+  "Your text changes stay in the Code editor…" question are gone: Code →
+  Blocks → Code lost the hand-written sketch.)
 - When the Blocks tab becomes visible (tab click, mode switch, window resize)
   call `resize()`; the workspace must fill the tab area (toolbox on the left).
 - Keyboard: `Ctrl/Cmd+Enter` runs in both modes; `Esc` stops. Blockly must not
@@ -264,8 +278,9 @@ used, setup init order, procedures with typed params and return, if / else if
 / else, nested repeat counters (`i`, `j`), text_join, `Serial.println`,
 orphan blocks ignored, helpers emitted once, `z1_delay_s` folding, orders /
 parentheses (`(a + b) * c`). `tests/ui-blocks.test.ts` (happy-dom, optional):
-mode persistence and the Blocks → Code hand-off logic (without injecting
-Blockly).
+mode persistence and the absence of a Blocks → Code hand-off (without
+injecting Blockly; the app-level mode switch and "Edit a copy in Code mode"
+are in tests/app-header.test.ts and tests/ui-python.test.ts).
 
 ## 11.6 Block examples (`BLOCK_EXAMPLES`)
 

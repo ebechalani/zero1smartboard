@@ -2,20 +2,22 @@
 /**
  * Blocks-mode UI logic that does not need Blockly (docs/BLOCKS.md §11.5):
  * mode and workspace persistence, `#blocks=` share links, the workspace
- * fingerprint used by the "replace your blocks?" question, the Code → Blocks
- * hand-off rule, and the Examples menu switching between text and block
- * examples. Blockly itself is never injected here.
+ * fingerprint used by the "replace your blocks?" question, and the Examples
+ * menu switching between text and block examples. Blockly itself is never
+ * injected here. (There is no Code → Blocks hand-off any more: each mode keeps
+ * its own program, docs/PYTHON.md §7.6; tests/app-header.test.ts covers it.)
  */
 import { afterEach, describe, expect, it } from 'vitest';
+import * as blocksPanel from '../src/ui/blocks-panel';
 import {
+  APP_MODES,
   BLOCKS_STORAGE_KEY,
-  CONFIRM_TO_BLOCKS,
   MODE_STORAGE_KEY,
   blocksFromHash,
   encodeShareBlocks,
+  isAppMode,
   loadMode,
   loadSavedWorkspace,
-  needsConfirmToBlocks,
   parseWorkspaceJson,
   saveMode,
   saveWorkspace,
@@ -67,13 +69,24 @@ describe('mode persistence', () => {
     saveMode('blocks');
     expect(localStorage.getItem(MODE_STORAGE_KEY)).toBe('blocks');
     expect(loadMode()).toBe('blocks');
+    saveMode('python');
+    expect(localStorage.getItem(MODE_STORAGE_KEY)).toBe('python');
+    expect(loadMode()).toBe('python');
     saveMode('code');
     expect(loadMode()).toBe('code');
   });
 
-  it('falls back to Code mode for unknown values', () => {
-    localStorage.setItem(MODE_STORAGE_KEY, 'python');
-    expect(loadMode()).toBe('code');
+  it('falls back to Code mode for unknown values (docs/PYTHON.md §7.15)', () => {
+    for (const value of ['pyth0n', 'Python', 'BLOCKS', '', 'undefined']) {
+      localStorage.setItem(MODE_STORAGE_KEY, value);
+      expect(loadMode(), value).toBe('code');
+    }
+  });
+
+  it('knows the three modes in header order', () => {
+    expect(APP_MODES).toEqual(['code', 'blocks', 'python']);
+    for (const mode of APP_MODES) expect(isAppMode(mode)).toBe(true);
+    for (const value of ['pyth0n', null, undefined, 1, {}]) expect(isAppMode(value)).toBe(false);
   });
 });
 
@@ -162,28 +175,13 @@ describe('workspace fingerprint', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Code → Blocks hand-off
+// No Code → Blocks hand-off (docs/PYTHON.md §7.6, §13 D2)
 // ---------------------------------------------------------------------------
 
 describe('Code → Blocks hand-off', () => {
-  it('asks when hand-written text would be left behind', () => {
-    expect(needsConfirmToBlocks('int x = 1;', null, false)).toBe(true);
-    expect(needsConfirmToBlocks('int x = 1;', '// generated', false)).toBe(true);
-  });
-
-  it('does not ask when the editor still holds the last generated sketch', () => {
-    expect(needsConfirmToBlocks('// generated', '// generated', false)).toBe(false);
-  });
-
-  it('does not ask when the text is untouched (empty, an example, the last loaded sketch)', () => {
-    expect(needsConfirmToBlocks('', null, true)).toBe(false);
-    expect(needsConfirmToBlocks('void setup() {}', null, true)).toBe(false);
-  });
-
-  it('uses the wording from the contract', () => {
-    expect(CONFIRM_TO_BLOCKS).toBe(
-      'Your text changes stay in the Code editor but are not converted to blocks. Switch to Blocks?',
-    );
+  it('is gone: no question, no rule, no text', () => {
+    expect('CONFIRM_TO_BLOCKS' in blocksPanel).toBe(false);
+    expect('needsConfirmToBlocks' in blocksPanel).toBe(false);
   });
 });
 

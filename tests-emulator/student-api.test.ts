@@ -9,7 +9,7 @@ import { Timestamp } from 'firebase/firestore';
 import type { RulesTestEnvironment } from '@firebase/rules-unit-testing';
 import { decodeContent } from '../src/classroom/codec';
 import { loadStudentFirebase, loadTeacherFirebase } from '../src/classroom/firebase';
-import { newHandinId, type HandinDraft } from '../src/classroom/model';
+import { contentOf, newHandinId, type HandinDraft } from '../src/classroom/model';
 import { CLASSROOM_STORAGE_KEY, LAST_CODE_STORAGE_KEY, loadSavedSession } from '../src/classroom/session-store';
 import { createStudentApi, type StudentApi, type StudentSession } from '../src/classroom/student';
 import { createTeacherApi, type ClassDetail, type TeacherApi } from '../src/classroom/teacher';
@@ -21,7 +21,7 @@ let teacherUid: string;
 const clock = { offset: 0 };
 const now = () => Date.now() + clock.offset;
 
-const DRAFT: HandinDraft = { kind: 'code', code: 'void setup() {}\nvoid loop() {}\n', workspaceJson: '' };
+const DRAFT: HandinDraft = { kind: 'code', code: 'void setup() {}\nvoid loop() {}\n', workspaceJson: '', python: '' };
 const BIG_SKETCH = `// Traffic light\n${'void loop() {\n  digitalWrite(13, HIGH);\n  delay(500);\n}\n'.repeat(40)}`;
 
 interface Device {
@@ -176,7 +176,7 @@ describe('handIn', () => {
     expect(loadSavedSession(dev.storage)!.lastHandinAt).toBeGreaterThan(0);
 
     await ageLastHandin(cls.code, session.uid, 11_000);
-    const blocks = await dev.api.handIn(session, { kind: 'blocks', code: BIG_SKETCH, workspaceJson: JSON.stringify({ blocks: { blocks: [{ type: 'z1_setup' }] } }) }, newHandinId());
+    const blocks = await dev.api.handIn(session, { kind: 'blocks', code: BIG_SKETCH, workspaceJson: JSON.stringify({ blocks: { blocks: [{ type: 'z1_setup' }] } }), python: '' }, newHandinId());
     expect(blocks.content.enc).toBe('gzip');
 
     const page = await teacher.loadHandins(cls.code, new Date(Date.now() - 60_000));
@@ -187,6 +187,27 @@ describe('handIn', () => {
     expect(await decodeContent(stored.content)).toMatchObject({ ok: true, code: BIG_SKETCH });
     expect(stored.createdAt).toBeInstanceOf(Date);
     expect(stored).toMatchObject({ ...ALI, nameKey: 'ali khoury' });
+  });
+  it('Python hand-ins keep the program in workspace (plain and gzip); the teacher reads kind python (docs/PYTHON.md §8.1)', async () => {
+    const { cls, dev, session } = await joined();
+    const small = 'print("Bonjour")\n';
+    const id = newHandinId();
+    const plain = await dev.api.handIn(session, { kind: 'python', code: DRAFT.code, workspaceJson: '', python: small }, id);
+    expect(plain).toMatchObject({ id, kind: 'python', content: { enc: 'plain', code: DRAFT.code, workspace: small } });
+    expect(await readDoc(env, `classes/${cls.code}/handins/${id}`)).toMatchObject({ kind: 'python', enc: 'plain', code: DRAFT.code, workspace: small });
+
+    await ageLastHandin(cls.code, session.uid, 11_000);
+    const program = `from machine import Pin\nimport time\n\nled = Pin(13, Pin.OUT)\n${'while True:\n    led.toggle()\n    print("Lumière")\n    time.sleep(0.5)\n'.repeat(20)}`;
+    const big = await dev.api.handIn(session, { kind: 'python', code: BIG_SKETCH, workspaceJson: '', python: program }, newHandinId());
+    expect(big.content.enc).toBe('gzip');
+
+    const page = await teacher.loadHandins(cls.code, new Date(Date.now() - 60_000));
+    expect(page.items.map((h) => h.kind)).toEqual(['python', 'python']);
+    const stored = page.items.find((h) => h.id === big.id)!;
+    expect(stored.content.workspace).toBeInstanceOf(Uint8Array);
+    const decoded = await decodeContent(stored.content);
+    expect(decoded.ok).toBe(true);
+    expect(contentOf(stored.kind, decoded as { code: string; workspaceJson: string })).toEqual({ kind: 'python', code: BIG_SKETCH, workspaceJson: '', python: program });
   });
   it('waits 10 s between hand-ins (locally, without a request)', async () => {
     const { dev, session } = await joined();

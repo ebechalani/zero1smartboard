@@ -29,6 +29,7 @@ import {
   KNOWN_CLASSES,
   KNOWN_RUNTIME_NAMES,
   METHOD_RETURN,
+  NUMERIC_CALLEES,
   PWM_PIN_NUMBERS,
   RAW_CHAR_ARRAY_CALLEES,
   STRING_MUTATORS,
@@ -99,6 +100,9 @@ export const PRELUDE_HELPERS = [
   '__bool',
   '__idiv',
   '__imod',
+  '__imul',
+  '__ftoi',
+  '__ftou',
   '__tick',
   '__array',
   '__cstr',
@@ -149,11 +153,25 @@ interface ExprResult {
   /** For arrays: known lengths of the remaining dimensions. */
   arrayLengths?: number[];
   node: Expression;
-  /** Compile-time value when known. */
+  /** Compile-time value when known (the value the board computes: wrapped or rounded like the C type). */
+  constValue?: number;
+  /**
+   * The `__rt` helper whose result `code` already is (`__i16`, `__f32`, …): storing it into a
+   * variable wrapped by the same helper needs no second wrapper.
+   */
+  wrapped?: string;
+}
+
+/** A numeric operand after the usual arithmetic conversions (docs/ARCHITECTURE.md §4.4 rule 4). */
+interface Operand {
+  code: string;
   constValue?: number;
 }
 
 const STRING_INDEX_METHODS: ReadonlySet<string> = new Set(['substring', 'remove', 'charAt', 'toCharArray', 'getBytes', 'reserve']);
+
+/** Arduino.h macros that compute in the type of their argument, so an integer result wraps like it (`sq(300)` in an int). */
+const INTEGER_MACROS: ReadonlySet<string> = new Set(['sq', 'abs']);
 
 export class CodeGen {
   private readonly lines: string[] = [];
@@ -600,6 +618,8 @@ export class CodeGen {
       }
 
       const isConst = d.type.isConst && type.kind !== 'array' && type.kind !== 'class';
+      // The value the variable holds: `const int X = 70000;` is 4464 on the board.
+      if (constValue !== undefined) constValue = this.foldCast(constValue, type);
       const keepConstValue = isConst || context === 'global' ? constValue : undefined;
 
       if (d.type.isStatic && context !== 'global') {
@@ -695,8 +715,14 @@ export class CodeGen {
         else type = v <= 0x7fff ? T.int : v <= 0x7fffffff ? T.long : T.ulong;
         return this.result(e, String(v), type, { constValue: v });
       }
-      case 'FloatLiteral':
-        return this.result(e, Number.isInteger(e.value) ? `${e.value}.0` : String(e.value), T.double, { constValue: e.value });
+      case 'FloatLiteral': {
+        // AVR double is float: a literal the chip cannot hold exactly (0.1) is rounded to single precision.
+        // Large values print with an exponent ("3.4e+38"), which must not get a ".0" appended.
+        const text = String(e.value);
+        const js = Number.isInteger(e.value) && !/e/i.test(text) ? `${text}.0` : text;
+        const value = Math.fround(e.value);
+        return this.result(e, value === e.value ? js : `__f32(${js})`, T.double, { constValue: value, wrapped: '__f32' });
+      }
       case 'CharLiteral':
         return this.result(e, String(e.value), T.char, { constValue: e.value });
       case 'StringLiteral':
@@ -716,7 +742,10 @@ export class CodeGen {
         const a = this.genExpr(e.consequent);
         const b = this.genExpr(e.alternate);
         const type = commonType(a.type, b.type);
-        const conv = (x: ExprResult): string => (type.kind === 'string' ? this.toStringCode(x) : x.code);
+        const conv = (x: ExprResult): string => {
+          if (type.kind === 'string') return this.toStringCode(x);
+          return isNumeric(x.type) ? this.convertOperand(x, type).code : x.code;
+        };
         return this.result(e, `(${t.code} ? ${conv(a)} : ${conv(b)})`, type);
       }
       case 'CallExpr':
@@ -737,8 +766,8 @@ export class CodeGen {
         if (type.kind === 'string') return this.result(e, `__rt.String(${this.boxForPrint(v)})`, T.string);
         const helper = wrapHelper(type);
         if (!helper) this.fail(e.pos, `cannot cast to ${describeType(type)}`);
-        const constValue = v.constValue !== undefined ? this.foldCast(v.constValue, type) : undefined;
-        return this.result(e, `${helper}(${v.code})`, type, { constValue });
+        const constValue = v.constValue !== undefined ? this.foldCast(v.constValue, type, isFloat(v.type)) : undefined;
+        return this.result(e, this.convertCode(v, type, helper!), type, { constValue, wrapped: helper! });
       }
       case 'SizeofExpr': {
         const size = this.sizeofValue(e);
@@ -808,8 +837,13 @@ export class CodeGen {
       }
       case '-': {
         const v = this.genExpr(e.argument);
-        const type = v.type.kind === 'float' ? v.type : isIntegral(v.type) ? promote(v.type) : v.type;
-        return this.result(e, `(-${v.code})`, type, { constValue: v.constValue !== undefined ? -v.constValue : undefined });
+        const raw = v.constValue !== undefined ? -v.constValue : undefined;
+        if (isIntegral(v.type)) {
+          // -(-32768) is -32768 in a 16-bit int, and -1 is 65535 in an unsigned int.
+          const type = promote(v.type);
+          return this.wrapInteger(e, `(-${v.code})`, `-${v.code}`, type, raw, raw !== undefined ? this.foldCast(raw, type) : undefined);
+        }
+        return this.result(e, `(-${v.code})`, v.type, { constValue: raw, wrapped: v.type.kind === 'float' ? v.wrapped : undefined });
       }
       case '+': {
         const v = this.genExpr(e.argument);
@@ -817,9 +851,13 @@ export class CodeGen {
       }
       case '~': {
         const v = this.genExpr(e.argument);
-        return this.result(e, `(~${v.code})`, isIntegral(v.type) ? promote(v.type) : T.unknown, {
-          constValue: v.constValue !== undefined ? ~v.constValue : undefined,
-        });
+        if (!isIntegral(v.type)) return this.result(e, `(~${v.code})`, T.unknown);
+        const type = promote(v.type);
+        const raw = v.constValue !== undefined ? ~v.constValue : undefined;
+        const value = raw !== undefined ? this.foldCast(raw, type) : undefined;
+        // JavaScript's ~ gives a signed 32-bit result: only the unsigned types need wrapping.
+        if (!isUnsigned(type)) return this.result(e, `(~${v.code})`, type, { constValue: value });
+        return this.wrapInteger(e, `(~${v.code})`, `~${v.code}`, type, raw, value);
       }
     }
   }
@@ -832,7 +870,13 @@ export class CodeGen {
     }
     const helper = wrapHelper(target.type);
     const inc = e.op === '++';
-    if (!helper || target.type.kind === 'float' || target.type.kind === 'bool') {
+    if (target.type.kind === 'float') {
+      // f++ is f = f + 1 in single precision (16777216.0 + 1 stays 16777216.0); the old value of f++ comes first.
+      const assign = `${target.code} = __f32(${target.code} ${inc ? '+' : '-'} 1)`;
+      if (e.prefix || !valueUsed) return this.result(e, `(${assign})`, target.type, { wrapped: '__f32' });
+      return this.result(e, `([${target.code}, ${assign}][0])`, target.type, { wrapped: '__f32' });
+    }
+    if (!helper || target.type.kind === 'bool') {
       const code = e.prefix ? `${e.op}${target.code}` : `${target.code}${e.op}`;
       return this.result(e, `(${code})`, target.type);
     }
@@ -879,11 +923,13 @@ export class CodeGen {
       if ((l.type.kind === 'string' && isChar(r.type)) || (r.type.kind === 'string' && isChar(l.type))) {
         this.warn(e.pos, "comparing a String with a character: use text in double quotes (\"a\") or s.charAt(0) == 'a'");
       }
-      const constValue = this.foldBinary(op, l.constValue, r.constValue);
-      return this.result(e, `(${l.code} ${op === '==' ? '==' : '!='} ${r.code})`, T.bool, { constValue });
+      const [a, b] = this.convertOperands(l, r);
+      const constValue = this.foldBinary(op, a.constValue, b.constValue);
+      return this.result(e, `(${a.code} ${op === '==' ? '==' : '!='} ${b.code})`, T.bool, { constValue });
     }
     if (op === '<' || op === '>' || op === '<=' || op === '>=') {
-      return this.result(e, `(${l.code} ${op} ${r.code})`, T.bool, { constValue: this.foldBinary(op, l.constValue, r.constValue) });
+      const [a, b] = this.convertOperands(l, r);
+      return this.result(e, `(${a.code} ${op} ${b.code})`, T.bool, { constValue: this.foldBinary(op, a.constValue, b.constValue) });
     }
     if (op === '&&' || op === '||') {
       const lb = l.type.kind === 'bool' ? l.code : `!!${l.code}`;
@@ -895,14 +941,102 @@ export class CodeGen {
       this.fail(e.pos, `'${op}' cannot be applied to ${describeType(l.type)} and ${describeType(r.type)}`);
     }
 
-    const type = arithResult(l.type, r.type);
-    const constValue = this.foldBinary(op, l.constValue, r.constValue, type);
-    if ((op === '/' || op === '%') && type.kind === 'int') {
-      return this.result(e, `${op === '/' ? '__idiv' : '__imod'}(${l.code}, ${r.code})`, type, { constValue });
+    // The result has the C type of the operation (a shift has the type of its promoted left operand)
+    // and is wrapped or rounded to it right away, like the board computes it (docs/PYTHON.md §6).
+    const shift = op === '<<' || op === '>>';
+    const type = shift && isIntegral(l.type) ? promote(l.type) : arithResult(l.type, r.type);
+    if (type.kind === 'float' && (op === '+' || op === '-' || op === '*' || op === '/')) {
+      const a = this.convertOperand(l, type);
+      const b = this.convertOperand(r, type);
+      const raw = this.foldBinary(op, a.constValue, b.constValue);
+      const inner = `${a.code} ${op} ${b.code}`;
+      return this.wrapArith(e, `(${inner})`, inner, type, '__f32', raw, raw !== undefined ? Math.fround(raw) : undefined);
     }
-    let jsOp: string = op;
-    if (op === '>>' && isUnsigned(l.type) && bitWidth(l.type) === 32) jsOp = '>>>';
-    return this.result(e, `(${l.code} ${jsOp} ${r.code})`, type, { constValue });
+    if (type.kind !== 'int') {
+      // unknown operands, and the operators C++ refuses on floats (%, bit operators, shifts)
+      return this.result(e, `(${l.code} ${op} ${r.code})`, type, { constValue: this.foldBinary(op, l.constValue, r.constValue, type) });
+    }
+    const wide = bitWidth(type) === 32;
+    const unsigned = isUnsigned(type);
+    if (op === '/' || op === '%') {
+      // -1 / 2u divides 65535 by 2 on the board: the signed operand becomes unsigned first.
+      const a = this.convertOperand(l, type);
+      const b = this.convertOperand(r, type);
+      const raw = this.foldBinary(op, a.constValue, b.constValue, type);
+      const code = `${op === '/' ? '__idiv' : '__imod'}(${a.code}, ${b.code})`;
+      const helper = wrapHelper(type)!;
+      // The quotient of in-range operands is in range, except INT_MIN / -1, which wraps on the board (-32768 / -1 is -32768).
+      const mayOverflow = op === '/' && !unsigned && (b.constValue === undefined || b.constValue === -1);
+      const value = raw !== undefined ? this.foldCast(raw, type) : undefined;
+      return this.result(e, mayOverflow ? `${helper}(${code})` : code, type, { constValue: value, wrapped: helper });
+    }
+    const raw = this.foldBinary(op, l.constValue, r.constValue, type);
+    if (op === '*' && wide) {
+      // A double loses the low bits of products above 2^53: the 32-bit product comes from Math.imul.
+      const bothConst = l.constValue !== undefined && r.constValue !== undefined;
+      const product = bothConst ? Math.imul(l.constValue!, r.constValue!) : undefined;
+      const value = product !== undefined && unsigned ? product >>> 0 : product;
+      const imul = `__imul(${l.code}, ${r.code})`;
+      if (raw !== undefined && value !== undefined && Object.is(raw, value)) return this.result(e, `(${l.code} * ${r.code})`, type, { constValue: value, wrapped: wrapHelper(type)! });
+      return this.result(e, unsigned ? `__u32(${imul})` : imul, type, { constValue: value, wrapped: wrapHelper(type)! });
+    }
+    const value = raw !== undefined ? this.foldCast(raw, type) : undefined;
+    if (op === '+' || op === '-' || op === '*' || op === '<<') {
+      return this.wrapInteger(e, `(${l.code} ${op} ${r.code})`, `${l.code} ${op} ${r.code}`, type, raw, value);
+    }
+    if (op === '>>') {
+      const jsOp = unsigned && wide ? '>>>' : '>>';
+      const shifted = l.constValue !== undefined && r.constValue !== undefined ? (jsOp === '>>>' ? l.constValue >>> r.constValue : l.constValue >> r.constValue) : undefined;
+      return this.result(e, `(${l.code} ${jsOp} ${r.code})`, type, { constValue: shifted });
+    }
+    // & | ^: JavaScript gives a signed 32-bit result, so only the unsigned types need wrapping
+    // (-1 ^ 5u is 65530: the signed operand is converted first, which the wrap reproduces).
+    if (unsigned) return this.wrapInteger(e, `(${l.code} ${op} ${r.code})`, `${l.code} ${op} ${r.code}`, type, raw, value);
+    return this.result(e, `(${l.code} ${op} ${r.code})`, type, { constValue: value });
+  }
+
+  /**
+   * An integer result wrapped to the width of its C type (`__i16(a + b)`). When the operands are
+   * constants whose plain JavaScript result already fits (`2 * 3`), the wrapper is left out.
+   */
+  private wrapInteger(e: Expression, plain: string, inner: string, type: StaticType, raw: number | undefined, value: number | undefined): ExprResult {
+    return this.wrapArith(e, plain, inner, type, wrapHelper(type)!, raw, value);
+  }
+
+  /**
+   * `helper(inner)`, or `plain` when the constant result `raw` of the plain code already equals the
+   * C `value` (Object.is: a JavaScript -0 is not an integer 0, since 1.0 / -0 is -inf).
+   */
+  private wrapArith(e: Expression, plain: string, inner: string, type: StaticType, helper: string, raw: number | undefined, value: number | undefined): ExprResult {
+    const code = raw !== undefined && value !== undefined && Object.is(raw, value) ? plain : `${helper}(${inner})`;
+    return this.result(e, code, type, { constValue: value, wrapped: helper });
+  }
+
+  /**
+   * An operand converted to the type `to` of the operation (C's usual arithmetic conversions, which
+   * JavaScript does not do): a `long` becomes a single-precision float next to a float (16777217 →
+   * 16777216.0), and a signed integer becomes unsigned next to an unsigned one (-1 → 65535).
+   * Constants that are already exact stay as they are.
+   */
+  private convertOperand(r: ExprResult, to: StaticType): Operand {
+    if (to.kind === 'float') {
+      if (r.type.kind !== 'int' || bitWidth(r.type) < 32) return { code: r.code, constValue: r.constValue };
+      const value = r.constValue !== undefined ? Math.fround(r.constValue) : undefined;
+      if (value !== undefined && value === r.constValue) return { code: r.code, constValue: value };
+      return { code: `__f32(${r.code})`, constValue: value };
+    }
+    if (to.kind === 'int' && isUnsigned(to) && r.type.kind === 'int' && !isUnsigned(r.type)) {
+      if (r.constValue !== undefined && r.constValue >= 0) return { code: r.code, constValue: r.constValue };
+      const value = r.constValue !== undefined ? this.foldCast(r.constValue, to) : undefined;
+      return { code: `${wrapHelper(to)}(${r.code})`, constValue: value };
+    }
+    return { code: r.code, constValue: r.constValue };
+  }
+
+  /** Both operands of a comparison converted to their common type. */
+  private convertOperands(l: ExprResult, r: ExprResult): [Operand, Operand] {
+    const common = arithResult(l.type, r.type);
+    return [this.convertOperand(l, common), this.convertOperand(r, common)];
   }
 
   private genAssign(e: Expression & { kind: 'AssignExpr' }): ExprResult {
@@ -938,7 +1072,11 @@ export class CodeGen {
       }
       const args = e.args.map((a, i) => {
         const r = this.argExpr(a);
-        return params[i]?.kind === 'string' ? this.toStringCode(r) : r.code;
+        const param = params[i];
+        if (param?.kind === 'string') return this.toStringCode(r);
+        // The callee wraps its integer parameters on entry; a float argument is first converted like avr-gcc does.
+        if (param?.kind === 'int' && isFloat(r.type)) return this.convertCode(r, param, wrapHelper(param)!);
+        return r.code;
       });
       return this.result(e, `(await ${sym.jsName}(${args.join(', ')}))`, sym.returnType ?? T.unknown);
     }
@@ -961,9 +1099,31 @@ export class CodeGen {
     }
     this.checkCallWarnings(e, name);
     const argResults = e.args.map((a) => ({ r: this.argExpr(a), a }));
-    const args = argResults.map(({ r, a }) => this.wrapRuntimeArg(r, a, name)).join(', ');
     const type = this.returnTypeOf(name, argResults.map((x) => x.r));
-    return this.result(e, `(await __rt.${name}(${args}))`, type);
+    const only = argResults[0]?.r;
+    if (name === 'sq' && argResults.length === 1 && only && type.kind === 'int' && bitWidth(type) === 32 && isPure(only.node)) {
+      // sq(x) is ((x)*(x)), which evaluates x twice anyway: the square of a long can pass 2^53,
+      // where a double loses the low 32 bits.
+      const imul = `__imul(${only.code}, ${only.code})`;
+      return this.result(e, isUnsigned(type) ? `__u32(${imul})` : imul, type, { wrapped: wrapHelper(type)! });
+    }
+    // min()/max()/constrain() are macros: they compare and return their arguments in the common type
+    // (max(0UL, -7) is -7 as unsigned long, 4294967289).
+    const common = CORE_RETURN[name] === 'common' && isNumeric(type) ? type : null;
+    const args = argResults.map(({ r, a }) => (common && isNumeric(r.type) ? this.convertOperand(r, common).code : this.wrapRuntimeArg(r, a, name))).join(', ');
+    return this.runtimeResult(e, `(await __rt.${name}(${args}))`, type, INTEGER_MACROS.has(name));
+  }
+
+  /**
+   * The value of a runtime call as the board has it: a float result is rounded to single precision
+   * (`sqrt`, `readTemperature`, `toFloat`, …), and `sq`/`abs` of an integer wrap like the Arduino
+   * macros they are (`sq(300)` is 24464 in a 16-bit int).
+   */
+  private runtimeResult(e: Expression, call: string, type: StaticType, wrapsInteger = false): ExprResult {
+    const helper = wrapHelper(type);
+    if (!helper || !(type.kind === 'float' || (wrapsInteger && type.kind === 'int'))) return this.result(e, call, type);
+    const args = call.startsWith('(await ') ? call : `(${call})`;
+    return this.result(e, `${helper}${args}`, type, { wrapped: helper });
   }
 
   private returnTypeOf(name: string, args: ExprResult[]): StaticType {
@@ -972,7 +1132,7 @@ export class CodeGen {
     if (rule === 'firstArg') return args[0] ? (isIntegral(args[0].type) ? promote(args[0].type) : args[0].type) : T.unknown;
     if (rule === 'common') {
       if (args.length < 2) return args[0]?.type ?? T.unknown;
-      return arithResult(args[0]!.type, args[1]!.type);
+      return args.slice(1).reduce((type, a) => arithResult(type, a.type), args[0]!.type);
     }
     return rule;
   }
@@ -1026,7 +1186,7 @@ export class CodeGen {
         return this.result(e, assign, T.void);
       }
       const type = METHOD_RETURN[name] ?? T.unknown;
-      return this.result(e, `__m(${recv.code}, "${name}", [${args}])`, type);
+      return this.runtimeResult(e, `__m(${recv.code}, "${name}", [${args}])`, type);
     }
 
     if (isNumeric(recv.type)) {
@@ -1039,8 +1199,8 @@ export class CodeGen {
     const argResults = e.args.map((a) => ({ r: this.argExpr(a), a }));
     const args = argResults.map(({ r, a }) => this.wrapRuntimeArg(r, a, name)).join(', ');
     const type = METHOD_RETURN[name] ?? T.unknown;
-    if (recv.type.kind === 'class') return this.result(e, `(await ${recv.code}.${name}(${args}))`, type);
-    return this.result(e, `(await __m(${recv.code}, "${name}", [${args}]))`, type);
+    if (recv.type.kind === 'class') return this.runtimeResult(e, `(await ${recv.code}.${name}(${args}))`, type);
+    return this.runtimeResult(e, `(await __m(${recv.code}, "${name}", [${args}]))`, type);
   }
 
   private genBitMacro(e: Expression & { kind: 'CallExpr' }, name: string): ExprResult {
@@ -1084,7 +1244,7 @@ export class CodeGen {
   }
 
   private wrapRuntimeArg(r: ExprResult, _a: Expression, calleeName: string): string {
-    if (isChar(r.type)) return `__chr(${r.code})`;
+    if (isChar(r.type) && !NUMERIC_CALLEES.has(calleeName)) return `__chr(${r.code})`;
     if (isCharArray(r.type) && !RAW_CHAR_ARRAY_CALLEES.has(calleeName)) return `__cstr(${r.code})`;
     if (isFloat(r.type) && FLOAT_BOXING_CALLEES.has(calleeName)) return `__flt(${r.code})`;
     return r.code;
@@ -1117,8 +1277,19 @@ export class CodeGen {
     if (r.type.kind === 'string' || r.type.kind === 'cstring' || isCharArray(r.type)) {
       this.fail(r.node.pos, `a text value cannot be stored in a ${describeType(to)} variable (use .toInt() or .toFloat())`);
     }
-    if (this.literalFits(r, to)) return r.code;
-    return `${helper}(${r.code})`;
+    if (r.wrapped === helper || this.literalFits(r, to)) return r.code;
+    return this.convertCode(r, to, helper);
+  }
+
+  /**
+   * `r` converted to the numeric type `to` by its `helper`. A float becomes an integer the way
+   * avr-gcc converts it (`__ftoi` = `__fixsfsi`, `__ftou` = `__fixunssfsi`, then the width), so an
+   * out-of-range value gives the board's result (3e9 → -2147483648 in a long), not JavaScript's modulo.
+   */
+  private convertCode(r: ExprResult, to: StaticType, helper: string): string {
+    if (!(isFloat(r.type) && to.kind === 'int')) return `${helper}(${r.code})`;
+    const fix = `${isUnsignedFix(to) ? '__ftou' : '__ftoi'}(${r.code})`;
+    return bitWidth(to) === 32 ? fix : `${helper}(${fix})`;
   }
 
   /** Skip the wrapper for literals that already fit the target type (keeps the generated code readable). */
@@ -1136,11 +1307,11 @@ export class CodeGen {
     return v >= -(2 ** (width - 1)) && v < 2 ** (width - 1);
   }
 
-  private foldCast(v: number, to: StaticType): number | undefined {
+  private foldCast(v: number, to: StaticType, fromFloat = false): number | undefined {
     if (to.kind === 'float') return Math.fround(v);
     if (to.kind === 'bool') return v ? 1 : 0;
     if (to.kind !== 'int') return undefined;
-    const t = Math.trunc(v);
+    const t = fromFloat ? fixFloat(v, isUnsignedFix(to)) : Math.trunc(v);
     switch (bitWidth(to)) {
       case 8:
         return isUnsigned(to) ? t & 0xff : (t << 24) >> 24;
@@ -1162,9 +1333,9 @@ export class CodeGen {
       case '*':
         return a * b;
       case '/':
-        return b === 0 ? undefined : intResult ? Math.trunc(a / b) : a / b;
+        return b === 0 ? undefined : intResult ? Math.trunc(a / b) + 0 : a / b;
       case '%':
-        return b === 0 ? undefined : a % b;
+        return b === 0 ? undefined : intResult ? (a % b) + 0 : a % b;
       case '<<':
         return a << b;
       case '>>':
@@ -1223,6 +1394,41 @@ export class CodeGen {
         return 'expression';
     }
   }
+}
+
+/** Whether evaluating `e` twice is the same as once: no calls, assignments or ++/--. */
+function isPure(e: Expression): boolean {
+  switch (e.kind) {
+    case 'Identifier':
+    case 'IntLiteral':
+    case 'FloatLiteral':
+    case 'CharLiteral':
+    case 'BoolLiteral':
+      return true;
+    case 'UnaryExpr':
+      return e.op !== '++' && e.op !== '--' && isPure(e.argument);
+    case 'BinaryExpr':
+      return isPure(e.left) && isPure(e.right);
+    case 'CastExpr':
+      return isPure(e.argument);
+    case 'IndexExpr':
+      return isPure(e.object) && isPure(e.index);
+    case 'ConditionalExpr':
+      return isPure(e.test) && isPure(e.consequent) && isPure(e.alternate);
+    default:
+      return false;
+  }
+}
+
+/** Whether avr-gcc converts a float to integer type `t` with `__fixunssfsi` (16- and 32-bit unsigned) rather than `__fixsfsi`. */
+function isUnsignedFix(t: StaticType): boolean {
+  return isUnsigned(t) && bitWidth(t) >= 16;
+}
+
+/** Compile-time twin of the runtime's `__ftoi` / `__ftou` (src/runtime/helpers.ts). */
+function fixFloat(v: number, unsigned: boolean): number {
+  if (unsigned) return v > -4294967296 && v < 4294967296 ? Math.trunc(v) >>> 0 : 0;
+  return v > -2147483649 && v < 2147483648 ? Math.trunc(v) | 0 : -2147483648;
 }
 
 /** Generate JavaScript for a parsed program. Throws CodegenError. */

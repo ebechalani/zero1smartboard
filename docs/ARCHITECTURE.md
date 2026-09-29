@@ -45,7 +45,8 @@ src/
     typesys.ts signatures.ts    static types, runtime signature table       [codegen]
     codegen.ts index.ts         Program -> JS; transpile()                  [codegen]
   runtime/
-    values.ts                   FloatBox, __flt, __chr, StopSignal, SketchError (given)
+    values.ts                   FloatBox, __flt, __chr, StopSignal, SketchError, SketchAbort (given)
+    avr-float.ts                Print::printFloat and avr-libc dtostrf, bit-exact [runtime-core]
     clock.ts                    RealClock, VirtualClock                     [runtime-core]
     board.ts                    class Board implements IBoard               [runtime-core]
     helpers.ts                  numeric helpers (__i16 …), __array, __cstr  [runtime-core]
@@ -196,7 +197,8 @@ The output is the body of `new Function('__rt', js)`:
 ```js
 "use strict";
 const { __i8, __u8, __i16, __u16, __i32, __u32, __f32, __bool, __idiv, __imod,
-        __tick, __array, __cstr, __chr, __flt, __str, __m, __mut, __charAt } = __rt;
+        __imul, __ftoi, __ftou, __tick, __array, __cstr, __chr, __flt, __str,
+        __m, __mut, __charAt } = __rt;
 return (async () => {
   const LED = 13;                              // #define / enum members
   let count = 0;                               // globals in source order
@@ -238,7 +240,8 @@ Rules:
    either is unsigned), comparisons/logical → `bool`, `?:` → common type,
    `String`+anything → `String`, char literal → `char`, string literal →
    `char*`. Unknown → `unknown` (treated as double: no integer division, no
-   wrapping).
+   wrapping). A shift has the type of its promoted left operand;
+   `min`/`max`/`constrain` have the common type of their arguments.
    - Integer `/` → `__idiv(a, b)`; integer `%` → `__imod(a, b)`. (Both throw
      `SketchError('division by zero')` for b === 0.)
    - **Assignment coercion**: storing into a variable/param/array element of
@@ -249,13 +252,76 @@ Rules:
      Applies to initialisers, `=`, compound assignments (`x += y` →
      `x = __i16(x + y)`), `++`/`--`, function parameters on entry, and
      `return` values of typed functions. Casts `(T)x` use the same helpers;
-     `(int)3.7` → 3. `String`/class/array assignment: no wrapper.
+     `(int)3.7` → 3. `String`/class/array assignment: no wrapper. A value
+     that already went through the same helper (see "board-exact arithmetic"
+     below; `ExprResult.wrapped`) is not wrapped twice.
    - `++`/`--`: prefix `++x` → `(x = __T(x + 1))`; postfix `x++` in a
      value context → `(x = __T(x + 1), __T(x - 1))`; in a statement/for-update
-     context → `x = __T(x + 1)`. For `unknown`/float types use `x++` directly.
-   - Shifts and bitwise ops are emitted as JS operators (32-bit); the
-     assignment wrapper restores the C width.
+     context → `x = __T(x + 1)`. Floats: `(f = __f32(f + 1))`, and in a value
+     context `([f, f = __f32(f + 1)][0])` (the old value first). For
+     `unknown`/`bool` use `x++` directly.
    - `int` literal larger than 16 bits has type `long`; suffix `L`/`UL` too.
+   - **Board-exact arithmetic** (docs/PYTHON.md §6, "C0"). The simulator
+     computes like the ATmega328P in every mode (Code, Blocks, Python), not
+     only when a value is stored; every rule below was measured against
+     avr-g++ 7.3 + avr8js (`tests/runtime-fidelity.test.ts`):
+     1. *Floats are single precision everywhere* (AVR `double` is `float`).
+        Every expression of C type `float`/`double` is rounded where it is
+        produced: a literal the chip cannot hold exactly → `__f32(0.1)` (an
+        exact one such as `0.5` stays as is), the results of `+ - * /` →
+        `__f32(a * b)`, float-returning runtime calls and methods →
+        `__f32(await __rt.sqrt(x))`, `__f32(await dht.readTemperature())`,
+        casts → `__f32(x)`, `f++` as above. A `long`/`unsigned long` operand
+        of a float operation or comparison is converted first
+        (`__f32(n) + 0.5`: 16777217 → 16777216.0). So `float s = 0.1;
+        s == 0.1` and `0.1 + 0.2 == 0.3` are true, as on the board.
+     2. *Integers wrap at their C width on every operation*: the results of
+        `+ - * <<` and unary `-` of an integer C type (after the promotions)
+        go through `__i16`/`__u16`/`__i32`/`__u32` (`60 * 1000` →
+        `__i16(60 * 1000)` = −5536, `1 << 20` → 0); a 32-bit `*` is
+        `__imul(a, b)` (`Math.imul`; `__u32(__imul(a, b))` for unsigned),
+        because a double loses the low bits of products above 2^53
+        (`long a = 50000; a * a` → −1794967296). `~ & | ^` of an unsigned
+        type are wrapped too (JavaScript gives signed 32-bit results);
+        `>>` of an `unsigned long` is `>>>`; a signed `/` is wrapped unless
+        the divisor is a constant other than −1 (`-32768 / -1` is −32768
+        on the board, `x / 1023` needs no wrapper). The `sq`/`abs` macros
+        wrap an integer result (`sq(300)` → 24464); `sq` of a side-effect-free
+        `long` expression is `__imul(x, x)`. Constant operands whose plain
+        JavaScript result already fits are not wrapped (`(2 * 3)`); a
+        JavaScript `-0` never stands for an integer 0 (`1.0 / 0` is inf).
+     3. *C's usual arithmetic conversions of the operands*: for `/`, `%`,
+        comparisons and `?:`, a signed operand next to an unsigned one is
+        converted first (`int neg = -1; unsigned int one = 1; neg < one` →
+        `(__u16(neg) < one)`, false; `neg / one` → 65535); `min`, `max`
+        and `constrain` (macros) get all their arguments in their common
+        type (`max(0UL, -7)` → 4294967289). The maths functions of
+        `NUMERIC_CALLEES` receive a `char` as its signed number, not boxed
+        with `__chr` (`ceil((char)-32)` is −32).
+     4. *Float → integer* conversions follow avr-gcc's run-time routines:
+        `__ftoi` (`__fixsfsi`: truncation, and −2147483648 for NaN, ±inf and
+        values outside `long`) for `char`/`byte`/`int`/`long`, `__ftou`
+        (`__fixunssfsi`: modulo 2^32, 0 outside ±2^32) for `unsigned int` /
+        `unsigned long`, then the width: `int n = f;` → `let n =
+        __i16(__ftoi(f));`, `long l = f;` → `__ftoi(f)`. Also for a float
+        argument of a user function's integer parameter (at the call site).
+        Out-of-range conversion is undefined behaviour in C: when GCC folds
+        it at compile time it saturates instead (3e9 → 2147483647).
+     5. *Float literals with an exponent* (`3.4e38`, JavaScript text
+        `3.4e+38`) get no `.0` suffix, which would be invalid JavaScript.
+     6. `abort()` is a runtime function (§5.4); `String(float, n)`,
+        `String + float` and `dtostrf()` format like avr-libc (§6.3).
+
+     Remaining known differences: the transcendental functions (`sin`, `exp`,
+     `pow`, …) are JavaScript's, rounded to single precision, and may differ
+     from avr-libc's in the last bit; a float outside the `long` range passed
+     to a runtime function with integer parameters (`map(3e9, …)`) is
+     converted modulo 2^32; `sq()` of a `long` expression containing a call
+     (`sq(millis())`) loses the low bits beyond ±94,906,265; `delay()` of a
+     negative number waits 0 ms (the
+     board waits ~49 days); avr-gcc 7.3 at `-Os` miscompiles a few
+     expressions (`x << ((ul ^ l) & 15)` shifts by 0), which the simulator
+     computes as C says.
 5. **Chars and strings.**
    - `char` values are numbers. `'A'` → `65`.
    - `String` values are JS strings. A `String` declaration without initialiser
@@ -279,9 +345,12 @@ Rules:
      `adding to a string literal is pointer arithmetic in C++; use String("lit") + x`.
      `==`/`!=` between two `String`/`char*` values → JS `===`/`!==`.
    - Passing arguments to **runtime** functions/methods (not user functions):
-     `char`-typed → `__chr(x)`; `float`/`double`-typed → `__flt(x)` **only**
-     when the callee name is `print`, `println`, `String`, or `write`. Never
-     wrap arguments to user-defined functions.
+     `char`-typed → `__chr(x)` (except for the maths functions of
+     `NUMERIC_CALLEES`, which get the signed number); `float`/`double`-typed
+     → `__flt(x)` **only** when the callee name is `print`, `println`,
+     `String`, or `write`. Arguments to user-defined functions are not
+     wrapped, except a float passed for an integer parameter (rule 4,
+     `__ftoi`/`__ftou`).
    - `bool`-typed values are JS booleans; arithmetic on them works (`true + 1`).
 6. **Arrays.** `int a[5];` → `let a = __array([5], 0)`; `float f[2][3]` →
    `__array([2,3], 0)`; `String s[3]` → `__array([3], "")`; `Servo s[2]` →
@@ -326,10 +395,10 @@ Rules:
 Return types the codegen must know (all others → `unknown`):
 
 Core functions: `digitalRead`→int, `analogRead`→int, `millis`/`micros`/`pulseIn`/`pulseInLong`→unsigned long,
-`map`/`random`→long, `constrain`/`min`/`max`/`abs`→type of first argument
-(`min`/`max`: common type), `sqrt sq pow sin cos tan asin acos atan atan2 exp log log10 floor ceil round fabs fmod trunc`→double
+`map`/`random`→long, `abs`/`sq`→type of first argument
+(`min`/`max`/`constrain`: common type of all arguments), `sqrt sq pow sin cos tan asin acos atan atan2 exp log log10 floor ceil round fabs fmod trunc`→double
 (but `sq(int)`→int, `abs(int)`→int, `round`→long), `shiftIn`→unsigned char,
-`bit bitRead lowByte highByte`→int/unsigned char, `word`→unsigned int,
+`bit`→unsigned long (`1UL << b`), `bitRead lowByte highByte`→int/unsigned char, `word`→unsigned int,
 `isDigit isAlpha isAlphaNumeric isSpace isUpperCase isLowerCase isPunct isPrintable isHexadecimalDigit isnan isinf`→bool,
 `toUpperCase toLowerCase`(char)→char, `strlen`→unsigned int, `strcmp strncmp atoi`→int,
 `atol`→long, `atof`→double, `sprintf snprintf`→int, `dtostrf itoa ltoa`→char*,
@@ -414,8 +483,11 @@ __i8(x)  = (x << 24) >> 24        __u8(x)  = x & 0xff
 __i16(x) = (x << 16) >> 16        __u16(x) = x & 0xffff
 __i32(x) = x | 0                  __u32(x) = x >>> 0
 __f32(x) = Math.fround(x)         __bool(x) = !!x   (numbers: x !== 0; strings: true)
-__idiv(a,b) : b===0 → throw SketchError('division by zero'); Math.trunc(a/b)
-__imod(a,b) : b===0 → throw; a % b  (JS semantics equal C for integers)
+__idiv(a,b) : b===0 → throw SketchError('division by zero'); Math.trunc(a/b) + 0
+__imod(a,b) : b===0 → throw; a % b + 0  (JS semantics equal C for integers; + 0: never -0)
+__imul(a,b) = Math.imul(a, b)     low 32 bits of a long product (signed)
+__ftoi(x)   : float → signed integer like avr-gcc __fixsfsi: trunc, NaN/±inf/out of long → -2147483648
+__ftou(x)   : float → unsigned like __fixunssfsi: trunc(x) >>> 0, NaN/±inf/|x| ≥ 2^32 → 0
 __array(dims: number[], fill) : nested arrays
 __cstr(x) : number[] → string up to first 0; string → string
 ```
@@ -432,8 +504,10 @@ UNO reference; a few specifics:
   (also accept the strings). Invalid pin → `SketchError('pin X does not exist on the UNO (use 0-13 or A0-A5)')`.
 - `digitalWrite(pin, v)`: v is truthy/`HIGH`(1) → 1. Warn once per pin
   (`ctx.console`) if the pin was never set to OUTPUT: "digitalWrite(pin) but pinMode(pin, OUTPUT) was never called".
-- `delay(ms)`: `await clock.sleep(ms, signal)` then `throwIfStopped()`. Clamp
-  negative to 0. `delayMicroseconds(us)`: sleep(us/1000).
+- `delay(ms)`: `await clock.sleep(ms, signal)` then `throwIfStopped()`. The
+  decimal part is dropped like the `unsigned long` parameter does
+  (`delay(497.4)` waits 497 ms); clamp negative to 0. `delayMicroseconds(us)`:
+  sleep(trunc(us)/1000).
 - `millis()` = `Math.floor(clock.now())`, `micros()` = `clock.micros()` (both wrapped `__u32`).
 - `tone(pin, freq, duration?)`: board.tone; if duration given, schedule
   `noTone(pin)` after `duration` ms via `clock.sleep` (do not await it; cancel
@@ -442,20 +516,32 @@ UNO reference; a few specifics:
 - `shiftOut(dataPin, clockPin, order, value)`: for each of 8 bits (MSBFIRST:
   bit 7 first): `digitalWrite(dataPin, bit); digitalWrite(clockPin, HIGH); digitalWrite(clockPin, LOW)`.
   `shiftIn` symmetric reading `digitalRead(dataPin)` after clocking HIGH.
-- `map(x, inMin, inMax, outMin, outMax)` with **integer** arithmetic:
-  `__idiv((x - inMin) * (outMax - outMin), (inMax - inMin)) + outMin` on
-  truncated integer inputs. `constrain`, `min`, `max`, `abs`, `sq`, `pow`,
-  `sqrt`, trig, `round` (half away from zero), `random(max)`,
+- `map(x, inMin, inMax, outMin, outMax)` with **32-bit `long`** arithmetic
+  like WMath.cpp: `(x - inMin) * (outMax - outMin) / (inMax - inMin) + outMin`,
+  every step wrapped (`Math.imul` for the product; `map(100000, 0, 200000, 0,
+  100000)` is 7050 on the board). `constrain`, `min`, `max`, `abs`, `sq`
+  (Arduino.h macros: the transpiler converts the arguments and wraps the
+  result, §4.4), `pow`, `sqrt`, trig, `exp`, `log`, `floor`, `ceil`, …
+  (single-precision argument and result, like avr-libc), `radians`/`degrees`
+  (times the single-precision `DEG_TO_RAD`/`RAD_TO_DEG`), `round` (the macro
+  `(long)(x + 0.5)` / `(long)(x - 0.5)` with the addition in single
+  precision), `random(max)`,
   `random(min,max)` (exclusive max, seeded PRNG — mulberry32 — `randomSeed(s)`),
   `bit`, `bitRead`, `lowByte`, `highByte`, `word`, char classification
   functions, `isnan`, `isinf`, `interrupts`/`noInterrupts` (no-op),
   `attachInterrupt(n, isr, mode)`/`detachInterrupt` (store, warn once
   "external interrupts are not simulated on this board"), `digitalPinToInterrupt`,
   `analogReference` (no-op), `yield()` (`ctx.tick()`), `F(s)` → s.
+- `abort()`: throws `SketchAbort` (a `SketchError`, values.ts), so the run
+  stops with status `error` and the console error "The sketch stopped:
+  abort() was called." on the line of the call (§5.6). On the board avr-libc's
+  `abort()` disables the interrupts and loops forever; what was printed
+  before stays on the Serial Monitor (Python's `pyFail`, docs/PYTHON.md §4.8).
 - Constants: `HIGH 1, LOW 0, INPUT 0, OUTPUT 1, INPUT_PULLUP 2, A0..A5 14..19,
   LED_BUILTIN 13, DEC 10, HEX 16, OCT 8, BIN 2, MSBFIRST 1, LSBFIRST 0,
   CHANGE 1, FALLING 2, RISING 3, SDA 18, SCL 19, NULL 0, PI, HALF_PI, TWO_PI,
-  DEG_TO_RAD, RAD_TO_DEG, EULER, F_CPU 16000000`.
+  DEG_TO_RAD, RAD_TO_DEG, EULER, F_CPU 16000000` (`PI` … `EULER` are the
+  single-precision values the board has: `PI` prints as 3.1415927).
 - Servo caveat: when any Servo is attached, `analogWrite` on pins 9/10 warns
   "PWM on pins 9 and 10 is disabled while a Servo is attached" and does a
   digital write instead (register a `servoAttached` counter on `ctx` via a
@@ -490,8 +576,9 @@ sources override earlier ones (libs may replace core names).
   status `error`, `onConsole({level:'error', text, line})` where `line` is
   recovered from the stack (`<anonymous>:L:C` → `lineMap[L - 3]`, because
   `new Function` adds 2 header lines in V8; Firefox uses `Function:L:C`; if
-  nothing matches, omit `line`). Message for `SketchError` is its text; for
-  other JS errors, prefix "runtime error: ".
+  nothing matches, omit `line`). Message for `SketchError` is its text (for
+  `abort()`: "The sketch stopped: abort() was called."); for other JS
+  errors, prefix "runtime error: ".
 - `stop()`: abort the controller, set the flag, resolve after `run()` finishes.
 - `status` transitions: idle → running → stopped|error. A new `run()` on a
   running executor first awaits `stop()`.
@@ -507,7 +594,10 @@ sources override earlier ones (libs may replace core names).
 ### 6.1 Print formatting (`print.ts`)
 
 `formatPrintArg(value: unknown, fmt?: number): string` implementing Arduino `Print`:
-- `FloatBox`/non-integer number: `formatFloat(v, fmt ?? 2)` (from values.ts).
+- `FloatBox`/non-integer number: `formatFloat(v, fmt ?? 2)` (from values.ts):
+  Arduino's `Print::printFloat` with every step in single precision
+  (`printFloat` in `src/runtime/avr-float.ts`): "nan", "inf" for both signs,
+  "ovf" beyond ±4294967040, halves rounded up at the last decimal.
 - integer number with `fmt` undefined or 10: decimal; `fmt` 16/2/8: unsigned
   32-bit (`>>> 0`) in that base, HEX uppercase; `fmt` 0 → raw byte char
   (`write` semantics); other bases 2..36 supported.
@@ -533,8 +623,18 @@ ignored: call Serial.begin(9600) in setup()". `Serial` must be truthy
 
 - `String(x, arg?)` constructor function: number+base (`String(255, HEX)`),
   float+digits (`String(3.14159, 2)` or FloatBox), char (1-char string
-  stays), bool → "1"/"0", string → as is.
-- `__str(v, kind)`: converts for concatenation per §4.4 rule 5.
+  stays), bool → "1"/"0", string → as is. A float is formatted like
+  WString.cpp does, `dtostrf(x, n + 2, n)`: `String(2.5, 0)` is " 3",
+  `String(1e10, 1)` is "10000000000.0" (never "ovf": that is only
+  `Serial.print`), NaN is " NAN".
+- `__str(v, kind)`: converts for concatenation per §4.4 rule 5; a float (and
+  `concat(float)`) is `dtostrf(x, 4, 2)` like `String::concat(float)`.
+- `dtostrf(value, width, prec)` in `src/runtime/avr-float.ts` is a line-by-line
+  port of avr-libc 2.0's `ftoa_engine.S` and `dtoa_prf.c`: at most 8
+  significant digits, then zeros (`dtostrf(4294967296.0, 4, 2)` →
+  "4294967300.00"), "NAN"/"INF"/"-INF" in capitals, negative width →
+  left-aligned. It matches the chip character for character (golden table in
+  `tests/runtime-fidelity.test.ts`).
 - `__m(obj, name, args)`: if `obj` is a string, implement the Arduino String
   API: `length charAt(→ code) indexOf lastIndexOf substring(from, to?) equals
   equalsIgnoreCase startsWith endsWith compareTo toInt toFloat toDouble

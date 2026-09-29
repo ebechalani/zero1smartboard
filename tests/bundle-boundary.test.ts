@@ -84,6 +84,20 @@ describe('bundle boundary', () => {
       expect(readFileSync(src(file), 'utf8'), file).not.toMatch(/from\s*['"]firebase/);
     }
   });
+  it('nothing reachable from the simulator entry imports the Python translator or its editor language statically (docs/PYTHON.md §7.16)', () => {
+    const graph = reachable([src('main.ts')]);
+    expect(graph.has(src('ui/modes/python-mode.ts'))).toBe(true); // the mode itself is in the entry graph…
+    expect(graph.has(src('ui/python-chunk.ts'))).toBe(false); // …its chunk is not
+    const local = [...graph.keys()].filter((f) => f.startsWith(src('python/')) || f.startsWith(src('examples/python/')) || f === src('ui/python-language.ts'));
+    expect(local.map((f) => f.replace(ROOT, ''))).toEqual([]);
+    const bare = [...graph].filter(([, specs]) => specs.some((s) => s === '@codemirror/lang-python' || s === '@lezer/python'));
+    expect(bare.map(([f]) => f.replace(ROOT, ''))).toEqual([]);
+  });
+  it('python-mode.ts reaches the Python chunk with import() only', () => {
+    const text = readFileSync(src('ui/modes/python-mode.ts'), 'utf8');
+    expect(text).toMatch(/import\('\.\.\/python-chunk'\)/);
+    expect(staticImports(src('ui/modes/python-mode.ts')).filter((s) => s.includes('python-chunk') || s.includes('/python'))).toEqual([]);
+  });
   it('only the two barrels import the SDK packages', () => {
     const { readdirSync, statSync } = require('node:fs') as typeof import('node:fs');
     const files: string[] = [];

@@ -267,8 +267,9 @@ device already remembers that very class, it opens the Ready view instead.
     in anyway?" are shown as a warning line, and **Hand in** asks the same question
     once with a confirm dialog (`options.confirm`).
   - `errorCount > 0`: "Your sketch has {n} errors. Your teacher will see them." (a note).
-- Client checks before any request: `empty_sketch`, `too_large` (50,000 / 100,000 UTF-8
-  bytes), `too_soon` (10 s since the last hand-in from this device), `offline`.
+- Client checks before any request: `empty_sketch` (also a Python hand-in without a
+  program), `too_large` (sketch 50,000 / Blocks workspace 100,000 / Python program 50,000
+  UTF-8 bytes), `too_soon` (10 s since the last hand-in from this device), `offline`.
 - The dialog keeps one `handinId` (`newHandinId()`) per draft. Retries reuse it (§2.9).
 - The button shows "Handing in…" and is disabled: one request at a time. After the
   request timeout the status reads "Checking whether it arrived…" (the API reads the
@@ -692,16 +693,23 @@ per-student control: anyone with the code can hand in under any name (§3.5).
 | `uid` | string | `== request.auth.uid` |
 | `firstName`, `lastName`, `nameKey` | string | `==` the member doc's values **after the batch** (denormalised snapshot; `getAfter(members/{uid})`) |
 | `ownerUid` | string | `== class.ownerUid` |
-| `kind` | string | `'code'` or `'blocks'` |
+| `kind` | string | `'code'`, `'blocks'` or `'python'` |
 | `createdAt` | timestamp | `== request.time`, immutable |
 | `enc` | string | `'plain'` or `'gzip'` |
-| `code` | string or bytes | the Arduino sketch (Blocks: generated from the blocks). `plain`: string ≤ 50,000 UTF-8 bytes. `gzip`: bytes ≤ 50,000. Never empty |
-| `workspace` | string or bytes | Blocks: `JSON.stringify(Blockly.serialization.workspaces.save(ws))`, never empty. Code: empty. `plain`: ≤ 100,000 UTF-8 bytes. `gzip`: ≤ 100,000 bytes |
+| `code` | string or bytes | the Arduino sketch (Blocks: generated from the blocks; Python: made from the program, or the placeholder sketch when the program has errors, docs/PYTHON.md §4.10 T9). `plain`: string ≤ 50,000 UTF-8 bytes. `gzip`: bytes ≤ 50,000. Never empty |
+| `workspace` | string or bytes | Blocks: `JSON.stringify(Blockly.serialization.workspaces.save(ws))`, never empty. Python: the Python source, never empty (the client stops at 50,000 bytes, `LIMITS.pythonMaxBytes`). Code: empty. `plain`: ≤ 100,000 UTF-8 bytes. `gzip`: ≤ 100,000 bytes |
 
 - **Encoding** (`src/classroom/codec.ts`), unchanged: gzip when `CompressionStream`
   exists and it is smaller, else plain; the client checks the raw sizes before
   encoding; decoding is capped at 2× (gzip bombs → `too_large`).
 - The workspace is a string, not a map (nesting limit, opaque to indexing).
+- **Python hand-ins reuse `workspace`** (docs/PYTHON.md §8.1): the same 10 keys, no new
+  field, index or codec change. `student.ts` writes `workspace = kind === 'python' ?
+  draft.python : draft.workspaceJson`; readers call `contentOf(kind, decoded)`, which puts
+  the stored workspace under `workspaceJson` (Blocks) or `python` (Python). Every reader
+  checks `kind === 'blocks'` before reading the workspace as Blockly JSON, and
+  `readHandinDoc` reads an unknown kind as `'code'` (its sketch), so an older dashboard
+  shows a Python hand-in's sketch.
 - **Immutable**: nobody updates a hand-in, not even the owner (no re-filing: there is no
   roster to re-file to). The owner deletes.
 
@@ -815,7 +823,8 @@ and turns off single-field indexing for every field that is never queried on its
 hand-ins `uid`, `nameKey`, `firstName`, `lastName`, `ownerUid`, `kind`, `enc`, `code`,
 `workspace`; members `firstName`, `lastName`, `nameKey`, `ownerUid`, `device`,
 `handinCount`, `lastHandinId`; classes `name`, `keepWeeks`, `schema`. The file is the
-source of truth.
+source of truth. Python hand-ins changed nothing here: their program is in the exempt
+`workspace` field.
 
 - This saves about half of each hand-in's stored size, since index entries count
   toward the 1 GiB (§6.2).
@@ -872,8 +881,11 @@ the earlier version of this document were replaced on 2026-09-27). What it enfor
   hand-in *after the batch* has this uid and `createdAt == request.time`); **delete** by
   the owner.
 - **handins/{hid}**: `get`/`list` by the owner or by the student for `uid == me`;
-  **create** with `validHandinShape` (§2.8: `uid == auth.uid`, name strings, `kind`,
-  `createdAt == request.time`, `validContent`) and `validHandinClass` (class open and
+  **create** with `validHandinShape` (§2.8: `uid == auth.uid`, name strings,
+  `kind in ['code', 'blocks', 'python']`, `createdAt == request.time`, `validContent`:
+  `enc` matching the field types, the sizes, a non-empty sketch, and
+  `(d.kind == 'code' ? d.workspace.size() == 0 : d.workspace.size() > 0)`, so Blocks and
+  Python hand-ins carry their workspace or program) and `validHandinClass` (class open and
   not deleting, `ownerUid == class.ownerUid`, the three name fields equal to the member
   doc's *after the batch*, and that member doc's `lastHandinId == hid` and
   `lastHandinAt == request.time`); **no update** for anyone; **delete** by the owner.
@@ -881,6 +893,13 @@ the earlier version of this document were replaced on 2026-09-27). What it enfor
 
 The name regex is `"^\\p{L}[\\p{L} '.-]{0,29}$"` (RE2; the same as `NAME_PATTERN` in
 `model.ts`, checked by `tests/classroom-model.test.ts` together with every limit).
+
+**Python hand-ins (2026-09-29, docs/PYTHON.md §8.2)** changed two clauses: `kind` may be
+`'python'`, and only a Code hand-in has an empty workspace. The change is backward
+compatible (every Code and Blocks hand-in passes as before). Publish the rules
+(`npx firebase-tools@15.31.0 deploy --only firestore:rules`) **before** the site that
+offers Python hand-ins (docs/PYTHON.md §11.4): until then the old rules refuse them with
+`permission-denied`.
 
 ### 3.2 Notes for Dev A
 
@@ -921,7 +940,8 @@ The name regex is `"^\\p{L}[\\p{L} '.-]{0,29}$"` (RE2; the same as `NAME_PATTERN
 | class tampering by students | class `update` is owner-only | R3.10 |
 | entering or handing in to a stopped / deleting class | `handinsOpen == true`, `deleting == false` | R4.4, R6.14 |
 | enumerating classes through list queries | no `list` on classes except own; no collection-group rules | R3.3, R7.5 |
-| oversize documents | every string capped; content capped in UTF-8 bytes or gzip bytes | R6.8 |
+| oversize documents | every string capped; content capped in UTF-8 bytes or gzip bytes | R6.8, R6.18 |
+| a hand-in whose workspace does not fit its kind (a Code hand-in carrying data, a Blocks or Python hand-in without its workspace or program, an unknown kind) | `kind in ['code', 'blocks', 'python']`; the workspace is empty exactly for Code | R6.6, R6.9, R6.18 |
 | wrong encoding / gzip bombs | `enc` must match the field types; the dashboard inflates with a cap | R6.3, e2e |
 | unexpected fields (including the old roster / task fields) | `exactKeys` on every create; `affectedKeys().hasOnly` on every update | R1.5, R3.5, R4.6, R6.6 |
 | hand-in flooding from one identity | 10 s cooldown + 300 per device in the member tick (best effort, §2.7) | R6.10, R6.11 |
@@ -929,7 +949,7 @@ The name regex is `"^\\p{L}[\\p{L} '.-]{0,29}$"` (RE2; the same as `NAME_PATTERN
 | a failed or duplicated delete batch | deleting a missing doc is allowed | R3.11, R5.3, R7.7 |
 | writing anywhere else | no other `match` | R8.2 |
 
-`tests-emulator/mutations.sh` weakens the rules one clause at a time (10 mutations) and
+`tests-emulator/mutations.sh` weakens the rules one clause at a time (11 mutations) and
 checks that the suite catches each one.
 
 ### 3.4 Running student code safely (MUST, v1)
@@ -1217,6 +1237,7 @@ export const CLASS_SCHEMA = 2;
 export const LIMITS = {
   classNameMax: 60, nameMax: 30, deviceMax: 40,
   codeMaxBytes: 50_000, workspaceMaxBytes: 100_000,
+  pythonMaxBytes: 50_000,                                 // client-only: the rules check workspace ≤ 100,000
   codeDecodeCap: 100_000, workspaceDecodeCap: 200_000,   // 2× the raw limits
   handinsPerDevice: 300, handinCooldownMs: 10_000, clockSkewMs: 60_000,
   keepWeeksMin: 1, keepWeeksMax: 52,
@@ -1245,18 +1266,21 @@ export function utf8Length(text: string): number;
 export function deviceLabel(userAgent: string): string;             // 'Chrome · Windows' (≤ 40)
 export function shortDeviceId(uid: string): string;                 // last 4 chars, uppercase
 
-export interface HandinDraft { kind: HandinKind; code: string; workspaceJson: string }   // workspaceJson '' in Code mode
-export interface HandinContent { kind: HandinKind; code: string; workspaceJson: string }
+export type HandinKind = 'code' | 'blocks' | 'python';
+export interface HandinDraft { kind: HandinKind; code: string; workspaceJson: string; python: string }   // '' when not that kind
+export interface HandinContent { kind: HandinKind; code: string; workspaceJson: string; python: string }
 export interface HandinRecord {
   id: string; classCode: string; uid: string; firstName: string; lastName: string; nameKey: string;
   kind: HandinKind; createdAt: Date | null; content: EncodedContent;
 }
-export function draftProblem(draft: HandinDraft): 'empty_sketch' | 'too_large' | null;
+export function draftProblem(draft: HandinDraft): 'empty_sketch' | 'too_large' | null;   // Python: no program → empty_sketch; > pythonMaxBytes → too_large
+/** The decoded workspace under the field of its kind: workspaceJson (Blocks), python (Python), neither (Code). */
+export function contentOf(kind: HandinKind, decoded: { code: string; workspaceJson: string }): HandinContent;
 
 export interface ClassDoc { ownerUid; name; handinsOpen; keepWeeks; deleting; createdAt; updatedAt }
 export interface MemberDoc { firstName; lastName; nameKey; device; joinedAt; handinCount; lastHandinAt; lastHandinId }
 export function readClassDoc(data): ClassDoc; export function readMemberDoc(data): MemberDoc;
-export function readHandinDoc(id, classCode, data): HandinRecord;   // Bytes → Uint8Array
+export function readHandinDoc(id, classCode, data): HandinRecord;   // Bytes → Uint8Array; a kind other than code/blocks/python → 'code'
 ```
 
 ### 4.5 `src/classroom/codec.ts` (pure; A)
@@ -1272,7 +1296,8 @@ export function decodeContent(content: EncodedContent): Promise<DecodeResult>;
 ```
 
 `student.ts` and `teacher.ts` convert between `Uint8Array` and Firestore `Bytes`
-(`Bytes.fromUint8Array` / `.toUint8Array()`).
+(`Bytes.fromUint8Array` / `.toUint8Array()`). The codec knows no kinds: a Python program
+travels as its `workspaceJson` argument and result (§2.8, `contentOf`).
 
 ### 4.6 `src/classroom/errors.ts` and `session-store.ts`
 
@@ -1341,7 +1366,10 @@ export interface StudentApi {
    * Rejects: bad_name | handins_closed | class_not_found | offline | timeout | quota | permission.
    */
   join(found: FoundClass, name: StudentName): Promise<StudentSession>;
-  /** As before (§2.9): local checks → the 2-write batch → on failure read the member doc, then diagnose. */
+  /**
+   * As before (§2.9): local checks → the 2-write batch → on failure read the member doc, then diagnose.
+   * The stored workspace is draft.python for a Python hand-in, else draft.workspaceJson (§2.8).
+   */
   handIn(session: StudentSession, draft: HandinDraft, handinId: string): Promise<HandinRecord>;
   /** "Change": forget the saved session; the anonymous uid stays (the member doc is renamed next time). */
   forget(options?: { forgetCode?: boolean }): void;
@@ -1424,16 +1452,23 @@ Move these from `editor.ts` / `blocks-panel.ts` without changing behaviour:
 ```ts
 /** '#class=BKT4M9' → 'BKT4M9' (normalised) or null. */
 export function classFromHash(hash: string): string | null;
+/** '#python=' links (docs/PYTHON.md §8.4): the same base64url UTF-8 encoding as '#code='. */
+export function encodeSharePython(source: string): string;
+export function pythonFromHash(hash: string): string | null;
 export interface ReviewPayload {
-  v: 1; kind: 'code' | 'blocks'; code: string; workspaceJson: string;
+  v: 1; kind: HandinKind; code: string; workspaceJson: string;
+  python?: string;                                                            // the program of a Python hand-in; absent in older links → ''
   who: string; className: string; task: string; title: string; at: number;   // at = createdAt ms
 }
 export function encodeReviewPayload(p: ReviewPayload): string;          // base64url(UTF-8 JSON)
 export function decodeReviewPayload(s: string): ReviewPayload | null;   // strict shape check
 /** The review link: #review= when ≤ LIMITS.reviewHashMax, else #rid= plus a localStorage handoff. */
 export function reviewLink(p: ReviewPayload, base?: string): { href: string; handoff: { key: string; value: string } | null };
-/** For the student's own history: '#code=…' or '#blocks=…' (the #code= link when the workspace is not a JSON object). */
-export function handinHash(content: { kind: 'code' | 'blocks'; code: string; workspaceJson: string }): { hash: string; fellBack: boolean };
+/**
+ * For the student's own history: '#code=…', '#blocks=…' or '#python=…' (the #code= link when a Blocks workspace is
+ * not a JSON object or a Python hand-in has no program).
+ */
+export function handinHash(content: { kind: HandinKind; code: string; workspaceJson: string; python?: string }): { hash: string; fellBack: boolean };
 ```
 
 `editor.ts` and `blocks-panel.ts` re-export the moved names (B), so existing imports and
@@ -1846,7 +1881,7 @@ is included in the table above (2 loads per lesson).
 
 ### 7.1 Security rules (A): `tests-emulator/firestore.rules.test.ts`
 
-62 cases against the Firestore emulator (`npm run test:rules`), with the contexts
+64 cases against the Firestore emulator (`npm run test:rules`), with the contexts
 `teacher(uid)` (google.com, verified email), `student(uid)` (anonymous) and `nobody()`;
 seeding with `withSecurityRulesDisabled`, `clearFirestore()` before each test.
 
@@ -1876,12 +1911,18 @@ seeding with `withSecurityRulesDisabled`, `clearFirestore()` before each test.
   code, gzip blocks ✓; R6.3 encoding mismatches ✗; R6.4 `increment(2)` / `(0)`, no tick,
   tick id mismatch ✗; **R6.5 a hand-in requires a member doc with the SAME name**: no
   member doc, another name, a spelling difference, another nameKey, another class, a
-  teacher ✗; R6.6 forged uid / ownerUid / createdAt / kind, extra fields, the old
-  title / note / taskId ✗; R6.7 bad id ✗; R6.8 sizes; R6.9 kind vs workspace; R6.10
+  teacher ✗; R6.6 forged uid / ownerUid / createdAt / kind (`'pyth0n'`, also with a
+  workspace), extra fields, the old title / note / taskId ✗; R6.7 bad id ✗; R6.8 sizes;
+  R6.9 kind vs workspace (Code with a workspace, Blocks without one; plain and gzip); R6.10
   cooldown; R6.11 cap of 300; **R6.12 after a Change**: old name ✗, new name ✓, counter
   carries on; R6.13 rename + hand-in in one batch ✗; R6.14 stopped or deleting ✗; R6.15
   create member + tick + hand-in in one batch ✗; R6.16 a retry with the same id after
-  success ✗, and the member doc shows the id.
+  success ✗, and the member doc shows the id; **R6.17 Python hand-ins** (docs/PYTHON.md
+  §8.2): the program in `workspace`, plain and gzip, a 100,000-byte program (the rules'
+  limit) ✓, and Code / Blocks hand-ins pass as before; **R6.18** a Python hand-in with an
+  empty workspace (plain and gzip), a program over 100,000 bytes (plain, 2-byte
+  characters, gzip), an empty sketch, mixed field types, a non-string workspace or an
+  extra `python` field ✗ (then the same member hands in a valid one ✓).
 - **R7 hand-ins, read / delete / prune.** R7.1 the student query by uid ✓; a query by
   nameKey, others' docs ✗; R7.2 nobody edits a hand-in (student or owner); R7.3 owner
   list / window / per nameKey / `count()` / get; R7.4 another teacher ✗; R7.5
@@ -1893,14 +1934,25 @@ seeding with `withSecurityRulesDisabled`, `clearFirestore()` before each test.
 `tests-emulator/mutations/` (the rules with one protection removed:
 `delete-not-idempotent`, `enc-types-unchecked`, `handin-name-unchecked`,
 `handin-owner-unchecked`, `handins-open-ignored`, `member-owner-unchecked`,
-`name-pattern-unchecked`, `rename-any-field`, `student-reads-others`,
+`name-pattern-unchecked`, `python-workspace-unchecked` (the §8.2 ternary of
+docs/PYTHON.md reverted), `rename-any-field`, `student-reads-others`,
 `tick-not-bound-to-new-handin`). Each mutation must make at least one test fail
-(verified: all 10 caught).
+(verified 2026-09-29: all 11 caught; `python-workspace-unchecked` by R6.17 and R6.18).
+CI runs it in the `emulator-tests` job (§7.6).
+
+**Mutation drift test.** Each mutation is a copy of `firestore.rules`, so a copy made from
+an older version of the rules could be "caught" for the wrong reason. `tests/rules-mutations.test.ts`
+(in `npm test`) checks that the set of files is the list above and that each one differs
+from `firestore.rules` by 1-4 lines (removed + added, a line diff): when the rules change,
+apply the change to every copy.
 
 **Sync test.** `tests/classroom-model.test.ts` reads `firestore.rules` as text and
-asserts that every number in `LIMITS` that the rules use appears in it (60, 40, 50000,
-100000, 300, 52, `{0,29}`, 61, 10 s, `schema == 2`), and that the code alphabet and the
-name regex appear in it.
+asserts that every limit in `LIMITS` that the rules use appears in it as the clause that
+checks it (`textUpTo(d.name, 60)`, device 40, code 50000, workspace 100000, 300, keepWeeks
+1-52, `{0,29}`, 61, 10 s), that every other key of `LIMITS` is listed as client-only
+(`pythonMaxBytes` among them, and it is at most `workspaceMaxBytes`), `schema == 2`, the
+exact Python clauses (`d.kind in ['code', 'blocks', 'python']` and the workspace ternary),
+and that the code alphabet and the name regex appear in it.
 
 ### 7.2 Data layer (A)
 
@@ -1908,9 +1960,12 @@ name regex appear in it.
 - `tests/classroom-model.test.ts`: class codes (normalisation, `codeProblem`, format,
   link, uniform generation, rejection sampling), `newHandinId`, **student names**
   (`cleanName` NFC / spaces / cut, the `nameProblem` table, `nameKeyOf`, `fullName`,
-  `listName`), `cleanLine`, `utf8Length`, the `deviceLabel` table, `draftProblem`, the
-  document readers, the limits-in-rules sync test.
-- `tests/classroom-codec.test.ts`: unchanged.
+  `listName`), `cleanLine`, `utf8Length`, the `deviceLabel` table, `draftProblem` (also
+  a Python draft: no program, over 50,000 bytes), the document readers (the three kinds;
+  `pyth0n`, a missing kind → Code), `contentOf`, the limits-in-rules sync test.
+- `tests/classroom-codec.test.ts`: plain / gzip round trips, a Python program through
+  the workspace field (plain and gzip), the decode caps.
+- `tests/rules-mutations.test.ts`: the mutation drift test (§7.1).
 - `tests/classroom-errors.test.ts`: unchanged (the code list has `bad_name`, no
   `class_closed` / `not_on_roster` / `bad_roster`).
 - `tests/classroom-session-store.test.ts`: the v2 session round trip, a v1 entry is
@@ -1922,8 +1977,13 @@ name regex appear in it.
   name), the create ↔ rename fallback on a denied write, both denied → diagnosis; the
   `diagnoseHandinRefusal` table; `handIn`: local checks, the batch with the
   denormalised name, timeout then `arrived`, the rename retry with the same id, the
-  permission diagnosis; `forget` keeps the sign-in and the code.
-- `tests/share-link.test.ts`, `tests/bundle-boundary.test.ts`: unchanged.
+  permission diagnosis, a Python hand-in (the same 10 keys, the program in `workspace`;
+  no program / too large refused without a request); `forget` keeps the sign-in and the code.
+- `tests/share-link.test.ts`: the share links (`#python=` too: Unicode, a 50,000-byte
+  program, junk), `#class=`, the review payload (kind `python` with its program, older
+  payloads without `python` → `''`, `'pyth0n'` refused, a large program through the
+  `#rid=` handoff), `handinHash` (`#python=` for a Python hand-in).
+- `tests/bundle-boundary.test.ts`: unchanged.
 
 **Integration** (emulators, `npm run test:emulator`), in `tests-emulator/`:
 - `student-api.test.ts`: findClass (bad, missing, stopped, open); join (member doc +
@@ -1931,7 +1991,8 @@ name regex appear in it.
   kept**, `forget` keeps the uid, a removed computer enters its name again); restore
   (same uid, `lost_identity`, stopped, deleted); handIn (plain and gzip with the name,
   cooldown, a name changed in another tab → retry with the same id, limit / stopped /
-  deleting, the idempotent retry, **two computers under one name grouped by nameKey**).
+  deleting, the idempotent retry, **two computers under one name grouped by nameKey**,
+  **Python hand-ins** plain and gzip read back by the teacher as kind `python`).
 - `teacher-api.test.ts`: onUser; createClass (cleaned name, schema 2, exactly the §2.3
   keys, collision retry); watchClasses; watchClass (name, switch, clamped keepWeeks,
   deletion); watchMembers (names), removeDevice, removeUnusedDevices;
@@ -2043,6 +2104,8 @@ each release that touches the review page, a developer runs the equivalent again
   - a separate `actions/cache@v4` for `~/.npm/_npx`, key `npx-firebase-tools-15.31.0`.
     The shared `setup-node` npm cache is saved by `build` first and would never contain
     the npx download.
+  - after `npm run test:emulator`, the mutation check (§7.1):
+    `npx --yes firebase-tools@15.31.0 emulators:exec --only firestore --project demo-zero1 "sh tests-emulator/mutations.sh"`.
 - **Optional `deploy-rules` job**, when the secret `FIREBASE_SERVICE_ACCOUNT` exists:
   `firebase deploy --only firestore:rules,firestore:indexes` after the tests on `main`.
   Without it, §6.1 step 7 applies (publish before merging).

@@ -1,12 +1,13 @@
 /**
  * Links that carry work (docs/CLASSROOM.md §4.9): `#code=` / `#blocks=` share links (moved here
- * from src/ui/editor.ts and src/ui/blocks-panel.ts, which re-export them), `#class=` join links
- * and the review-page payload. Pure: no DOM beyond `location` (optional), no Firebase.
+ * from src/ui/editor.ts and src/ui/blocks-panel.ts, which re-export them), `#python=` share links
+ * (docs/PYTHON.md §8.4), `#class=` join links and the review-page payload. Pure: no DOM beyond
+ * `location` (optional), no Firebase.
  */
-import { LIMITS, normalizeClassCode } from './classroom/model';
+import { LIMITS, normalizeClassCode, type HandinKind } from './classroom/model';
 
 // ---------------------------------------------------------------------------
-// Share links (#code=<base64url>, #blocks=<base64url JSON>)
+// Share links (#code=<base64url>, #blocks=<base64url JSON>, #python=<base64url>)
 // ---------------------------------------------------------------------------
 
 /** Encode a sketch as URL-safe base64 (UTF-8, no padding) for a `#code=` link. */
@@ -61,6 +62,17 @@ export function blocksFromHash(hash: string): object | null {
   return text === null ? null : parseWorkspaceJson(text);
 }
 
+/** Encode a Python program for a `#python=` link (the same base64url UTF-8 encoding as `#code=`). */
+export function encodeSharePython(source: string): string {
+  return encodeShareCode(source);
+}
+
+/** Extract the Python program from a URL hash such as `#python=...`, or null. */
+export function pythonFromHash(hash: string): string | null {
+  const match = /^#python=([A-Za-z0-9_-]+)$/.exec(hash);
+  return match ? decodeShareCode(match[1]) : null;
+}
+
 // ---------------------------------------------------------------------------
 // Class links (#class=BKT4M9)
 // ---------------------------------------------------------------------------
@@ -84,9 +96,11 @@ export function classFromHash(hash: string): string | null {
 
 export interface ReviewPayload {
   v: 1;
-  kind: 'code' | 'blocks';
+  kind: HandinKind;
   code: string;
   workspaceJson: string;
+  /** The Python program of a 'python' hand-in; absent in older links (decoded as ''). */
+  python?: string;
   who: string;
   className: string;
   task: string;
@@ -97,8 +111,8 @@ export interface ReviewPayload {
 
 /** base64url(UTF-8 JSON) of the payload. */
 export function encodeReviewPayload(p: ReviewPayload): string {
-  const { v, kind, code, workspaceJson, who, className, task, title, at } = p;
-  return encodeShareCode(JSON.stringify({ v, kind, code, workspaceJson, who, className, task, title, at }));
+  const { v, kind, code, workspaceJson, python = '', who, className, task, title, at } = p;
+  return encodeShareCode(JSON.stringify({ v, kind, code, workspaceJson, python, who, className, task, title, at }));
 }
 
 /** The payload back, with a strict shape check (extra keys dropped); null for anything else. */
@@ -114,15 +128,17 @@ export function decodeReviewPayload(s: string): ReviewPayload | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const o = value as Record<string, unknown>;
   if (o.v !== 1) return null;
-  if (o.kind !== 'code' && o.kind !== 'blocks') return null;
+  if (o.kind !== 'code' && o.kind !== 'blocks' && o.kind !== 'python') return null;
   const strings = [o.code, o.workspaceJson, o.who, o.className, o.task, o.title];
   if (!strings.every((x) => typeof x === 'string')) return null;
+  if (o.python !== undefined && typeof o.python !== 'string') return null;
   if (typeof o.at !== 'number' || !Number.isFinite(o.at)) return null;
   return {
     v: 1,
     kind: o.kind,
     code: o.code as string,
     workspaceJson: o.workspaceJson as string,
+    python: (o.python as string | undefined) ?? '',
     who: o.who as string,
     className: o.className as string,
     task: o.task as string,
@@ -166,13 +182,18 @@ export function reviewLink(p: ReviewPayload, base?: string): { href: string; han
 }
 
 /**
- * For the student's own history: '#code=…' or '#blocks=…' (the #code= link when a Blocks
- * hand-in's workspace is not a JSON object; `fellBack` says so).
+ * For the student's own history: '#code=…', '#blocks=…' or '#python=…' (the #code= link when a
+ * Blocks hand-in's workspace is not a JSON object or a Python hand-in has no program; `fellBack`
+ * says so).
  */
-export function handinHash(content: { kind: 'code' | 'blocks'; code: string; workspaceJson: string }): { hash: string; fellBack: boolean } {
+export function handinHash(content: { kind: HandinKind; code: string; workspaceJson: string; python?: string }): { hash: string; fellBack: boolean } {
   if (content.kind === 'blocks') {
     const workspace = parseWorkspaceJson(content.workspaceJson);
     if (workspace !== null) return { hash: `#blocks=${encodeShareBlocks(workspace)}`, fellBack: false };
+    return { hash: `#code=${encodeShareCode(content.code)}`, fellBack: true };
+  }
+  if (content.kind === 'python') {
+    if (content.python) return { hash: `#python=${encodeSharePython(content.python)}`, fellBack: false };
     return { hash: `#code=${encodeShareCode(content.code)}`, fellBack: true };
   }
   return { hash: `#code=${encodeShareCode(content.code)}`, fellBack: false };

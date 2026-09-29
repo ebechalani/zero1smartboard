@@ -3,7 +3,10 @@
  * Post-build bundle checks (docs/CLASSROOM.md §4.2, §7.5), run after `vite build`:
  * - the simulator entry (index.html) and its static imports contain no Firebase code;
  * - the same for teacher.html and review.html when they exist (their Firebase is lazy);
- * - the chunks reachable from the student SDK barrel stay under 70 KB gzip, the teacher's under 200 KB.
+ * - the chunks reachable from the student SDK barrel stay under 70 KB gzip, the teacher's under 200 KB;
+ * - the Python chunk (docs/PYTHON.md §7.16) exists, adds at most 80 KB gzip to the simulator page
+ *   (its static closure minus index.html's), and no chunk of index.html's closure contains the
+ *   translator's messages.
  * Rollup may share a chunk between pages, which a source scan (tests/bundle-boundary.test.ts)
  * cannot see; this script reads the emitted chunks and follows their static imports.
  * Usage: node scripts/check-bundle.mjs [dist]
@@ -25,6 +28,10 @@ const FIREBASE_MARKS = [
 ];
 const STUDENT_LIMIT = 70 * 1024;
 const TEACHER_LIMIT = 200 * 1024;
+/** What Python mode may add on top of the simulator page, gzip (expected 60-65 KB with the whole translator). */
+const PYTHON_LIMIT = 80 * 1024;
+/** A text only the translator's messages contain (src/python/messages.ts). */
+const PYTHON_MARKER = 'ZERO1 Python does not have';
 
 const failures = [];
 const fail = (text) => failures.push(text);
@@ -97,6 +104,23 @@ function checkSdk(prefix, limit) {
   if (total > limit) fail(`${prefix}: ${kb(total)} gzip exceeds the limit of ${kb(limit)}`);
 }
 
+function checkPython() {
+  const scripts = pageScripts('index.html');
+  if (scripts === null || !existsSync(ASSETS)) return;
+  const page = new Set(closure(scripts));
+  const leaked = [...page].filter((c) => readFileSync(c, 'utf8').includes(PYTHON_MARKER));
+  if (leaked.length) fail(`index.html: the Python translator is in the static import graph: ${leaked.map(rel).join(', ')}`);
+  const entries = readdirSync(ASSETS).filter((n) => /^python-chunk-[\w-]+\.js$/.test(n));
+  if (entries.length === 0) {
+    fail('python-chunk: no chunk emitted (src/ui/modes/python-mode.ts must load it with import())');
+    return;
+  }
+  const own = closure(entries.map((n) => resolve(ASSETS, n))).filter((c) => !page.has(c));
+  const total = own.reduce((n, c) => n + gzipSize(c), 0);
+  console.log(`python-chunk: ${own.length} chunk(s) beyond index.html, ${kb(total)} gzip (limit ${kb(PYTHON_LIMIT)})`);
+  if (total > PYTHON_LIMIT) fail(`python-chunk: ${kb(total)} gzip exceeds the limit of ${kb(PYTHON_LIMIT)}`);
+}
+
 if (!existsSync(DIST)) {
   console.error(`check-bundle: ${DIST} does not exist; run vite build first`);
   process.exit(1);
@@ -106,6 +130,7 @@ checkPage('teacher.html');
 checkPage('review.html');
 checkSdk('student-sdk', STUDENT_LIMIT);
 checkSdk('teacher-sdk', TEACHER_LIMIT);
+checkPython();
 
 if (failures.length) {
   console.error(`\ncheck-bundle: ${failures.length} problem(s)\n- ${failures.join('\n- ')}`);

@@ -1,0 +1,267 @@
+rules_version = '2';
+
+// ZERO1 Classes: Firestore Security Rules (docs/CLASSROOM.md §3).
+//
+// There is no server: these rules are the only thing standing between the
+// public web page and the data. Every write is checked field by field.
+//
+//   classes/{code}                 a class; the doc id IS the class code
+//   classes/{code}/members/{uid}   a device (anonymous uid) with the name its student typed
+//   classes/{code}/handins/{id}    one hand-in: the name + the sketch (+ blocks or Python), never edited
+//
+// Anyone who knows the class code can hand in under any name (docs/CLASSROOM.md §3.5):
+// the code is the only secret, and the teacher deletes what does not belong.
+//
+// Limits here must match src/classroom/model.ts (tests/classroom-model.test.ts checks it).
+// Order inside every condition: checks on the request alone first, document reads (get /
+// getAfter, each billed as one read even when the request is denied) last.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ------------------------------------------------------------ helpers
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    // Teachers sign in with Google. Anonymous (student) accounts are never teachers.
+    // To restrict teachers to some schools later, add e.g.
+    //   && request.auth.token.email.matches('.*@(school-a[.]edu|school-b[.]org)$')
+    function isTeacher() {
+      return signedIn()
+        && request.auth.token.firebase.sign_in_provider == 'google.com'
+        && request.auth.token.email_verified == true;
+    }
+
+    function classPath(code) {
+      return /databases/$(database)/documents/classes/$(code);
+    }
+
+    function subPath(code, sub, id) {
+      return /databases/$(database)/documents/classes/$(code)/$(sub)/$(id);
+    }
+
+    function classDoc(code) {
+      return get(classPath(code)).data;
+    }
+
+    // One document read: only where no copied ownerUid exists (list queries).
+    function ownsClass(code) {
+      return isTeacher() && classDoc(code).ownerUid == request.auth.uid;
+    }
+
+    // No document read: the ownerUid copied into members / hand-ins when they were created.
+    function ownsExisting() {
+      return isTeacher() && resource.data.ownerUid == request.auth.uid;
+    }
+
+    // Deleting a document that is already gone changes nothing; allowing it keeps retried or
+    // concurrent delete batches (two tabs, a commit that timed out but went through) from failing.
+    function canDelete() {
+      return resource == null ? isTeacher() : ownsExisting();
+    }
+
+    function exactKeys(data, keys) {
+      return data.keys().hasOnly(keys) && data.keys().hasAll(keys);
+    }
+
+    function textUpTo(value, max) {
+      return value is string && value.size() <= max;
+    }
+
+    // Class code: 6 symbols, no vowels (no accidental words), none of 0 1 2 5 6 8 O I
+    // (look-alikes of letters on a projector).
+    function validCode(code) {
+      return code.matches('^[BCDFGHJKLMNPQRSTVWXZ3479]{6}$');
+    }
+
+    // Firestore auto ids.
+    function validAutoId(id) {
+      return id is string && id.matches('^[A-Za-z0-9]{20}$');
+    }
+
+    // A first or last name: a letter (any alphabet, accents kept), then letters, spaces,
+    // apostrophes, dots and hyphens; 1-30 characters. Same regex as NAME_PATTERN in model.ts.
+    function validName(value) {
+      return value is string && value.matches("^\\p{L}[\\p{L} '.-]{0,29}$");
+    }
+
+    // The three name fields together. nameKey is the client's lower-case "first last" (the
+    // dashboard's grouping key, no security value): the rules only check that it is short and
+    // has no upper-case letters. The rules' lower() is ASCII-only, so the exact formula is not
+    // checked here (accented names would be refused).
+    function validStudentName(d) {
+      return validName(d.firstName)
+        && validName(d.lastName)
+        && textUpTo(d.nameKey, 61)
+        && d.nameKey.size() > 0
+        && d.nameKey.lower() == d.nameKey;
+    }
+
+    // Fields every version of a class must satisfy (create and update).
+    function validClassFields(d) {
+      return textUpTo(d.name, 60) && d.name.size() > 0
+        && d.handinsOpen is bool
+        && d.keepWeeks is int && d.keepWeeks >= 1 && d.keepWeeks <= 52
+        && d.deleting is bool;
+    }
+
+    // ------------------------------------------------------------ classes
+
+    match /classes/{code} {
+      // Anyone signed in who knows the code may read the class (name, hand-ins open).
+      // Listing is only for the owner's own classes: the query must say where('ownerUid', '==', uid).
+      allow get: if signedIn();
+      allow list: if isTeacher() && resource.data.ownerUid == request.auth.uid;
+
+      allow create: if isTeacher()
+        && validCode(code)
+        && exactKeys(request.resource.data,
+             ['schema', 'ownerUid', 'name', 'handinsOpen', 'keepWeeks', 'deleting', 'createdAt', 'updatedAt'])
+        && request.resource.data.schema == 2
+        && request.resource.data.ownerUid == request.auth.uid
+        && validClassFields(request.resource.data)
+        && request.resource.data.deleting == false
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time;
+
+      allow update: if isTeacher()
+        && resource.data.ownerUid == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['name', 'handinsOpen', 'keepWeeks', 'deleting', 'updatedAt'])
+        && validClassFields(request.resource.data)
+        && request.resource.data.updatedAt == request.time;
+
+      allow delete: if canDelete();
+
+      // ---------------------------------------------------------- members
+      // One doc per device (anonymous uid) per class: the name the student typed, the device
+      // label and the hand-in counter. Created by the student while the class accepts hand-ins;
+      // afterwards the student may only change the name ("Change") or tick the counter.
+
+      match /members/{uid} {
+        allow get: if (signedIn() && request.auth.uid == uid) || ownsExisting();
+        allow list: if ownsClass(code);
+
+        allow create: if signedIn() && request.auth.uid == uid && validMemberShape() && validMemberClass(code);
+
+        // A new name (only the three name fields), or the hand-in counter in the same batch as a
+        // new hand-in (see validHandinClass). Never both at once.
+        allow update: if signedIn() && request.auth.uid == uid && (validRename() || validHandinTick(code));
+
+        // "Remove this computer": the teacher only (students cannot reset the counter this way).
+        allow delete: if canDelete();
+      }
+
+      function validMemberShape() {
+        let d = request.resource.data;
+        return exactKeys(d, ['firstName', 'lastName', 'nameKey', 'ownerUid', 'joinedAt', 'device',
+                             'handinCount', 'lastHandinAt', 'lastHandinId'])
+          && validStudentName(d)
+          && d.ownerUid is string
+          && d.joinedAt == request.time
+          && textUpTo(d.device, 40)
+          && d.handinCount == 0
+          && d.lastHandinAt == null
+          && d.lastHandinId == '';
+      }
+
+      function validMemberClass(code) {
+        let d = request.resource.data;
+        let cls = classDoc(code);
+        return cls.deleting == false
+          && cls.handinsOpen == true
+          && d.ownerUid == cls.ownerUid;
+      }
+
+      function validRename() {
+        let d = request.resource.data;
+        return d.diff(resource.data).affectedKeys().hasOnly(['firstName', 'lastName', 'nameKey'])
+          && validStudentName(d);
+      }
+
+      function validHandinTick(code) {
+        let d = request.resource.data;
+        let before = resource.data;
+        return d.diff(before).affectedKeys().hasOnly(['handinCount', 'lastHandinAt', 'lastHandinId'])
+          && d.handinCount == before.handinCount + 1
+          && d.handinCount <= 300
+          && d.lastHandinAt == request.time
+          && (before.lastHandinAt == null || request.time > before.lastHandinAt + duration.value(10, 's'))
+          && validAutoId(d.lastHandinId)
+          && tickMatchesNewHandin(code, d.lastHandinId);
+      }
+
+      // The tick must point at a hand-in of this device created by this very request:
+      // hand-ins are never updated and createdAt is immutable, so an older hand-in
+      // cannot have createdAt == request.time.
+      function tickMatchesNewHandin(code, hid) {
+        let h = getAfter(subPath(code, 'handins', hid)).data;
+        return h.uid == request.auth.uid && h.createdAt == request.time;
+      }
+
+      // --------------------------------------------------------- hand-ins
+      // Created by a member in ONE batch of two writes: handins/{id} + members/{uid} tick.
+      // Nobody updates a hand-in. The teacher may delete it.
+
+      match /handins/{hid} {
+        // A student reads only what this device handed in; the teacher reads the whole class.
+        // Student query: where('uid', '==', uid). Teacher query: any (checked with one read of the class).
+        allow get: if (signedIn() && resource.data.uid == request.auth.uid) || ownsExisting();
+        allow list: if (signedIn() && resource.data.uid == request.auth.uid) || ownsClass(code);
+
+        allow create: if signedIn() && validAutoId(hid) && validHandinShape() && validHandinClass(code, hid);
+
+        allow delete: if canDelete();
+      }
+
+      // Sketch and blocks: either plain strings (enc 'plain', sizes in UTF-8 bytes) or gzip bytes
+      // (enc 'gzip'); a Code hand-in has an empty workspace; Blocks (Blockly JSON) and Python (the
+      // Python source) hand-ins a non-empty one.
+      function validContent(d) {
+        return ((d.enc == 'plain'
+                  && d.code is string && d.workspace is string
+                  && d.code.toUtf8().size() <= 50000
+                  && d.workspace.toUtf8().size() <= 100000)
+              || (d.enc == 'gzip'
+                  && d.code is bytes && d.workspace is bytes
+                  && d.code.size() <= 50000
+                  && d.workspace.size() <= 100000))
+          && d.code.size() > 0
+          && (d.kind == 'blocks' ? d.workspace.size() > 0 : d.workspace.size() == 0);
+      }
+
+      function validHandinShape() {
+        let d = request.resource.data;
+        return exactKeys(d, ['uid', 'firstName', 'lastName', 'nameKey', 'ownerUid', 'kind',
+                             'createdAt', 'enc', 'code', 'workspace'])
+          && d.uid == request.auth.uid
+          && d.firstName is string
+          && d.lastName is string
+          && d.nameKey is string
+          && d.ownerUid is string
+          && d.kind in ['code', 'blocks', 'python']
+          && d.createdAt == request.time
+          && validContent(d);
+      }
+
+      // The name on a hand-in is the member doc's current name (denormalised for the dashboard).
+      function validHandinClass(code, hid) {
+        let d = request.resource.data;
+        let cls = classDoc(code);
+        let member = getAfter(subPath(code, 'members', request.auth.uid)).data;
+        return cls.deleting == false
+          && cls.handinsOpen == true
+          && d.ownerUid == cls.ownerUid
+          && d.firstName == member.firstName
+          && d.lastName == member.lastName
+          && d.nameKey == member.nameKey
+          && member.lastHandinId == hid
+          && member.lastHandinAt == request.time;
+      }
+    }
+
+    // Everything else (including collection-group queries) is closed.
+  }
+}

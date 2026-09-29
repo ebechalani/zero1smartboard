@@ -80,7 +80,8 @@ function start(): HTMLElement {
   return root;
 }
 
-const editorText = (root: HTMLElement) => EditorView.findFromDOM(root.querySelector<HTMLElement>('.cm-editor')!)!.state.doc.toString();
+const editorText = (root: HTMLElement) => EditorView.findFromDOM(root.querySelector<HTMLElement>('[data-slot="editor"] .cm-editor')!)!.state.doc.toString();
+const mirrorText = (root: HTMLElement) => EditorView.findFromDOM(root.querySelector<HTMLElement>('[data-slot="mirror"] .cm-editor')!)!.state.doc.toString();
 const slot = <T extends HTMLElement = HTMLElement>(root: HTMLElement, name: string) => root.querySelector<T>(`[data-slot="${name}"]`)!;
 
 /** A message as the review page sends it (source = the parent window, the site's origin). */
@@ -128,7 +129,8 @@ describe('review mode', () => {
     expect(root.querySelector('dialog.z1-handin')).toBeNull();
     expect(Array.from(root.querySelectorAll('[data-slot="share"] [role="menuitem"]'), (b) => b.textContent)).toEqual(['Copy link', 'Download .ino']);
     // The Settings menu (Reset the board, Board settings…) stays: the teacher may reset and rewire the board.
-    for (const name of ['run', 'stop', 'settings', 'mode-code', 'mode-blocks']) expect(slot(root, name).hidden, name).toBe(false);
+    for (const name of ['run', 'stop', 'settings', 'mode-code', 'mode-blocks', 'mode-python']) expect(slot(root, name).hidden, name).toBe(false);
+    expect(slot(root, 'copy-to-code').hidden).toBe(true); // a copy would write z1.code
     expect(Array.from(root.querySelectorAll('[data-slot="settings"] [role="menuitem"]'), (b) => b.textContent)).toEqual(['Reset the board', 'Board settings…']);
     expect(location.hash).toBe('#review'); // the hash is not a share link and stays
   });
@@ -147,7 +149,7 @@ describe('review mode', () => {
     expect(run).not.toHaveBeenCalled();
     expect(slot(root, 'status').dataset.status).toBe('idle');
     // Editing in the frame changes nothing outside it.
-    EditorView.findFromDOM(root.querySelector<HTMLElement>('.cm-editor')!)!.dispatch({ changes: { from: 0, insert: '// note\n' } });
+    EditorView.findFromDOM(root.querySelector<HTMLElement>('[data-slot="editor"] .cm-editor')!)!.dispatch({ changes: { from: 0, insert: '// note\n' } });
     await new Promise((r) => setTimeout(r, 600));
     app!.destroy();
     app = null;
@@ -165,10 +167,10 @@ describe('review mode', () => {
     expect(document.body.dataset.mode).toBe('blocks');
     expect(fake.panel).not.toBeNull();
     expect((fake.panel as FakePanel).getWorkspaceJson()).toEqual(blocks);
-    expect(editorText(root)).toBe(sketchOf(blocks));
+    expect(mirrorText(root)).toBe(sketchOf(blocks));
     expect(storageCalls).toEqual([]);
 
-    // A workspace that cannot be read: the generated sketch in Code mode, with the "generated from blocks" banner.
+    // A workspace that cannot be read: the generated sketch in Code mode, with the "made from blocks" banner.
     app!.destroy();
     app = null;
     document.body.innerHTML = '';
@@ -178,6 +180,45 @@ describe('review mode', () => {
     expect(document.body.dataset.mode).toBe('code');
     expect(editorText(again)).toBe(MY_SKETCH);
     expect(slot(again, 'code-banner').hidden).toBe(false);
+    expect(slot(again, 'code-banner-text').textContent).toBe("Made from the student's blocks.");
+    expect(storageCalls).toEqual([]);
+  });
+
+  it('shows a Python hand-in as its sketch in Code mode, with the "made from Python" banner, until Python review mode lands (docs/PYTHON.md §7.13)', async () => {
+    sandbox();
+    spyStorage();
+    vi.spyOn(window, 'postMessage').mockImplementation(() => undefined);
+    const root = start();
+    post({ type: 'z1-review', payload: { v: 1, kind: 'python', code: MY_SKETCH, workspaceJson: '', python: 'print("Hi")\n', who: 'x', className: '', task: '', title: '', at: 0 } });
+    await settle();
+    expect(document.body.dataset.mode).toBe('code');
+    expect(editorText(root)).toBe(MY_SKETCH);
+    expect(slot(root, 'code-banner').hidden).toBe(false);
+    expect(slot(root, 'code-banner-text').textContent).toBe("Made from the student's Python program.");
+    post({ type: 'z1-review', payload: { v: 1, kind: 'pyth0n', code: 'int ignored;\n', workspaceJson: '', who: 'x', className: '', task: '', title: '', at: 0 } });
+    await settle();
+    expect(editorText(root)).toBe(MY_SKETCH);
+    expect(storageCalls).toEqual([]);
+  });
+
+  it('Python mode in the frame reads and writes no storage either', async () => {
+    localStorage.setItem('z1.python', 'print("saved")\n');
+    sandbox();
+    spyStorage();
+    vi.spyOn(window, 'postMessage').mockImplementation(() => undefined);
+    const root = start();
+    slot(root, 'mode-python').click();
+    await vi.waitFor(() => expect(root.querySelector('[data-slot="panel-python"] .cm-editor')).not.toBeNull(), { timeout: 10_000 });
+    const python = EditorView.findFromDOM(root.querySelector<HTMLElement>('[data-slot="panel-python"] .cm-editor')!)!;
+    expect(python.state.doc.toString()).not.toContain('saved'); // storage was never read
+    python.dispatch({ changes: { from: 0, insert: '# note\n' } });
+    window.confirm = () => true;
+    slot(root, 'new').click(); // hidden in the frame, but even a click writes nothing
+    await new Promise((r) => setTimeout(r, 600));
+    expect(python.state.doc.toString().startsWith('from machine import Pin')).toBe(true);
+    app!.destroy();
+    app = null;
+    Reflect.deleteProperty(window, 'confirm');
     expect(storageCalls).toEqual([]);
   });
 

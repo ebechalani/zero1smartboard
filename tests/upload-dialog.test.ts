@@ -290,15 +290,20 @@ describe('installUploadButton', () => {
     expect(installed.dialog()).toBeNull();
   });
 
-  it('toasts when the sketch is not ready (blocks still loading)', async () => {
+  it('toasts the { error } of a sketch that is not ready as is, and does nothing for null (docs/PYTHON.md §7.12)', async () => {
     const button = document.createElement('button');
     const parent = document.createElement('div');
     document.body.append(button, parent);
     const toast = vi.fn();
-    const installed = installUploadButton({ button, parent, service: new FakeUploadService(), detect: async () => ({ ok: true, message: '' }), getSketch: () => null, toast });
+    let sketch: { error: string } | null = { error: 'The blocks are still loading — try again in a moment' };
+    const installed = installUploadButton({ button, parent, service: new FakeUploadService(), detect: async () => ({ ok: true, message: '' }), getSketch: () => sketch, toast });
     await installed.ready;
     button.click();
     expect(toast).toHaveBeenCalledWith('The blocks are still loading — try again in a moment');
+    expect(installed.isOpen()).toBe(false);
+    sketch = null;
+    button.click();
+    expect(toast).toHaveBeenCalledTimes(1);
     expect(installed.isOpen()).toBe(false);
   });
 });

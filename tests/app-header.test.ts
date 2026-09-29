@@ -13,7 +13,9 @@
  *
  * Blockly is never loaded: in Blocks mode `createBlocksPanel` returns a small
  * fake panel whose "blocks" are a list of block types and whose sketch lists
- * them (see FakePanel).
+ * them (see FakePanel). Blocks mode shows that sketch in the Code tab's
+ * read-only mirror and never touches the hand-written sketch (docs/PYTHON.md
+ * §7.5-7.6); "Edit a copy in Code mode" is the only way across.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { EditorView } from '@codemirror/view';
@@ -223,8 +225,14 @@ async function reload(): Promise<HTMLElement> {
   return startBlocks();
 }
 
+/** The Code tab's editable editor: the student's own sketch (`z1.code`). */
 function editorText(root: HTMLElement): string {
-  return EditorView.findFromDOM(root.querySelector<HTMLElement>('.cm-editor')!)!.state.doc.toString();
+  return EditorView.findFromDOM(root.querySelector<HTMLElement>('[data-slot="editor"] .cm-editor')!)!.state.doc.toString();
+}
+
+/** The Code tab's read-only mirror: the sketch made from the blocks. */
+function mirrorText(root: HTMLElement): string {
+  return EditorView.findFromDOM(root.querySelector<HTMLElement>('[data-slot="mirror"] .cm-editor')!)!.state.doc.toString();
 }
 
 function button(root: HTMLElement, slot: string): HTMLButtonElement {
@@ -524,7 +532,7 @@ describe('Hand in', () => {
     const dialog = root.querySelector<HTMLDialogElement>('dialog.z1-handin')!;
     expect(dialog.open).toBe(true);
     expect(fake.handinOpens).toHaveLength(1);
-    expect(fake.handinOpens[0]).toEqual({ work: { kind: 'code', code: MY_SKETCH, workspaceJson: '', unchanged: null, errorCount: 0 }, joinCode: undefined });
+    expect(fake.handinOpens[0]).toEqual({ work: { kind: 'code', code: MY_SKETCH, workspaceJson: '', python: '', unchanged: null, errorCount: 0 }, joinCode: undefined });
     // Nothing saved: the dialog asks for the class code without downloading anything.
     expect(dialog.querySelector<HTMLElement>('[data-view="code"]')!.hidden).toBe(false);
 
@@ -545,7 +553,7 @@ describe('Hand in', () => {
     pick(root, 'share', 'Hand in to my teacher');
     expect(fake.handinOpens[2].work.unchanged).toEqual({ kind: 'blank' });
     dialog.close();
-    EditorView.findFromDOM(root.querySelector<HTMLElement>('.cm-editor')!)!.dispatch({ changes: { from: 0, insert: 'int x = ;\n' } });
+    EditorView.findFromDOM(root.querySelector<HTMLElement>('[data-slot="editor"] .cm-editor')!)!.dispatch({ changes: { from: 0, insert: 'int x = ;\n' } });
     pick(root, 'share', 'Hand in to my teacher');
     expect(fake.handinOpens[3].work.unchanged).toBeNull();
     expect(fake.handinOpens[3].work.errorCount).toBeGreaterThan(0);
@@ -672,12 +680,89 @@ describe('global keys with a dialog or a menu open', () => {
 // ---------------------------------------------------------------------------
 
 describe('Blocks mode', () => {
-  it('mirrors the sketch generated from the blocks in the editor', async () => {
+  it('mirrors the sketch generated from the blocks in the read-only mirror, leaving the hand-written sketch alone', async () => {
+    localStorage.setItem(CODE_STORAGE_KEY, MY_SKETCH);
     const root = await startBlocks();
     expect(button(root, 'tab-blocks').getAttribute('aria-selected')).toBe('true');
-    expect(editorText(root)).toBe(sketchOf(DEFAULT_WS));
+    expect(mirrorText(root)).toBe(sketchOf(DEFAULT_WS));
     panel().edit(MY_WS);
+    expect(mirrorText(root)).toBe(sketchOf(MY_WS));
+    expect(editorText(root)).toBe(MY_SKETCH);
+    expect(localStorage.getItem(CODE_STORAGE_KEY)).toBe(MY_SKETCH);
+    // The Code tab shows the mirror, with its banner, instead of the student's editor.
+    expect(root.querySelector<HTMLElement>('[data-slot="mirror"]')!.hidden).toBe(false);
+    expect(root.querySelector<HTMLElement>('[data-slot="editor"]')!.hidden).toBe(true);
+    expect(root.querySelector('[data-slot="code-banner-text"]')!.textContent).toBe('Made from your blocks — read only.');
+  });
+
+  it('switching Code ↔ Blocks asks nothing and copies nothing (docs/PYTHON.md §7.6)', async () => {
+    const confirm = stubConfirm(false);
+    const root = start(MY_SKETCH);
+    button(root, 'mode-blocks').click();
+    await settle();
+    expect(document.body.dataset.mode).toBe('blocks');
+    panel().edit(MY_WS);
+    button(root, 'mode-code').click();
+    await settle();
+    expect(document.body.dataset.mode).toBe('code');
+    expect(editorText(root)).toBe(MY_SKETCH);
+    expect(button(root, 'tab-code').getAttribute('aria-selected')).toBe('true');
+    button(root, 'mode-blocks').click();
+    await settle();
+    expect(fingerprint(panel().getWorkspaceJson())).toBe(fingerprint(MY_WS));
+    expect(confirm).not.toHaveBeenCalled();
+    app!.destroy(); // flushes every save
+    app = null;
+    expect(localStorage.getItem(CODE_STORAGE_KEY)).toBe(MY_SKETCH);
+    expect(fingerprint(JSON.parse(localStorage.getItem(BLOCKS_STORAGE_KEY)!))).toBe(fingerprint(MY_WS));
+  });
+
+  it('Edit a copy in Code mode copies the generated sketch, asks only for hand-written code, and Undo brings it back', async () => {
+    localStorage.setItem(CODE_STORAGE_KEY, MY_SKETCH);
+    const root = await startBlocks();
+    panel().edit(MY_WS);
+    const copy = button(root, 'copy-to-code');
+    expect(copy.textContent).toBe('Edit a copy in Code mode');
+    expect(copy.disabled).toBe(false);
+
+    const refuse = stubConfirm(false);
+    copy.click();
+    await settle();
+    expect(refuse).toHaveBeenCalledWith('Replace your Arduino code in Code mode with this sketch?\nYour current Arduino code can be brought back with Undo.');
+    expect(document.body.dataset.mode).toBe('blocks');
+    expect(localStorage.getItem(CODE_STORAGE_KEY)).toBe(MY_SKETCH);
+
+    stubConfirm(true);
+    copy.click();
+    await settle();
+    expect(document.body.dataset.mode).toBe('code');
     expect(editorText(root)).toBe(sketchOf(MY_WS));
+    expect(localStorage.getItem(CODE_STORAGE_KEY)).toBe(sketchOf(MY_WS));
+    expect(localStorage.getItem('z1.code.previous')).toBe(MY_SKETCH);
+    expect(toastText(root)).toBe('Copied into Code mode · Undo');
+    root.querySelector<HTMLButtonElement>('[data-slot="toast"] button')!.click();
+    expect(editorText(root)).toBe(MY_SKETCH);
+    expect(localStorage.getItem(CODE_STORAGE_KEY)).toBe(MY_SKETCH);
+
+    // The copied text is not hand-written: copying again asks nothing.
+    button(root, 'mode-blocks').click();
+    await settle();
+    copy.click();
+    await settle();
+    const quiet = stubConfirm(false);
+    button(root, 'mode-blocks').click();
+    await settle();
+    copy.click();
+    await settle();
+    expect(quiet).not.toHaveBeenCalled();
+    expect(editorText(root)).toBe(sketchOf(MY_WS));
+  });
+
+  it('Edit a copy in Code mode is off while the generator fails', async () => {
+    const root = await startBlocks();
+    panel().breakGenerator();
+    expect(button(root, 'copy-to-code').disabled).toBe(true);
+    expect(button(root, 'copy-to-code').title).toBe('The blocks could not be turned into a sketch');
   });
 
   it('Copy link copies the #blocks= link, and Download .ino saves the generated sketch', async () => {
@@ -718,6 +803,7 @@ describe('Blocks mode', () => {
       kind: 'blocks',
       code: sketchOf(panel().getWorkspaceJson()),
       workspaceJson: JSON.stringify(panel().getWorkspaceJson()),
+      python: '',
       unchanged: { kind: 'blank' },
       errorCount: 0,
     });
@@ -755,7 +841,7 @@ describe('Blocks mode', () => {
     const root = await startBlocks();
     panel().edit(MY_WS);
     panel().breakGenerator();
-    expect(editorText(root)).toBe(ERROR_SKETCH);
+    expect(mirrorText(root)).toBe(ERROR_SKETCH);
     const downloads = catchDownloads();
 
     const writeText = stubClipboard();
@@ -790,7 +876,7 @@ describe('Blocks mode', () => {
     await settle();
     expect(accept).toHaveBeenCalledTimes(1);
     expect(fingerprint(panel().getWorkspaceJson())).toBe(fingerprint(DEFAULT_WS));
-    expect(editorText(root)).toBe(sketchOf(DEFAULT_WS));
+    expect(mirrorText(root)).toBe(sketchOf(DEFAULT_WS));
 
     // An example just loaded is the new "untouched" state.
     pickExample(root, BLINK_EXAMPLE.title);

@@ -191,10 +191,12 @@ p {
   padding-inline: 10px;
 }
 
-/* 1366-1439 px (the usual school laptop): the gear alone keeps the header on
-   one row; the button keeps its aria-label and title. */
+/* 1366-1439 px (the usual school laptop): the gear and the ∞ alone keep the
+   header (brand, three mode buttons, the actions, run status) on one row; the
+   buttons keep their aria-label and title (docs/PYTHON.md §7.14). */
 @media (min-width: 1366px) and (max-width: 1439px) {
-  .z1-toolbar [data-slot='settings'] .z1-btn-label {
+  .z1-toolbar [data-slot='settings'] .z1-btn-label,
+  .z1-toolbar [data-slot='ide'] .z1-btn-label {
     display: none;
   }
 }
@@ -323,7 +325,7 @@ p {
   font-size: 12px;
 }
 
-/* Code | Blocks segmented control in the header. */
+/* Code | Blocks | Python segmented control in the header. */
 .z1-mode {
   display: inline-flex;
   gap: 2px;
@@ -602,6 +604,14 @@ input[type='range'] {
   box-shadow: inset 0 2px 0 var(--accent);
   color: var(--text);
 }
+.z1-tab-lock {
+  display: inline-block;
+  margin-right: 5px;
+  vertical-align: -1px;
+}
+.z1-tab-lock svg {
+  display: block;
+}
 .z1-tab.has-activity::after {
   content: '';
   position: absolute;
@@ -628,7 +638,9 @@ input[type='range'] {
   overflow: auto;
 }
 
-/* Banner row (Blocks mode only) above the editor; the editor fills the rest. */
+/* Banner row (Blocks and Python mode) above the editor; the editor fills the
+   rest. The Code tab holds two editors, one visible: the student's sketch in
+   Code mode, the read-only mirror otherwise (docs/PYTHON.md §7.5). */
 .z1-panel-code {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
@@ -643,20 +655,46 @@ input[type='range'] {
      horizontally inside CodeMirror instead of being cut off. */
   min-width: 0;
 }
-.z1-panel-code .cm-editor {
+.z1-panel-code .cm-editor,
+.z1-panel-python .cm-editor {
   height: 100%;
   font-size: 13.5px;
 }
-.z1-panel-code .cm-scroller {
+.z1-panel-code .cm-scroller,
+.z1-panel-python .cm-scroller {
   overflow: auto;
 }
 
 .z1-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px 12px;
   padding: 6px 12px;
   border-bottom: 1px solid var(--border);
   background: var(--accent-tint);
   color: var(--accent-soft);
   font-size: 12.5px;
+}
+
+/* ---------------------------------------------------------------- python */
+
+/* The Python tab: the Python editor fills it (docs/PYTHON.md §7.3). */
+.z1-panel-python {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
+  overflow: hidden;
+}
+.z1-panel-python .z1-editor-host {
+  grid-row: 1;
+}
+.z1-python-loading {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  margin: 0;
+  color: var(--muted);
 }
 
 /* ---------------------------------------------------------------- blocks */
@@ -1010,6 +1048,23 @@ input[type='range'] {
   font-weight: 500;
   box-shadow: var(--shadow);
   animation: z1-toast-in 0.18s ease-out;
+}
+
+/* An action inside the toast ("Copied into Code mode · Undo"). */
+.z1-toast-action {
+  padding: 0 2px;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-weight: 700;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.z1-toast-action:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 2px;
+  border-radius: 3px;
 }
 
 @keyframes z1-toast-in {

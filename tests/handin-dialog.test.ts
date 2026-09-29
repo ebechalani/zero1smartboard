@@ -280,7 +280,7 @@ describe('Name view', () => {
     expect(m.api.handIn).toHaveBeenCalledTimes(1);
     const [s, draft, id] = (m.api.handIn as ReturnType<typeof vi.fn>).mock.calls[0];
     expect(s).toEqual(session({ firstName: 'Élise', lastName: "O'Neil" }));
-    expect(draft).toEqual({ kind: 'code', code: work().code, workspaceJson: '' });
+    expect(draft).toEqual({ kind: 'code', code: work().code, workspaceJson: '', python: '' });
     expect(id).toMatch(/^[A-Za-z0-9]{20}$/);
     expect(m.spies.onSessionChange).toHaveBeenLastCalledWith("Élise O'Neil");
     expect(m.view()).toBe('success');
@@ -423,6 +423,14 @@ describe('Ready view', () => {
     expect(blank.spies.confirm).toHaveBeenLastCalledWith(HANDIN_TEXT.blank);
   });
 
+  it('hands in a Python program with the sketch made from it (docs/PYTHON.md §8.3)', async () => {
+    const m = await ready({}, work({ kind: 'python', workspaceJson: '{"blocks":{}}', python: 'print("Hi")\n' }));
+    m.click('handin');
+    await settle();
+    const [, draft] = (m.api.handIn as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(draft).toEqual({ kind: 'python', code: work().code, workspaceJson: '', python: 'print("Hi")\n' });
+  });
+
   it('hands in, shows the success view, sends once on a double click, and uses a new id next time', async () => {
     const m = await ready({}, work({ kind: 'blocks', workspaceJson: '{"blocks":{}}' }));
     m.click('handin');
@@ -433,7 +441,7 @@ describe('Ready view', () => {
     expect(m.api.handIn).toHaveBeenCalledTimes(1);
     const [s, draft, id] = (m.api.handIn as ReturnType<typeof vi.fn>).mock.calls[0];
     expect(s).toEqual(session());
-    expect(draft).toEqual({ kind: 'blocks', code: work().code, workspaceJson: '{"blocks":{}}' });
+    expect(draft).toEqual({ kind: 'blocks', code: work().code, workspaceJson: '{"blocks":{}}', python: '' });
     expect(m.view()).toBe('success');
     expect(m.role('success-text').textContent).toBe(HANDIN_TEXT.success(TIME));
     m.dialog.close();

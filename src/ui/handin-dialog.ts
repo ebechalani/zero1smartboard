@@ -14,14 +14,16 @@
  * Buttons carry `data-action`.
  */
 import { ClassroomError, STUDENT_ERROR_TEXT, errorText, toClassroomError, type ClassroomErrorCode } from '../classroom/errors';
-import { LIMITS, codeProblem, draftProblem, formatClassCode, fullName, newHandinId, normalizeClassCode, type HandinDraft, type HandinRecord } from '../classroom/model';
+import { LIMITS, codeProblem, draftProblem, formatClassCode, fullName, newHandinId, normalizeClassCode, type HandinDraft, type HandinKind, type HandinRecord } from '../classroom/model';
 import { loadLastCode, loadSavedSession } from '../classroom/session-store';
 import type { FoundClass, PublicClass, RestoreResult, StudentApi, StudentName, StudentSession } from '../classroom/student';
 
 export interface HandinWork {
-  kind: 'code' | 'blocks';
+  kind: HandinKind;
   code: string;
   workspaceJson: string;
+  /** The Python program when kind is 'python' (docs/PYTHON.md §8.3); ignored otherwise. */
+  python?: string;
   /** Set by the App: untouched starting sketch / untouched example (with its title). */
   unchanged: { kind: 'blank' } | { kind: 'example'; title: string } | null;
   /** Transpiler errors in `code` (the App runs the check synchronously), 0 when none. */
@@ -450,7 +452,14 @@ export function createHandinDialog(parent: HTMLElement, options: HandinDialogOpt
   };
 
   const currentDraft = (): HandinDraft | null =>
-    work ? { kind: work.kind, code: work.code, workspaceJson: work.kind === 'blocks' ? work.workspaceJson : '' } : null;
+    work
+      ? {
+          kind: work.kind,
+          code: work.code,
+          workspaceJson: work.kind === 'blocks' ? work.workspaceJson : '',
+          python: work.kind === 'python' ? (work.python ?? '') : '',
+        }
+      : null;
 
   /** Hand in from the name view: join (create or rename this device's member doc), then send. */
   const handInAs = async (): Promise<void> => {

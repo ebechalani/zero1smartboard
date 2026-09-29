@@ -22,6 +22,8 @@ export const LIMITS = {
   deviceMax: 40,
   codeMaxBytes: 50_000,
   workspaceMaxBytes: 100_000,
+  /** A Python hand-in's source (stored in `workspace`). Client-only: the rules check workspace ≤ 100,000. */
+  pythonMaxBytes: 50_000,
   /** Inflate caps for stored content (2× the raw limits): beyond them = 'too_large'. */
   codeDecodeCap: 100_000,
   workspaceDecodeCap: 200_000,
@@ -52,7 +54,9 @@ const HANDIN_ID_PATTERN = /^[A-Za-z0-9]{20}$/;
 
 const ALNUM = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
 
-export type HandinKind = 'code' | 'blocks';
+export type HandinKind = 'code' | 'blocks' | 'python';
+/** Every kind the rules accept (firestore.rules `validHandinShape`). */
+const HANDIN_KINDS: readonly HandinKind[] = ['code', 'blocks', 'python'];
 
 /** A source of `n` random bytes; the default is `crypto.getRandomValues`. */
 export type RandomBytes = (n: number) => Uint8Array;
@@ -234,15 +238,19 @@ export function shortDeviceId(uid: string): string {
 
 export interface HandinDraft {
   kind: HandinKind;
-  /** The Arduino sketch (Blocks: generated from the blocks). */
+  /** The Arduino sketch (Blocks: generated from the blocks; Python: made from the program, or the placeholder). */
   code: string;
-  /** '' in Code mode. */
+  /** The Blockly workspace; '' unless kind is 'blocks'. */
   workspaceJson: string;
+  /** The Python program (docs/PYTHON.md §8.1, stored in `workspace`); '' unless kind is 'python'. */
+  python: string;
 }
+/** A decoded hand-in (contentOf): the same fields as a draft. */
 export interface HandinContent {
   kind: HandinKind;
   code: string;
   workspaceJson: string;
+  python: string;
 }
 export interface HandinRecord {
   id: string;
@@ -254,15 +262,30 @@ export interface HandinRecord {
   kind: HandinKind;
   /** Server time; for a hand-in this device just made: local time. */
   createdAt: Date | null;
-  /** Still encoded (codec.ts). */
+  /** Still encoded (codec.ts); `workspace` holds the Blockly JSON or the Python program (contentOf). */
   content: EncodedContent;
+}
+
+/**
+ * The decoded content of a hand-in of `kind`. The stored `workspace` field is the Blockly JSON of a
+ * Blocks hand-in, the program of a Python one and empty for Code (docs/PYTHON.md §8.1).
+ */
+export function contentOf(kind: HandinKind, decoded: { code: string; workspaceJson: string }): HandinContent {
+  return {
+    kind,
+    code: decoded.code,
+    workspaceJson: kind === 'blocks' ? decoded.workspaceJson : '',
+    python: kind === 'python' ? decoded.workspaceJson : '',
+  };
 }
 
 /** The client-side checks that need no request. */
 export function draftProblem(draft: HandinDraft): 'empty_sketch' | 'too_large' | null {
   if (draft.code.trim() === '') return 'empty_sketch';
+  if (draft.kind === 'python' && draft.python.trim() === '') return 'empty_sketch';
   if (utf8Length(draft.code) > LIMITS.codeMaxBytes) return 'too_large';
   if (utf8Length(draft.workspaceJson) > LIMITS.workspaceMaxBytes) return 'too_large';
+  if (utf8Length(draft.python) > LIMITS.pythonMaxBytes) return 'too_large';
   return null;
 }
 
@@ -348,7 +371,8 @@ export function readHandinDoc(id: string, classCode: string, data: Data): Handin
     firstName: text(data.firstName),
     lastName: text(data.lastName),
     nameKey: text(data.nameKey),
-    kind: data.kind === 'blocks' ? 'blocks' : 'code',
+    // Unknown kinds read as Code: their sketch is always there.
+    kind: HANDIN_KINDS.includes(data.kind as HandinKind) ? (data.kind as HandinKind) : 'code',
     createdAt: toDate(data.createdAt),
     content: { enc, code: contentField(data.code), workspace: contentField(data.workspace) },
   };

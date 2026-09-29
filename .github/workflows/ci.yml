@@ -63,3 +63,5 @@ jobs:
           key: npx-firebase-tools-15.31.0
       - run: npm ci
       - run: npm run test:emulator
+      - name: Rules mutation check (docs/CLASSROOM.md §7.1)
+        run: npx --yes firebase-tools@15.31.0 emulators:exec --only firestore --project demo-zero1 "sh tests-emulator/mutations.sh"

@@ -5,6 +5,7 @@
 import { gzipSync } from 'node:zlib';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { decodeContent, encodeContent } from '../src/classroom/codec';
+import { contentOf } from '../src/classroom/model';
 
 const TINY = 'void setup() {}\nvoid loop() {}\n';
 const SKETCH = `// Traffic light\n${'void loop() {\n  digitalWrite(13, HIGH);\n  delay(500);\n  digitalWrite(13, LOW);\n  delay(500);\n}\n'.repeat(20)}`;
@@ -38,6 +39,18 @@ describe('encodeContent', () => {
   it('stays plain without CompressionStream', async () => {
     vi.stubGlobal('CompressionStream', undefined);
     expect((await encodeContent(SKETCH, WORKSPACE)).enc).toBe('plain');
+  });
+  it('carries a Python program in the workspace field, plain and gzip (docs/PYTHON.md §8.1)', async () => {
+    const program = `from machine import Pin\nimport time\n\nled = Pin(13, Pin.OUT)\n${'while True:\n    led.on()\n    print("Lumière allumée 🙂")\n    time.sleep(0.5)\n'.repeat(20)}`;
+    const plain = await encodeContent(SKETCH, program, { compress: false });
+    expect(plain).toEqual({ enc: 'plain', code: SKETCH, workspace: program });
+    expect(await decodeContent(plain)).toEqual({ ok: true, code: SKETCH, workspaceJson: program });
+    const gzip = await encodeContent(SKETCH, program);
+    expect(gzip.enc).toBe('gzip');
+    expect(gzip.workspace).toBeInstanceOf(Uint8Array);
+    const decoded = await decodeContent(gzip);
+    expect(decoded).toEqual({ ok: true, code: SKETCH, workspaceJson: program });
+    expect(contentOf('python', decoded as { code: string; workspaceJson: string })).toEqual({ kind: 'python', code: SKETCH, workspaceJson: '', python: program });
   });
   it('keeps non-ASCII text intact', async () => {
     const text = 'Serial.println("héllo 🙂 مرحبا");\n'.repeat(50);

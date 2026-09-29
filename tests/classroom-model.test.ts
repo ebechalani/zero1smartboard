@@ -13,6 +13,7 @@ import {
   cleanLine,
   cleanName,
   codeProblem,
+  contentOf,
   deviceLabel,
   draftProblem,
   formatClassCode,
@@ -171,7 +172,7 @@ describe('devices', () => {
 });
 
 describe('draftProblem', () => {
-  const draft = { kind: 'code' as const, code: 'void setup() {}', workspaceJson: '' };
+  const draft = { kind: 'code' as const, code: 'void setup() {}', workspaceJson: '', python: '' };
   it('finds empty and oversize drafts', () => {
     expect(draftProblem(draft)).toBeNull();
     expect(draftProblem({ ...draft, code: '  \n' })).toBe('empty_sketch');
@@ -179,6 +180,15 @@ describe('draftProblem', () => {
     expect(draftProblem({ ...draft, code: 'é'.repeat(25_001) })).toBe('too_large');
     expect(draftProblem({ ...draft, code: 'x'.repeat(50_000) })).toBeNull();
     expect(draftProblem({ ...draft, kind: 'blocks', workspaceJson: 'x'.repeat(100_001) })).toBe('too_large');
+  });
+  it('checks the program of a Python draft (docs/PYTHON.md §8.1)', () => {
+    const python = { ...draft, kind: 'python' as const, python: 'print("hi")\n' };
+    expect(draftProblem(python)).toBeNull();
+    expect(draftProblem({ ...python, python: ' \n' })).toBe('empty_sketch');
+    expect(draftProblem({ ...python, python: 'x'.repeat(LIMITS.pythonMaxBytes) })).toBeNull();
+    expect(draftProblem({ ...python, python: 'x'.repeat(50_001) })).toBe('too_large');
+    expect(draftProblem({ ...python, python: 'é'.repeat(25_001) })).toBe('too_large');
+    expect(draftProblem({ ...python, code: '' })).toBe('empty_sketch'); // the sketch (or placeholder) is still required
   });
 });
 
@@ -218,17 +228,71 @@ describe('document readers', () => {
     expect(record.createdAt?.getTime()).toBe(7);
     expect(readHandinDoc('H2', 'BKT4M9', { enc: 'plain', code: 'x', workspace: '' }).content).toEqual({ enc: 'plain', code: 'x', workspace: '' });
   });
+  it('reads the three kinds; anything else (an unknown or missing kind) as Code', () => {
+    const kindOf = (kind: unknown) => readHandinDoc('H3', 'BKT4M9', { kind, enc: 'plain', code: 'x', workspace: '' }).kind;
+    expect(kindOf('code')).toBe('code');
+    expect(kindOf('blocks')).toBe('blocks');
+    expect(kindOf('python')).toBe('python');
+    for (const other of ['pyth0n', 'Python', 'micropython', '', 7, null, undefined, ['python']]) expect(kindOf(other), String(other)).toBe('code');
+    const python = readHandinDoc('H4', 'BKT4M9', { kind: 'python', enc: 'plain', code: 'void setup() {}', workspace: 'print("hi")\n' });
+    expect(python.content).toEqual({ enc: 'plain', code: 'void setup() {}', workspace: 'print("hi")\n' });
+  });
+});
+
+describe('contentOf', () => {
+  const decoded = { code: 'void setup() {}\n', workspaceJson: 'the stored workspace' };
+  it('puts the stored workspace under the field of its kind (docs/PYTHON.md §8.1)', () => {
+    expect(contentOf('code', decoded)).toEqual({ kind: 'code', code: decoded.code, workspaceJson: '', python: '' });
+    expect(contentOf('blocks', decoded)).toEqual({ kind: 'blocks', code: decoded.code, workspaceJson: 'the stored workspace', python: '' });
+    expect(contentOf('python', decoded)).toEqual({ kind: 'python', code: decoded.code, workspaceJson: '', python: 'the stored workspace' });
+  });
 });
 
 describe('sync with firestore.rules', () => {
   const rules = readFileSync(new URL('../firestore.rules', import.meta.url), 'utf8');
+  /** How each limit the rules enforce is written in them. */
+  const IN_RULES: Partial<Record<keyof typeof LIMITS, string[]>> = {
+    classNameMax: [`textUpTo(d.name, ${LIMITS.classNameMax})`],
+    // The name regex: a letter, then up to 29 more characters; the key: "first last".
+    nameMax: [`{0,${LIMITS.nameMax - 1}}`, `textUpTo(d.nameKey, ${2 * LIMITS.nameMax + 1})`],
+    deviceMax: [`textUpTo(d.device, ${LIMITS.deviceMax})`],
+    codeMaxBytes: [`d.code.toUtf8().size() <= ${LIMITS.codeMaxBytes}`, `d.code.size() <= ${LIMITS.codeMaxBytes}`],
+    workspaceMaxBytes: [`d.workspace.toUtf8().size() <= ${LIMITS.workspaceMaxBytes}`, `d.workspace.size() <= ${LIMITS.workspaceMaxBytes}`],
+    handinsPerDevice: [`d.handinCount <= ${LIMITS.handinsPerDevice}`],
+    handinCooldownMs: [`duration.value(${LIMITS.handinCooldownMs / 1000}, 's')`],
+    keepWeeksMin: [`d.keepWeeks >= ${LIMITS.keepWeeksMin}`],
+    keepWeeksMax: [`d.keepWeeks <= ${LIMITS.keepWeeksMax}`],
+  };
+  /** Limits of the client alone: the rules do not (or cannot) check them. */
+  const CLIENT_ONLY: (keyof typeof LIMITS)[] = [
+    'pythonMaxBytes', // stored in `workspace`, which the rules cap at workspaceMaxBytes (docs/PYTHON.md §8.1)
+    'codeDecodeCap',
+    'workspaceDecodeCap',
+    'clockSkewMs',
+    'requestTimeoutMs',
+    'batchMaxOps',
+    'deletesPerRun',
+    'prunePerOpen',
+    'todayLimit',
+    'periodPage',
+    'studentPage',
+    'membersWatchLimit',
+    'reviewHashMax',
+  ];
   it('every limit the rules enforce appears in them', () => {
-    const numbers = [LIMITS.classNameMax, LIMITS.deviceMax, LIMITS.codeMaxBytes, LIMITS.workspaceMaxBytes, LIMITS.handinsPerDevice, LIMITS.keepWeeksMax];
-    for (const n of numbers) expect(rules, String(n)).toMatch(new RegExp(`\\b${n}\\b`));
-    expect(rules).toContain(`{0,${LIMITS.nameMax - 1}}`); // the name regex: a letter, then up to 29 more characters
-    expect(rules).toContain(`textUpTo(d.nameKey, ${2 * LIMITS.nameMax + 1})`);
-    expect(rules).toContain(`duration.value(${LIMITS.handinCooldownMs / 1000}, 's')`);
+    for (const [key, texts] of Object.entries(IN_RULES)) for (const text of texts) expect(rules, key).toContain(text);
     expect(rules).toContain(`request.resource.data.schema == ${CLASS_SCHEMA}`);
+  });
+  it('every other limit is listed as client-only; the Python limit fits in the rules’ workspace limit', () => {
+    expect([...Object.keys(IN_RULES), ...CLIENT_ONLY].sort()).toEqual(Object.keys(LIMITS).sort());
+    expect(CLIENT_ONLY.filter((key) => key in IN_RULES)).toEqual([]);
+    expect(LIMITS.pythonMaxBytes).toBeLessThanOrEqual(LIMITS.workspaceMaxBytes);
+  });
+  it('Python hand-ins: the clauses of docs/PYTHON.md §8.2, and every kind the rules accept is read as itself', () => {
+    expect(rules).toContain("&& (d.kind == 'code' ? d.workspace.size() == 0 : d.workspace.size() > 0);");
+    expect(rules).toContain("&& d.kind in ['code', 'blocks', 'python']");
+    const kinds = /d\.kind in \[([^\]]*)\]/.exec(rules)![1].split(',').map((k) => k.trim().replace(/'/g, ''));
+    for (const kind of kinds) expect(readHandinDoc('H1', 'BKT4M9', { kind }).kind).toBe(kind);
   });
   it('the code alphabet and the name pattern are the same', () => {
     expect(rules).toContain(`[${CLASS_CODE_ALPHABET}]{6}`);

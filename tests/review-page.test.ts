@@ -20,6 +20,7 @@ const PAYLOAD: ReviewPayload = {
   kind: 'blocks',
   code: 'void setup() {}\nvoid loop() {}\n',
   workspaceJson: '{"blocks":{}}',
+  python: '',
   who: 'ali.k',
   className: '8B Robotics',
   task: 'Traffic light',

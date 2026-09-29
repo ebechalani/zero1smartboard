@@ -2,8 +2,9 @@
  * Numeric helpers used by the generated code (docs/ARCHITECTURE.md §5.3).
  *
  * C++ integers have fixed widths; JavaScript has one number type. The
- * transpiler wraps every store into a typed variable with one of these helpers
- * so that `int` really wraps at 16 bits, `byte` at 8 bits, and so on.
+ * transpiler wraps every integer operation and every store into a typed
+ * variable with one of these helpers so that `int` really wraps at 16 bits,
+ * `byte` at 8 bits, and so on, and rounds every float to single precision.
  */
 import { FloatBox, SketchError } from './values';
 
@@ -68,18 +69,52 @@ export function __bool(x: unknown): boolean {
   return toNumber(x) !== 0;
 }
 
-/** Integer division (truncating toward zero). Throws `division by zero` like a crash on the real board would. */
+/**
+ * Integer division (truncating toward zero). Throws `division by zero` like a crash on the real board would.
+ * `+ 0` turns JavaScript's -0 (-1 / 2) into the integer 0, so that a later `1.0 / x` is inf, not -inf.
+ */
 export function __idiv(a: unknown, b: unknown): number {
   const divisor = toNumber(b);
   if (divisor === 0) throw new SketchError('division by zero');
-  return Math.trunc(toNumber(a) / divisor);
+  return Math.trunc(toNumber(a) / divisor) + 0;
 }
 
-/** Integer remainder with the sign of the dividend (C semantics). Throws `division by zero`. */
+/** Integer remainder with the sign of the dividend (C semantics; -4 % 2 is 0, not -0). Throws `division by zero`. */
 export function __imod(a: unknown, b: unknown): number {
   const divisor = toNumber(b);
   if (divisor === 0) throw new SketchError('division by zero');
-  return toNumber(a) % divisor;
+  return (toNumber(a) % divisor) + 0;
+}
+
+/**
+ * A float converted to a signed integer like avr-gcc's `__fixsfsi` (the transpiler then
+ * wraps the result to `char`, `int` or `long`): truncated toward zero, and
+ * -2147483648 when the value is NaN, infinite or outside the `long` range.
+ */
+export function __ftoi(x: unknown): number {
+  const v = toNumber(x);
+  if (!(v > -2147483649 && v < 2147483648)) return -2147483648;
+  return Math.trunc(v) | 0;
+}
+
+/**
+ * A float converted to `unsigned int` / `unsigned long` like avr-gcc's `__fixunssfsi`:
+ * truncated toward zero and taken modulo 2^32 (-1.5 → 4294967295), and 0 when the
+ * value is NaN, infinite or at least 2^32 away from 0.
+ */
+export function __ftou(x: unknown): number {
+  const v = toNumber(x);
+  if (!(v > -4294967296 && v < 4294967296)) return 0;
+  return Math.trunc(v) >>> 0;
+}
+
+/**
+ * 32-bit `long` multiplication: the low 32 bits of the product, as a signed value
+ * (`50000L * 50000L` → -1794967296 like the AVR). A plain JS product loses those
+ * bits once it passes 2^53; the generated code wraps it with `__u32` for `unsigned long`.
+ */
+export function __imul(a: unknown, b: unknown): number {
+  return Math.imul(toNumber(a), toNumber(b));
 }
 
 /**
@@ -126,6 +161,9 @@ export const HELPERS = {
   __bool,
   __idiv,
   __imod,
+  __imul,
+  __ftoi,
+  __ftou,
   __array,
   __cstr,
 } as const;

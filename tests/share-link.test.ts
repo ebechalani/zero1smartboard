@@ -1,6 +1,7 @@
 /**
  * src/share-link.ts (docs/CLASSROOM.md §4.9, §7.2): #code= / #blocks= share links (moved from
- * editor.ts / blocks-panel.ts), #class= join links, the review payload and the history hash.
+ * editor.ts / blocks-panel.ts), #python= share links (docs/PYTHON.md §8.4), #class= join links,
+ * the review payload and the history hash.
  */
 import { describe, expect, it } from 'vitest';
 import {
@@ -13,8 +14,10 @@ import {
   encodeReviewPayload,
   encodeShareBlocks,
   encodeShareCode,
+  encodeSharePython,
   handinHash,
   parseWorkspaceJson,
+  pythonFromHash,
   reviewLink,
   type ReviewPayload,
 } from '../src/share-link';
@@ -60,6 +63,35 @@ describe('share link encoding', () => {
   });
 });
 
+describe('python share links', () => {
+  it('round-trip a Python program through #python= (Unicode too) with the #code= encoding', () => {
+    const samples = ['print("ON")\n', 'température = 25  # °C\nprint(f"{température} °C 🙂")\n', 'while True:\n\tpass\r\n', 'x'.repeat(5000)];
+    for (const s of samples) {
+      const encoded = encodeSharePython(s);
+      expect(encoded).toMatch(/^[A-Za-z0-9_-]+$/);
+      expect(encoded).toBe(encodeShareCode(s));
+      expect(pythonFromHash(`#python=${encoded}`)).toBe(s);
+    }
+  });
+  it('carry the largest program a hand-in accepts (50,000 bytes, accents too)', () => {
+    const program = `print("é")\n${'# ligne commentée ………\n'.repeat(2000)}`.slice(0, 20_000);
+    const big = program + 'x'.repeat(LIMITS.pythonMaxBytes - new TextEncoder().encode(program).length);
+    expect(new TextEncoder().encode(big).length).toBe(LIMITS.pythonMaxBytes);
+    expect(pythonFromHash(`#python=${encodeSharePython(big)}`)).toBe(big);
+  });
+  it('reject junk and the other link kinds', () => {
+    const encoded = encodeSharePython('x = 1\n');
+    expect(pythonFromHash('')).toBeNull();
+    expect(pythonFromHash('#python=')).toBeNull();
+    expect(pythonFromHash('#python=!!!not base64')).toBeNull();
+    expect(pythonFromHash('#python=gA')).toBeNull(); // invalid UTF-8
+    expect(pythonFromHash(`#code=${encoded}`)).toBeNull();
+    expect(pythonFromHash(`#python=${encoded}&x=1`)).toBeNull();
+    expect(codeFromHash(`#python=${encoded}`)).toBeNull();
+    expect(blocksFromHash(`#python=${encodeSharePython('{}')}`)).toBeNull();
+  });
+});
+
 describe('classFromHash', () => {
   it('normalises the code', () => {
     expect(classFromHash('#class=BKT4M9')).toBe('BKT4M9');
@@ -82,6 +114,7 @@ describe('review payload', () => {
     kind: 'blocks',
     code: 'void setup() {}\n',
     workspaceJson: JSON.stringify(WORKSPACE),
+    python: '',
     who: 'ali.k',
     className: '8B Robotics',
     task: 'Traffic light',
@@ -94,10 +127,18 @@ describe('review payload', () => {
     expect(decodeReviewPayload(encoded)).toEqual(payload);
     expect(decodeReviewPayload(encodeShareCode(JSON.stringify({ ...payload, evil: '<img>' })))).toEqual(payload);
   });
+  it('carries a Python hand-in, and reads payloads without python (older links) as python ""', () => {
+    const python: ReviewPayload = { ...payload, kind: 'python', workspaceJson: '', python: 'print("Lumière")\n' };
+    expect(decodeReviewPayload(encodeReviewPayload(python))).toEqual(python);
+    const { python: _dropped, ...older } = payload;
+    expect(decodeReviewPayload(encodeShareCode(JSON.stringify(older)))).toEqual({ ...payload, python: '' });
+    expect(decodeReviewPayload(encodeReviewPayload(older))).toEqual({ ...payload, python: '' });
+  });
   it('checks the shape strictly', () => {
     const bad = [
       { ...payload, v: 2 },
-      { ...payload, kind: 'python' },
+      { ...payload, kind: 'pyth0n' },
+      { ...payload, python: 7 },
       { ...payload, code: 7 },
       { ...payload, at: 'now' },
       { ...payload, at: Infinity },
@@ -125,6 +166,16 @@ describe('review payload', () => {
     expect(decodeReviewPayload(large.handoff!.value)?.code).toBe('x'.repeat(LIMITS.reviewHashMax));
     expect(reviewLink({ ...payload, code: 'y'.repeat(LIMITS.reviewHashMax) }).href).not.toBe(large.href);
   });
+  it('counts the Python program in the size of the link: a large one goes through the #rid= handoff intact', () => {
+    const base: ReviewPayload = { ...payload, kind: 'python', workspaceJson: '' };
+    const small = reviewLink({ ...base, python: 'print("hi")\n' });
+    expect(small.handoff).toBeNull();
+    expect(decodeReviewPayload(small.href.slice(small.href.indexOf('=') + 1))?.python).toBe('print("hi")\n');
+    const program = 'print("Température")\n'.repeat(Math.ceil(LIMITS.pythonMaxBytes / 22));
+    const large = reviewLink({ ...base, python: program });
+    expect(large.href).toMatch(/^\.\/review\.html#rid=[A-Za-z0-9]{16}$/);
+    expect(decodeReviewPayload(large.handoff!.value)).toEqual({ ...base, python: program });
+  });
 });
 
 describe('handinHash', () => {
@@ -134,5 +185,14 @@ describe('handinHash', () => {
     expect(handinHash({ kind: 'blocks', code, workspaceJson: JSON.stringify(WORKSPACE) })).toEqual({ hash: `#blocks=${encodeShareBlocks(WORKSPACE)}`, fellBack: false });
     expect(handinHash({ kind: 'blocks', code, workspaceJson: '[1]' })).toEqual({ hash: `#code=${encodeShareCode(code)}`, fellBack: true });
     expect(handinHash({ kind: 'blocks', code, workspaceJson: '' })).toEqual({ hash: `#code=${encodeShareCode(code)}`, fellBack: true });
+  });
+  it('makes #python= for a Python hand-in (docs/PYTHON.md §8.4), falling back to the sketch without a program', () => {
+    const code = 'void loop() {}';
+    const python = 'print("Lumière")\n';
+    const hash = handinHash({ kind: 'python', code, workspaceJson: '', python });
+    expect(hash).toEqual({ hash: `#python=${encodeSharePython(python)}`, fellBack: false });
+    expect(pythonFromHash(hash.hash)).toBe(python);
+    expect(handinHash({ kind: 'python', code, workspaceJson: '', python: '' })).toEqual({ hash: `#code=${encodeShareCode(code)}`, fellBack: true });
+    expect(handinHash({ kind: 'python', code, workspaceJson: '' })).toEqual({ hash: `#code=${encodeShareCode(code)}`, fellBack: true });
   });
 });

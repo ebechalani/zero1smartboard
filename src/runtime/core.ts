@@ -5,8 +5,8 @@
  */
 import type { IBoard, PinMode, RuntimeContext } from '../types';
 import { assertPin, pinName } from './board';
-import { __idiv, __u16, __u32, __u8, toNumber } from './helpers';
-import { SketchError } from './values';
+import { __ftoi, __idiv, __u16, __u32, __u8, toNumber } from './helpers';
+import { SketchAbort, SketchError } from './values';
 
 /** Constants available to every sketch (Arduino.h). */
 export const CORE_CONSTANTS: Readonly<Record<string, number>> = {
@@ -35,12 +35,13 @@ export const CORE_CONSTANTS: Readonly<Record<string, number>> = {
   SDA: 18,
   SCL: 19,
   NULL: 0,
-  PI: Math.PI,
-  HALF_PI: Math.PI / 2,
-  TWO_PI: Math.PI * 2,
-  DEG_TO_RAD: Math.PI / 180,
-  RAD_TO_DEG: 180 / Math.PI,
-  EULER: Math.E,
+  // AVR double is float: the Arduino.h constants are single-precision values on the board.
+  PI: Math.fround(Math.PI),
+  HALF_PI: Math.fround(Math.PI / 2),
+  TWO_PI: Math.fround(Math.PI * 2),
+  DEG_TO_RAD: Math.fround(Math.PI / 180),
+  RAD_TO_DEG: Math.fround(180 / Math.PI),
+  EULER: Math.fround(Math.E),
   F_CPU: 16000000,
   DEFAULT: 1,
   EXTERNAL: 0,
@@ -94,6 +95,21 @@ function charArg(v: unknown): number {
 
 function int(v: unknown): number {
   return Math.trunc(toNumber(v)) || 0;
+}
+
+/** A `long` parameter: truncated, then wrapped to 32 bits. */
+function long(v: unknown): number {
+  return int(v) | 0;
+}
+
+/** A `float`/`double` parameter: rounded to single precision (AVR double is float). */
+function flt(v: unknown): number {
+  return Math.fround(toNumber(v));
+}
+
+/** A math function of avr-libc: single-precision argument and result. */
+function f32Math(fn: (x: number) => number): (x: unknown) => number {
+  return (x: unknown): number => Math.fround(fn(flt(x)));
 }
 
 /** Pin argument as a C `uint8_t` would see it, validated against the UNO. */
@@ -232,11 +248,12 @@ export function createCoreApi(ctx: RuntimeContext): Record<string, unknown> {
 
     // --- time -----------------------------------------------------------------
     async delay(ms: unknown): Promise<void> {
-      await clock.sleep(Math.max(0, toNumber(ms)) || 0, ctx.signal);
+      // delay(unsigned long): a decimal part is dropped like on the board (delay(1.5) waits 1 ms)
+      await clock.sleep(Math.max(0, Math.trunc(toNumber(ms))) || 0, ctx.signal);
       ctx.throwIfStopped();
     },
     async delayMicroseconds(us: unknown): Promise<void> {
-      await clock.sleep((Math.max(0, toNumber(us)) || 0) / 1000, ctx.signal);
+      await clock.sleep((Math.max(0, Math.trunc(toNumber(us))) || 0) / 1000, ctx.signal);
       ctx.throwIfStopped();
     },
     millis(): number {
@@ -311,8 +328,9 @@ export function createCoreApi(ctx: RuntimeContext): Record<string, unknown> {
 
     // --- maths -------------------------------------------------------------------
     map(x: unknown, inMin: unknown, inMax: unknown, outMin: unknown, outMax: unknown): number {
-      const [v, a, b, c, d] = [x, inMin, inMax, outMin, outMax].map(int) as [number, number, number, number, number];
-      return __idiv((v - a) * (d - c), b - a) + c;
+      // WMath.cpp: (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min, all in 32-bit long.
+      const [v, a, b, c, d] = [x, inMin, inMax, outMin, outMax].map(long) as [number, number, number, number, number];
+      return (__idiv(Math.imul((v - a) | 0, (d - c) | 0), (b - a) | 0) + c) | 0;
     },
     constrain(x: unknown, low: unknown, high: unknown): number {
       const v = toNumber(x);
@@ -334,33 +352,38 @@ export function createCoreApi(ctx: RuntimeContext): Record<string, unknown> {
       const v = toNumber(x);
       return v < 0 ? -v : v;
     },
-    fabs: (x: unknown): number => Math.abs(toNumber(x)),
+    fabs: f32Math(Math.abs),
     sq(x: unknown): number {
+      // #define sq(x) ((x)*(x)): the transpiler wraps an integer result to its C type
+      // (and uses __imul for a long variable, whose square can pass 2^53).
       const v = toNumber(x);
       return v * v;
     },
-    pow: (a: unknown, b: unknown): number => Math.pow(toNumber(a), toNumber(b)),
-    sqrt: (x: unknown): number => Math.sqrt(toNumber(x)),
-    sin: (x: unknown): number => Math.sin(toNumber(x)),
-    cos: (x: unknown): number => Math.cos(toNumber(x)),
-    tan: (x: unknown): number => Math.tan(toNumber(x)),
-    asin: (x: unknown): number => Math.asin(toNumber(x)),
-    acos: (x: unknown): number => Math.acos(toNumber(x)),
-    atan: (x: unknown): number => Math.atan(toNumber(x)),
-    atan2: (y: unknown, x: unknown): number => Math.atan2(toNumber(y), toNumber(x)),
-    exp: (x: unknown): number => Math.exp(toNumber(x)),
-    log: (x: unknown): number => Math.log(toNumber(x)),
-    log10: (x: unknown): number => Math.log10(toNumber(x)),
-    floor: (x: unknown): number => Math.floor(toNumber(x)),
-    ceil: (x: unknown): number => Math.ceil(toNumber(x)),
-    trunc: (x: unknown): number => Math.trunc(toNumber(x)),
-    fmod: (a: unknown, b: unknown): number => toNumber(a) % toNumber(b),
+    pow: (a: unknown, b: unknown): number => Math.fround(Math.pow(flt(a), flt(b))),
+    sqrt: f32Math(Math.sqrt),
+    sin: f32Math(Math.sin),
+    cos: f32Math(Math.cos),
+    tan: f32Math(Math.tan),
+    asin: f32Math(Math.asin),
+    acos: f32Math(Math.acos),
+    atan: f32Math(Math.atan),
+    atan2: (y: unknown, x: unknown): number => Math.fround(Math.atan2(flt(y), flt(x))),
+    exp: f32Math(Math.exp),
+    log: f32Math(Math.log),
+    log10: f32Math(Math.log10),
+    floor: f32Math(Math.floor),
+    ceil: f32Math(Math.ceil),
+    trunc: f32Math(Math.trunc),
+    fmod: (a: unknown, b: unknown): number => Math.fround(flt(a) % flt(b)),
     round(x: unknown): number {
-      const v = toNumber(x);
-      return v >= 0 ? Math.floor(v + 0.5) : Math.ceil(v - 0.5);
+      // #define round(x) ((x)>=0?(long)((x)+0.5):(long)((x)-0.5)): the addition in single precision,
+      // the (long) conversion like avr-gcc's (NaN and out-of-range values give -2147483648)
+      const v = flt(x);
+      return __ftoi(Math.fround(v >= 0 ? v + 0.5 : v - 0.5));
     },
-    radians: (deg: unknown): number => toNumber(deg) * (Math.PI / 180),
-    degrees: (rad: unknown): number => toNumber(rad) * (180 / Math.PI),
+    // #define radians(deg) ((deg)*DEG_TO_RAD) and degrees(rad) ((rad)*RAD_TO_DEG), in single precision
+    radians: (deg: unknown): number => Math.fround(flt(deg) * CORE_CONSTANTS.DEG_TO_RAD!),
+    degrees: (rad: unknown): number => Math.fround(flt(rad) * CORE_CONSTANTS.RAD_TO_DEG!),
     isnan: (x: unknown): boolean => Number.isNaN(toNumber(x)),
     isinf(x: unknown): boolean {
       const v = toNumber(x);
@@ -460,6 +483,10 @@ export function createCoreApi(ctx: RuntimeContext): Record<string, unknown> {
 
     // --- misc ---------------------------------------------------------------------------
     F: (s: unknown): unknown => s,
+    /** avr-libc `abort()`: the board halts; the simulator stops with an error on the line of the call. */
+    abort(): never {
+      throw new SketchAbort();
+    },
   };
   return api;
 }

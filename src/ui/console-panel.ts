@@ -1,12 +1,13 @@
 /**
  * Console panel under the tabs: transpiler errors/warnings, runtime messages
- * and status lines. Entries with a source line jump the editor to that line.
+ * and status lines. Entries with a source line jump the editor to that line
+ * (the sketch, or the Python program for `source: 'python'`, docs/PYTHON.md §7.10).
  */
 import type { ConsoleMessage } from '../types';
 
 export interface ConsolePanelOptions {
-  /** Called when the user clicks a message that carries a source line. */
-  onJumpToLine(line: number): void;
+  /** Called when the user clicks a message that carries a source line (with the message's `source`). */
+  onJumpToLine(line: number, source?: ConsoleMessage['source']): void;
   /** Oldest entries are dropped beyond this count (default 500). */
   maxEntries?: number;
 }
@@ -58,11 +59,11 @@ export function createConsolePanel(container: HTMLElement, options: ConsolePanel
         jump.className = 'z1-console-line';
         jump.textContent = `line ${line}`;
         jump.setAttribute('aria-label', `Go to line ${line} in the editor`);
-        jump.addEventListener('click', () => options.onJumpToLine(line));
+        jump.addEventListener('click', () => options.onJumpToLine(line, message.source));
         entry.appendChild(jump);
         entry.classList.add('is-clickable');
         entry.addEventListener('click', (e) => {
-          if (e.target !== jump) options.onJumpToLine(line);
+          if (e.target !== jump) options.onJumpToLine(line, message.source);
         });
       }
 

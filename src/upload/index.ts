@@ -32,8 +32,11 @@ export interface InstallUploadButtonOptions {
   button: HTMLButtonElement;
   /** Where the dialog is appended (the app root). */
   parent: HTMLElement;
-  /** The current sketch (null with a toast when the blocks are still loading). */
-  getSketch(): UploadPayload | null;
+  /**
+   * The current sketch; `{ error }` when there is none to upload yet (the blocks or Python are
+   * still loading, a Python program has errors): the text is toasted as is. Null: nothing to do.
+   */
+  getSketch(): UploadPayload | { error: string } | null;
   /** Compile errors and upload results, for the app console. */
   onConsole?(message: ConsoleMessage): void;
   toast?(text: string): void;
@@ -65,8 +68,9 @@ export function installUploadButton(options: InstallUploadButtonOptions): Instal
 
   const onClick = (): void => {
     const sketch = options.getSketch();
-    if (!sketch) {
-      options.toast?.('The blocks are still loading — try again in a moment');
+    if (!sketch) return;
+    if ('error' in sketch) {
+      options.toast?.(sketch.error);
       return;
     }
     dialog?.open(sketch);
