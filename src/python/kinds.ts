@@ -1645,7 +1645,10 @@ function globalInit(resolved: Resolved, flow: Flow, typing: Typing, consts: Cons
   if (resolved.parentOf.get(first.stmt) !== null || !resolved.main.setup.includes(first.stmt)) return null;
   if (resolved.scopeOf.get(first.stmt) !== resolved.moduleScope) return null;
   const value = first.value;
-  const constant = consts.value(value) !== null || (value.type === 'ListLit' && value.elts.length === 0) || (value.type === 'Call' && typing.callTarget(value).kind === 'class');
+  const part = (e: Expr) => e.type === 'Call' && typing.callTarget(e).kind === 'class';
+  // A list of Pins on fixed pins is constant too: `const int leds[2] = {LED_RED, LED_GREEN};` (their pinMode() stays where the list is made).
+  const fixedPin = (e: Expr) => part(e) && (consts.pinOf(e) ?? -1) >= 0;
+  const constant = consts.value(value) !== null || (value.type === 'ListLit' && value.elts.every((e) => fixedPin(e) || consts.value(e) !== null)) || part(value);
   if (!constant) return null;
   for (const u of v.uses) {
     if (u.scope !== resolved.moduleScope) continue;

@@ -122,7 +122,9 @@ translation maps that to Arduino's structure:
 3. `if __name__ == "__main__":` at top level is unwrapped (its body is top-level code).
 4. A `while True:` that is not the main loop (statements after it, a `break` out of it, or inside
    `def main():` called at the end) stays where it is. Statements after an endless top-level
-   `while True:` get W-unreachable.
+   `while True:` get W-unreachable. Statements that can never run (after such a loop, or after a
+   `return`, `break` or `continue` of the same block) are left out of the sketch with the comment
+   `// Python lines N-M are never reached, so they are left out.`
 5. `def` may appear anywhere at top level. A top-level statement that uses a function before its
    `def` has run is E-name-later (Python would raise NameError). Functions are emitted before
    `setup()` in Python order; no prototypes are needed (the simulator resolves forward references;
@@ -1010,6 +1012,8 @@ void loop() { … }
 
 - **C1** Leading comments become `//` lines before the first line emitted for their statement;
   trailing comments go on the statement's first emitted line. Attachment by indentation (§4.4).
+  The leading comments of the imports a program starts with describe the program: they go in the
+  header, after the docstring.
 - **C2** Carried comments have trailing whitespace trimmed; a `//` comment line that would end
   with `\` gets `.` appended (a `//` line ending in `\` swallows the next line in GCC).
 - **C3** The module docstring becomes the `/* … */` header with every `*/` written `* /`; a
@@ -2375,7 +2379,9 @@ read-only, the handed-in `code`, banner "Made from the student's Python program.
 - `scripts/check-bundle.mjs`: the chunk named `python-chunk-*.js` is found by name; budget =
   gzip of (its static closure minus the static closure of `index.html`) ≤ **80 KB** (expected
   60–65 KB); marker check: no chunk in the `index.html` closure contains
-  "ZERO1 Python does not have".
+  "ZERO1 Python does not have". *Raised to 128 KB on 2026-09-30: the finished translator is
+  ≈ 90 KB gzip, 4 times the estimate; measured 112.6 KB with the emitter (the sizes are in
+  scripts/check-bundle.mjs).*
 - `package.json`: `@codemirror/lang-python@^6.2.1` (brings `@lezer/python@^1.1.4`); the installed
   `@codemirror/autocomplete` 6.20.3, `language` 6.12.4, `state` 6.7.4 and `@lezer/common` 1.5.2
   satisfy its ranges, so nothing is duplicated.

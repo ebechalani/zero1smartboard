@@ -209,9 +209,9 @@ const ROWS: Row[] = [
 
 /** Codes no program can produce from pythonToArduino yet: the emitter's, the running board's, the app's. */
 const OTHER_STAGES: Partial<Record<MessageCode, string>> = {
-  'X-internal': 'a translator failure (the stub: tests/python-contract.test.ts)',
+  'X-internal': 'a bug in the translator (pythonToArduino catches every exception)',
   'X-sketch-error': 'the app, when transpile() refuses a generated sketch (§7.8)',
-  'X-sketch-too-long': 'the emitter (a generated sketch over 50,000 bytes)',
+  'X-sketch-too-long': 'a generated sketch over 50,000 bytes (tests/python-emit.test.ts)',
   'W-sketch': 'the app, when transpile() warns about a generated sketch (§7.8)',
   'R-index': 'pyIndex at run time',
   'R-str-index': 'pyCharAt at run time',

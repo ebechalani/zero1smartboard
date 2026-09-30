@@ -88,6 +88,9 @@ interface Code {
 const code = (c: string, p: Order, t: CType): Code => ({ c, p, t });
 const atom = (c: string, t: CType): Code => ({ c, p: Order.ATOMIC, t });
 
+/** random.random(): `random(0, 1000000) / 1000000.0` (§3.9). */
+const RANDOM_FRACTION = code('random(0, 1000000) / 1000000.0', Order.MULTIPLICATIVE, 'float');
+
 const BITWISE = new Set([Order.SHIFT, Order.BITWISE_AND, Order.BITWISE_XOR, Order.BITWISE_OR]);
 const BINARY = new Set([Order.MULTIPLICATIVE, Order.ADDITIVE, Order.SHIFT, Order.RELATIONAL, Order.EQUALITY, Order.BITWISE_AND, Order.BITWISE_XOR, Order.BITWISE_OR, Order.LOGICAL_AND, Order.LOGICAL_OR]);
 
@@ -192,6 +195,17 @@ function commentText(text: string): string {
   return /\\$|\?\?\/$/.test(t) ? `${t}.` : t;
 }
 
+/**
+ * The end-of-line comment of a sketch line: the emitter's own note (`generated`) and the student's
+ * trailing comments of the statement (C1), in that order, two spaces apart; null when there is none.
+ */
+function lineComment(generated: string | null, student: readonly string[]): string | null {
+  if (generated !== null) return `// ${[generated, ...student.map((s) => commentText(s).trim())].join('  ')}`;
+  if (student.length === 1) return `//${commentText(student[0])}`;
+  if (student.length > 1) return `// ${student.map((s) => commentText(s).trim()).join('  ')}`;
+  return null;
+}
+
 /** `code` with `comment` (`// …`) at column 31, or two (or three: an even column) spaces after it. */
 function withComment(text: string, comment: string): string {
   const len = [...text].length;
@@ -283,13 +297,8 @@ class Out {
   }
 
   line(text: string, py: number, generated: string | null = null): void {
-    const student = this.takeTrailing();
+    const comment = lineComment(generated, this.takeTrailing());
     const indent = '  '.repeat(this.depth);
-    let comment: string | null = null;
-    if (generated !== null && student.length > 0) comment = `// ${[generated, ...student.map((s) => commentText(s).trim())].join('  ')}`;
-    else if (generated !== null) comment = `// ${generated}`;
-    else if (student.length === 1) comment = `//${commentText(student[0])}`;
-    else if (student.length > 1) comment = `// ${student.map((s) => commentText(s).trim()).join('  ')}`;
     this.lines.push({ text: comment ? withComment(indent + text, comment) : indent + text, py });
   }
 
@@ -340,6 +349,8 @@ class Emitter {
   private readonly declaredGlobally = new Set<Stmt>();
   /** Comments of the `if __name__ == "__main__":` guards, before their first statement. */
   private readonly guardComments = new Map<Stmt, Comment[]>();
+  /** The imports the program starts with: their leading comments describe the program and go in the header (C1). */
+  private readonly headerImports = new Set<Stmt>();
   private readonly functionScopes: Scope[];
 
   constructor(
@@ -364,12 +375,18 @@ class Emitter {
 
   /** A C++ name for a hidden variable: `base`, with `_` appended while it is reserved or visible in `scope`. */
   private fresh(scope: Scope, base: string): string {
+    const name = this.temp(scope, base);
+    scope.cppNames.add(name);
+    return name;
+  }
+
+  /** A C++ name for a temporary of its own `{ … }` block: like fresh(), but free again after the block. */
+  private temp(scope: Scope, base: string): string {
     const module = this.resolved.moduleScope;
     const taken = (n: string) =>
       RESERVED_NAMES.has(n) || scope.cppNames.has(n) || (scope === module ? this.functionScopes.some((s) => s.cppNames.has(n)) : module.cppNames.has(n));
     let name = base;
     while (taken(name)) name += '_';
-    scope.cppNames.add(name);
     return name;
   }
 
@@ -384,6 +401,10 @@ class Emitter {
     for (const guard of this.resolved.mainGuards) {
       const first = guard.type === 'If' ? guard.body.stmts[0] : null;
       if (first) this.guardComments.set(first, [...guard.leading, ...guard.trailing]);
+    }
+    for (const s of this.resolved.module.body.stmts) {
+      if (s.type !== 'Import' && s.type !== 'ImportFrom') break;
+      this.headerImports.add(s);
     }
     // Lists: count names, lists given whole, LCD bitmaps, lists that shrink.
     const listVar = (e: Expr) => (e.type === 'Name' ? typing.variableOf(e) : null);
@@ -484,7 +505,8 @@ class Emitter {
   /** `T name` (or `T name[N]`) for a declaration. */
   private declarator(v: Variable, name = v.cppName): string {
     if (v.list) {
-      const size = v.list.growable ? v.list.capacity : v.list.length ?? 0;
+      // A C++ array has at least one item (an empty list that is never grown still gets one).
+      const size = Math.max(1, (v.list.growable ? v.list.capacity : v.list.length) ?? 0);
       return `${this.itemType(v)} ${name}[${size}]`;
     }
     if (v.object) return `int ${name}`;
@@ -497,6 +519,7 @@ class Emitter {
       if (v.storage !== storage || v.declareAt || v.isParam || v.kind === 'none' || this.headerOnly(v)) continue;
       if (storage === 'local' && v.sym.scope.fn !== fn) continue;
       if (v.uses.length === 0 && v.defs.every((d) => d.kind === 'except')) continue;
+      if (v.defs.every((d) => !d.stmt || !this.reachable(d.stmt, d.scope)) && v.uses.every((u) => !this.reachable(u.stmt, u.scope))) continue; // only in code that never runs
       const py = v.defs[0]?.stmt?.line ?? 0;
       if (v.list) {
         out.line(`${this.declarator(v)}${this.listZeroInit(v)};`, py);
@@ -512,7 +535,10 @@ class Emitter {
   private againComment(v: Variable): string | null {
     if (v.index < 2) return null;
     const words: Record<string, string> = { int: 'a number', float: 'a number', bool: 'True / False', str: 'text', color: 'a colour' };
-    const what = words[v.kind] ?? (isListKind(v.kind) ? 'a list' : `a ${v.kind}`);
+    // After another number the kind of number is what changed: "now a decimal number".
+    const numbers: Record<string, string> = { int: 'a whole number', float: 'a decimal number', bool: 'True / False' };
+    const before = this.typing.variables.filter((x) => x.sym === v.sym && x.index < v.index).sort((a, b) => b.index - a.index)[0];
+    const what = (before && before.kind in numbers && numbers[v.kind]) || words[v.kind] || (isListKind(v.kind) ? 'a list' : `a ${v.kind}`);
     return `'${v.sym.name}' again, now ${what}`;
   }
 
@@ -540,14 +566,12 @@ class Emitter {
       if (own) commented.add(own);
       let first = true;
       const push = (text: string, generated: string | null = null) => {
-        let comment = generated === null ? null : `// ${generated}`;
+        const student = own && first ? own.trailing.map((c) => c.text) : [];
         if (own && first) {
           for (const c of [...(this.guardComments.get(own) ?? []), ...own.leading]) out.push({ text: `//${commentText(c.text)}`, py: c.line });
-          const trailing = own.trailing.map((c) => c.text);
-          if (trailing.length === 1) comment = `//${commentText(trailing[0])}`;
-          else if (trailing.length > 1) comment = `// ${trailing.map((t) => commentText(t).trim()).join('  ')}`;
         }
         first = false;
+        const comment = lineComment(generated, student);
         out.push({ text: comment ? withComment(text, comment) : text, py });
       };
       if (v.object) {
@@ -560,7 +584,7 @@ class Emitter {
         const items = init?.value ? this.listItems(init.value, v, ctx) : null;
         const allZero = !items || items.every((x) => x === '0' || x === 'false' || x === '0.0' || x === '""');
         const room = v.list.growable ? `the list '${v.sym.name}' has room for ${v.list.capacity} items` : null;
-        const constant = this.constList(v);
+        const constant = !!items && this.constList(v);
         push(`${constant ? 'const ' : ''}${this.declarator(v)}${allZero && !constant ? '' : ` = {${items!.join(', ')}}`};`, room);
         if (count) push(`long ${count} = ${init?.value ? this.listStartLength(init.value) : 0};`);
       } else if (init && init.value) {
@@ -694,6 +718,7 @@ class Emitter {
       for (const l of moduleDocLines(doc.value)) add(l.replace(/\*\//g, '* /').replace(/\/\*/g, '/ *'));
       add('*/');
     }
+    for (const s of this.headerImports) for (const c of s.leading) add(`//${commentText(c.text)}`, c.line);
     add('');
     section(INCLUDE_ORDER.filter((l) => this.libraries.has(l)).map((l) => ({ text: `#include <${l}.h>`, py: 0 })));
     const pins = PINS.filter((p) => this.pins.has(p.name) && p.value !== null).map((p) => ({ text: withComment(`const int ${p.name} = ${p.value};`, `// ${PIN_COMMENTS[p.name] ?? p.comment}`), py: 0 }));
@@ -751,9 +776,18 @@ class Emitter {
   private block(stmts: readonly Stmt[], endComments: readonly Comment[], ctx: Ctx, after: readonly Comment[] = []): void {
     const out = ctx.out;
     let written = false;
-    for (const s of stmts) {
+    for (const [k, s] of stmts.entries()) {
       if (s.type === 'FunctionDef') continue;
-      const leading = [...(this.guardComments.get(s) ?? []), ...s.leading];
+      if (!this.reachable(s, ctx.scope)) {
+        // Code after an endless loop, a return, break or continue never runs (and has no kinds): left out.
+        const rest = stmts.slice(k).filter((x) => x.type !== 'FunctionDef');
+        const last = Math.max(...rest.map((x) => x.endLine));
+        if (written && this.blankBefore(s.line)) out.blankAt(out.lines.length);
+        out.line(`// ${last > s.line ? `Python lines ${s.line}-${last} are` : `Python line ${s.line} is`} never reached, so ${last > s.line ? 'they are' : 'it is'} left out.`, s.line);
+        written = true;
+        break;
+      }
+      const leading = this.headerImports.has(s) ? [] : [...(this.guardComments.get(s) ?? []), ...s.leading];
       const firstLine = leading[0]?.line ?? s.line;
       const start = out.lines.length;
       const hoisted = this.declaredGlobally.has(s);
@@ -786,6 +820,13 @@ class Emitter {
       if (written && this.blankBefore(tail[0].line)) out.blankAt(out.lines.length);
       for (const c of tail) out.comment(c.text, c.line);
     }
+  }
+
+  /** The statement can run: its node in the control-flow graph of its scope is reachable (§4.5). */
+  private reachable(s: Stmt, scope: Scope): boolean {
+    const cfg = this.flow.cfgs.get(scope);
+    const node = cfg?.nodeOf.get(s);
+    return !cfg || node === undefined || cfg.reachable.has(node);
   }
 
   /** Lines that must come before the statement (parts made on the spot), written now. */
@@ -923,11 +964,12 @@ class Emitter {
     const tuple = s.targets[0] as { type: 'TupleTarget'; elts: Array<Name | Subscript | Expr> };
     const values = (s.value as TupleLit).elts;
     const targetNames = new Set(tuple.elts.filter((x): x is Name => x.type === 'Name').map((x) => x.id));
+    // Python works out every value before it assigns: temporaries when a value could see a target change (a call may read it too).
     const readsTarget = values.some((x) => {
       let hit = false;
       walkExpr(x, (y) => {
         if (y.type === 'Name' && targetNames.has(y.id)) hit = true;
-        if (y.type === 'Subscript') hit = true;
+        if (y.type === 'Subscript' || y.type === 'Call') hit = true;
       });
       return hit;
     });
@@ -944,7 +986,7 @@ class Emitter {
       const def = this.defOf(t);
       if (v && def && this.declaredAt(v, def)) ctx.out.line(`${this.declarator(v, this.nameOf(v, ctx))} = ${zeroValue(v.kind)};`, s.line);
     }
-    const temps = tuple.elts.map((_, i) => this.fresh(ctx.scope, `t${i + 1}`));
+    const temps = tuple.elts.map((_, i) => this.temp(ctx.scope, `t${i + 1}`));
     const parts: string[] = [];
     tuple.elts.forEach((t, i) => parts.push(`${cppType(this.targetKind(t as Expr) ?? this.typing.kindOf(values[i]) ?? 'int')} ${temps[i]} = ${codes[i].c};`));
     tuple.elts.forEach((t, i) => {
@@ -1497,8 +1539,16 @@ class Emitter {
       const a = this.typing.constValue(args[0]);
       if (!a || a.type !== 'int' || a.value < 0) return Infinity;
     }
-    const c = this.typing.constValue(args[args.length - 1]);
-    return c && c.type === 'int' ? c.value : Infinity;
+    const stop = args[args.length - 1];
+    const c = this.typing.constValue(stop);
+    if (c && c.type === 'int') return c.value;
+    // range(len(lst)) of a fixed list: indexes below its length (they are safe in every list at least as long).
+    if (stop.type === 'Call' && stop.args[0]?.type === 'Name') {
+      const t = this.typing.callTarget(stop);
+      const v = this.typing.variableOf(stop.args[0]);
+      if (t.kind === 'builtin' && t.name === 'len' && v?.list && !v.list.growable && !v.isParam && v.list.length !== null) return v.list.length;
+    }
+    return Infinity;
   }
 
   // ---- try / except (§2.12) ------------------------------------------------------------------------------------
@@ -1589,10 +1639,11 @@ class Emitter {
     if (t.kind === 'builtin' && (t.name === 'int' || t.name === 'float') && call.args[0]) {
       const arg = call.args[0];
       let text = this.textCode(arg, ctx);
-      if (arg.type !== 'Name') {
+      this.flushPre(ctx, first.line);
+      withTrailing(first.trailing);
+      // The text is worked out once (a name or a literal can simply be read twice).
+      if (arg.type !== 'Name' && arg.type !== 'Str') {
         const hoisted = this.fresh(ctx.scope, `${this.nameCode(target, ctx).c.replace(/_\d+$/, '')}Text`);
-        this.flushPre(ctx, first.line);
-        withTrailing(first.trailing);
         out.line(`String ${hoisted} = ${text.c};`, first.line);
         text = atom(hoisted, 'String');
       }
@@ -1902,7 +1953,7 @@ class Emitter {
           const c = this.valueOf(x, kind, ctx);
           return c.t === 'cstr' ? `String(${c.c})` : wrap(c, Order.CONDITIONAL);
         };
-        return atom(`(${wrap(test, Order.CONDITIONAL)} ? ${branch(e.body)} : ${branch(e.orelse)})`, ctypeOf(kind));
+        return code(`${wrap(test, Order.CONDITIONAL, true)} ? ${branch(e.body)} : ${branch(e.orelse)}`, Order.CONDITIONAL, ctypeOf(kind));
       }
       case 'Call':
         return this.call(e, ctx);
@@ -2244,9 +2295,9 @@ class Emitter {
       case 'time.ticks_us':
         return prefix('(long)', atom('micros()', 'long'), 'long');
       case 'time.ticks_diff':
-        return atom(`(${binary(this.intOperand(v('new')), '-', this.intOperand(v('old')), Order.ADDITIVE, 'long').c})`, 'long');
+        return binary(this.intOperand(v('new')), '-', this.intOperand(v('old')), Order.ADDITIVE, 'long');
       case 'time.ticks_add':
-        return atom(`(${binary(this.intOperand(v('ticks')), '+', this.intOperand(v('delta')), Order.ADDITIVE, 'long').c})`, 'long');
+        return binary(this.intOperand(v('ticks')), '+', this.intOperand(v('delta')), Order.ADDITIVE, 'long');
       case 'time.time':
         return prefix('(long)', atom('(millis() / 1000)', 'long'), 'long');
       case 'math.floor':
@@ -2271,11 +2322,11 @@ class Emitter {
         return atom(stop ? `random(${v('start').c}, ${this.expr(stop, ctx).c})` : `random(${v('start').c})`, 'long');
       }
       case 'random.random':
-        return atom('(random(0, 1000000) / 1000000.0)', 'float');
+        return RANDOM_FRACTION;
       case 'random.uniform': {
         const x = v('a');
         const y = v('b');
-        return atom(`(${wrap(x, Order.ADDITIVE)} + (${binary(y, '-', x, Order.ADDITIVE, 'float').c}) * (random(0, 1000000) / 1000000.0))`, 'float');
+        return binary(x, '+', binary(binary(y, '-', x, Order.ADDITIVE, 'float'), '*', RANDOM_FRACTION, Order.MULTIPLICATIVE, 'float'), Order.ADDITIVE, 'float');
       }
       case 'random.choice': {
         const items = a('items')!;
@@ -2301,7 +2352,7 @@ class Emitter {
         return atom(`map(${['x', 'in_min', 'in_max', 'out_min', 'out_max'].map((n) => v(n).c).join(', ')})`, 'long');
       case 'zero1.input_available':
         this.serial = true;
-        return atom('(Serial.available() > 0)', 'bool');
+        return code('Serial.available() > 0', Order.RELATIONAL, 'bool');
       default:
         if (m.id.startsWith('math.')) return atom(`${m.name}(${m.params.map((p) => v(p.name).c).join(', ')})`, 'float');
         return atom('', 'void');

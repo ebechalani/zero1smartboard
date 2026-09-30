@@ -383,12 +383,15 @@ const EMITTED_NAMES = words([
   'pyNonZero pyNonZeroF pyPow pyPow10 pyRound pyRoundTo pyAbsL pyAbsF pyMinL pyMaxL pyMinF pyMaxF',
   'pyBool pyFloat pyDigits pySignificant pyPad pyHex pyBin pyInput pyIsInt pyInt pyIsFloat',
   'pyFloatOf pyIsDigit pyUpper pyLower pyStrip pyReplace pyCharAt pyIndex pySleep pySleepMs',
-  'pyDistanceCm pyAppendL pyAppendF pyAppendS pyAppendB pyPopL pyPopF pyPopS pyPopB pyListTextL',
-  'pyListTextF pyListTextS pyListTextB pySumL pySumF pySumS pySumB pyMinListL pyMinListF pyMinListS',
-  'pyMinListB pyMaxListL pyMaxListF pyMaxListS pyMaxListB pyInListL pyInListF pyInListS pyInListB',
-  'showSegments showDigit DIGITS LED_RED LED_GREEN LED_BUILTIN BUTTON_1 BUTTON_2 POT_LDR MOTOR',
-  'SERVO_PIN BUZZER DHT_PIN TRIG_PIN ECHO_PIN RGB_PIN SEG_DATA SEG_LATCH SEG_CLOCK LCD_ADDRESS',
-  'Servo LiquidCrystal_I2C DHT Adafruit_NeoPixel TwoWire HardwareSerial Print Stream',
+  'pyDistanceCm pyAppendL pyAppendF pyAppendS pyAppendB pyAppendC pyAppendP pyAppendY pyPopL pyPopF',
+  'pyPopS pyPopB pyPopC pyPopP pyPopY pyListTextL pyListTextF pyListTextS pyListTextB pyListTextC',
+  'pyListTextP pyListTextY pySumL pySumF pySumS pySumB pySumC pySumP pySumY pyMinListL pyMinListF',
+  'pyMinListS pyMinListB pyMinListC pyMinListP pyMinListY pyMaxListL pyMaxListF pyMaxListS',
+  'pyMaxListB pyMaxListC pyMaxListP pyMaxListY pyInListL pyInListF pyInListS pyInListB pyInListC',
+  'pyInListP pyInListY showSegments showDigit DIGITS LED_RED LED_GREEN LED_BUILTIN BUTTON_1',
+  'BUTTON_2 POT_LDR MOTOR SERVO_PIN BUZZER DHT_PIN TRIG_PIN ECHO_PIN RGB_PIN SEG_DATA SEG_LATCH',
+  'SEG_CLOCK LCD_ADDRESS Servo LiquidCrystal_I2C DHT Adafruit_NeoPixel TwoWire HardwareSerial Print',
+  'Stream',
 ]);
 
 /** Every reserved name (with the simulator's KNOWN_RUNTIME_NAMES). */

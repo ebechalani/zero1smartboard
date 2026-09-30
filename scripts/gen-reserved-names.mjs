@@ -43,8 +43,9 @@ xor xor_eq`.split(/\s+/);
 
 /**
  * Names the translator emits (§2.14, §4.7, §4.8): the sketch's own functions and types, the py…
- * helpers (list helpers in their …L / …F / …S / …B variants), the 7-segment helpers, the zero1
- * pin constants and the library classes. Keep in step with src/python/helpers.ts and api.ts.
+ * helpers (the list helpers in every element variant of helpers.ts: …L long, …F float, …S String,
+ * …B bool, …C colour, …P Pin, …Y byte), the 7-segment helpers, the zero1 pin constants and the
+ * library classes. Keep in step with src/python/helpers.ts and api.ts.
  */
 const LIST_HELPERS = ['pyAppend', 'pyPop', 'pyListText', 'pySum', 'pyMinList', 'pyMaxList', 'pyInList'];
 const EMITTED_NAMES = [
@@ -53,7 +54,7 @@ const EMITTED_NAMES = [
   'pyAbsL', 'pyAbsF', 'pyMinL', 'pyMaxL', 'pyMinF', 'pyMaxF', 'pyBool', 'pyFloat', 'pyDigits', 'pySignificant', 'pyPad',
   'pyHex', 'pyBin', 'pyInput', 'pyIsInt', 'pyInt', 'pyIsFloat', 'pyFloatOf', 'pyIsDigit', 'pyUpper', 'pyLower', 'pyStrip',
   'pyReplace', 'pyCharAt', 'pyIndex', 'pySleep', 'pySleepMs', 'pyDistanceCm',
-  ...LIST_HELPERS.flatMap((h) => ['L', 'F', 'S', 'B'].map((k) => h + k)),
+  ...LIST_HELPERS.flatMap((h) => ['L', 'F', 'S', 'B', 'C', 'P', 'Y'].map((k) => h + k)),
   'showSegments', 'showDigit', 'DIGITS',
   'LED_RED', 'LED_GREEN', 'LED_BUILTIN', 'BUTTON_1', 'BUTTON_2', 'POT_LDR', 'MOTOR', 'SERVO_PIN', 'BUZZER', 'DHT_PIN',
   'TRIG_PIN', 'ECHO_PIN', 'RGB_PIN', 'SEG_DATA', 'SEG_LATCH', 'SEG_CLOCK', 'LCD_ADDRESS',

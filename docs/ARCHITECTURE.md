@@ -66,6 +66,8 @@ src/
     controls.ts settings.ts menu.ts examples-menu.ts audio.ts style.css     [ui-app]
     arduino-ide-dialog.ts sketch-file.ts                                    [ui-app]
     handin-dialog.ts            the student side of the class platform      [ui-app / B]
+  python/                       Python mode's translator: Python → Arduino sketch (§14)  [Python A]
+  sketch/                       pins, C++ precedence, 7-segment helpers, placeholder (Blocks + Python) [Python A]
   share-link.ts                 #code= / #blocks= / #class= links, review payload (pure) [A]
   firebase-config.ts            public Firebase web config (empty = classes off) [A]
   classroom/                    class platform data layer (§12)             [A]
@@ -1286,3 +1288,55 @@ review.html, src/review/main.ts, page.ts, review.css
   `failNext`), `tests/review-page.test.ts` and `tests/zip.test.ts`. The build check
   (`scripts/check-bundle.mjs`) confirms that neither page's static import graph contains
   Firebase.
+
+---
+
+## 14. Python translator (`src/python`) — owner: A (Python mode)
+
+Python mode (docs/PYTHON.md) never runs Python: `pythonToArduino(source)` translates a
+MicroPython-style program into an Arduino sketch, and everything downstream (Run, the Code tab,
+hand-in, share, review, Open in Arduino IDE, Upload) works on that sketch. The UI reaches the
+translator only through the lazy chunk `src/ui/python-chunk.ts` (docs/PYTHON.md §7.16); nothing
+outside `src/python` imports more than `src/python/index.ts`.
+
+```
+normalize → tokenize (tokens.ts) → parse (parser.ts, ast.ts)   syntax errors §5.1: one, then stop
+  → resolve (scope.ts)     scopes, imports, API bindings, main-loop split, C++ names (reserved-names.ts)
+  → analyzeFlow (flow.ts)  CFG per scope, reaching definitions, webs, definite assignment, dominators
+  → infer (kinds.ts)       kinds of webs / parameters / returns / expressions, variables and storage (D1–D3)
+  → check (check.ts)       every NA- / E- / W- rule of §5 (messages.ts); errors → the T9 placeholder
+  → emit (emit.ts)         the sketch + SourceMap (sourcemap.ts), helpers (helpers.ts)
+```
+
+- **Entry.** `translate.ts`: `pythonToArduino` never throws (X-internal); `analyze()` returns
+  the typed program and the diagnostics (errors first, at most 20 + X-too-many; warnings only
+  without errors). A program with errors gets `pythonPlaceholder(n)` (`src/sketch/placeholder.ts`);
+  one without errors is emitted (X-sketch-too-long above 50,000 bytes).
+- **Emitter** (`emit.ts`, docs/PYTHON.md §4.7): header, the module docstring and the comments
+  of the imports the program starts with, includes, zero1 pin constants (`src/sketch/pins.ts`),
+  library objects, globals (D1: an initialiser when the first definition is a constant that runs
+  before any use), functions in Python order, `setup()` (the statements before the final
+  `while True:`), `loop()` (its body; `continue` there is `return;`), then the helpers. Locals are
+  declared where kinds.ts placed them (D2/D3). Expressions are printed with C++ precedence
+  (`src/sketch/order.ts`), every int is a `long` (N1: `L` literals, `(long)` casts of narrower
+  readings), `//` `%` `**` and guarded divisions go through the helpers (N3–N5). The board API is
+  lowered by the member ids of `api.ts` (`Pin.on`, `time.sleep_ms`, …). Statements that can never
+  run (after an endless loop, a `return`, `break` or `continue`) are left out with a comment.
+- **Helpers** (`helpers.ts`, §4.8): the fixed texts verbatim, the list helpers generated per
+  element type from one template (`…L` long, `…F` float, `…S` String, `…B` bool, `…C` colour,
+  `…P` Pin, `…Y` byte); `helperTexts(names)` adds what each needs, in `helperOrder`, each once.
+  `Serial.begin(9600)` is written when the program prints, reads, or uses a helper that can stop
+  it (`pyFail` prints `Line N: <Python error>`, flushes and calls `abort()`).
+- **Source map** (`sourcemap.ts`, §4.9): every sketch line records the first line of the Python
+  statement it was made from (0 for scaffolding and helper bodies); `composeJsLineMap()` gives the
+  Executor Python lines; `pythonizeRuntimeMessage()` turns an `abort()` report into the last
+  `Line N: …` line of the Serial Monitor, so a runtime stop has its Python line on every browser.
+- **Tests.** `python-tokens`, `python-parser`, `python-resolve`, `python-flow`, `python-kinds`,
+  `python-errors` (the §5 table and its meta-tests), `python-api`, `python-reserved`,
+  `python-emit` (goldens `tests/fixtures/python/<case>.py` → `<case>.ino`, `UPDATE_GOLDEN=1`
+  regenerates; T1–T9 compared with docs/PYTHON.md §4.10; every golden transpiles without
+  warnings and, with the WebAssembly toolchain built, compiles with avr-g++ `-Wall -Wextra`
+  without warnings), `python-helpers` (§4.8 verbatim; each helper's value in the simulator against
+  Python's; every runtime stop), `python-sourcemap`, `python-contract`.
+  `npm run test:hardware-sim` adds `tests-hardware-sim/python-board.test.ts`: the helpers and the
+  deterministic goldens print the same Serial output on avr8js as in the simulator.
