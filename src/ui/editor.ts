@@ -5,7 +5,8 @@
  * language, storage key and indent (docs/PYTHON.md §7.4). The `#code=`
  * share-link encoding is re-exported from src/share-link.ts.
  *
- * The editor can be switched to read-only; `setCode()` keeps working in that
+ * The editor can be switched to read-only (the review frame's Python program
+ * and handed-in sketch, docs/PYTHON.md §7.13); `setCode()` keeps working in that
  * state so the app can update the document programmatically. A
  * `readOnlyMirror` editor (the Code tab in Blocks and Python mode, §7.5) is
  * read-only for good, still focusable and selectable, and never saves.
@@ -67,7 +68,7 @@ export interface Editor {
   setDiagnostics(diagnostics: readonly Diagnostic[]): void;
   /** Move the cursor to a 1-based line (and optional column) and scroll it into view. */
   goToLine(line: number, column?: number): void;
-  /** Forbid (or allow again) typing; the text stays selectable and copyable. */
+  /** Forbid (or allow again) typing; the editor stays focusable, selectable and copyable. */
   setReadOnly(readOnly: boolean): void;
   isReadOnly(): boolean;
   /** Change the `aria-label` of the editable area. */
@@ -268,11 +269,8 @@ export function createEditor(container: HTMLElement, options: EditorOptions): Ed
     },
     setReadOnly(readOnly) {
       if (mirror || view.state.readOnly === readOnly) return;
-      view.dispatch({
-        effects: readOnlyCompartment.reconfigure(
-          readOnly ? [EditorState.readOnly.of(true), EditorView.editable.of(false)] : [],
-        ),
-      });
+      // No EditorView.editable.of(false): the keyboard can still reach, select and copy the text.
+      view.dispatch({ effects: readOnlyCompartment.reconfigure(readOnly ? EditorState.readOnly.of(true) : []) });
     },
     isReadOnly: () => view.state.readOnly,
     setLabel(ariaLabel) {

@@ -2,13 +2,13 @@
  * Every student-facing text of Python mode (docs/PYTHON.md §5), keyed by a stable code that the
  * translator puts on its diagnostics and that tests assert on.
  *
- * `MessageCode` lists every code of the §5 catalogue (plus NA-value: a function, module, class,
- * method or part used where a value is needed, which §5 has no code for); `MESSAGES` has the text
+ * `MessageCode` lists every code of the §5 catalogue; `MESSAGES` has the text
  * of every code, `MESSAGE_VARIANTS` the other forms where one code needs several (checked by the
  * meta-tests of §10.2, tests/python-errors.test.ts). Runtime messages get their Python words in
  * pythonizeRuntimeMessage (§5.9).
  */
 import type { ConsoleMessage } from '../types';
+import { ZERO1_PINS, pinLabel } from './api';
 
 /** The code of a message of §5 (S- syntax, E- error, NA- ZERO1 limit, R- runtime stop, W- warning, X- internal). */
 export type MessageCode =
@@ -151,6 +151,8 @@ export type MessageCode =
   | 'R-dht'
   | 'R-sonar'
   | 'R-neg-power'
+  | 'R-shift'
+  | 'R-math-domain'
   | 'R-assert'
   | 'R-raise'
   // §5.7 Warnings
@@ -344,6 +346,8 @@ export const MESSAGES: { readonly [C in MessageCode]: string } = {
   'R-dht': 'OSError: [Errno 110] ETIMEDOUT',
   'R-sonar': 'OSError: Out of range',
   'R-neg-power': 'a negative power of a whole number is a decimal number: write 2.0 ** n',
+  'R-shift': 'ValueError: negative shift count',
+  'R-math-domain': 'ValueError: math domain error',
   'R-assert': 'AssertionError: {message}',
   'R-raise': '{name}: {message}',
 
@@ -420,6 +424,10 @@ export const MESSAGE_VARIANTS: { readonly [C in MessageCode]?: readonly string[]
   'E-param-kinds': ['ZERO1 Python does not have functions that take {ka} and {kb} in the same place yet: {f}() gets {ka} on line {a} and {kb} on line {b}.'],
   'E-return-kinds': ["ZERO1 Python does not have functions that give {ka} and {kb} yet: '{f}' gives {ka} on line {a} and {kb} on line {b}."],
   'E-list-kinds': ["ZERO1 Python does not have lists that mix {ka} and {kb} yet: '{x}' gets {ka} on line {a} and {kb} on line {b}."],
+  // a list literal where a whole list is needed (print([1, 2]), sum([1, 2, 3]), show([1, 2, 3]))
+  'NA-list-value': ['ZERO1 Python does not have whole lists made on the spot here yet: give the list a name first, for example values = {list}'],
+  // a colour printed or turned into text
+  'NA-tuple': ['ZERO1 Python does not have printing colours yet: print the parts: print(r, g, b)'],
   // a pin without a ZERO1 part
   'W-pwm-pin': ['Pin {n} ({label}) cannot dim: only pins 3, 5, 6, 9, 10 and 11 have PWM on the UNO. duty_u16() of 32768 or more switches it on, less switches it off.'],
   // a standard part (NeoPixel, DHT22) on another pin: it takes a pin, the ZERO1 one
@@ -453,26 +461,136 @@ export function message(code: MessageCode, params: Readonly<Record<string, strin
 /** A pyFail() line on the Serial Monitor: "Line 12: IndexError: list index out of range". */
 export const PY_FAIL_LINE = /^Line (\d+): (.+)$/;
 
+/** The start of a pyFail() text (§5.6): a Python error name, or R-neg-power's words. */
+const PY_FAIL_TEXT = /^(?:\w+(?:Error|Exception|Warning)\b|a negative power )/;
+
+/**
+ * The pyFail() report at the end of the last Serial line, which may follow the program's own
+ * unfinished line ("Item: Line 3: IndexError: …"): the last "Line N: " whose text reads like a
+ * Python error, or that starts the line (a student's own "Line 7: " earlier on the line is not
+ * taken); failing both, the last one (pyFail writes last, whatever the error's name).
+ */
+function lastPyFail(line: string): { line: number; text: string } | null {
+  const found = [...line.matchAll(/Line (\d+): /g)];
+  const pick = [...found].reverse().find((m) => m.index === 0 || PY_FAIL_TEXT.test(line.slice(m.index! + m[0].length))) ?? found.at(-1);
+  if (!pick) return null;
+  const text = line.slice(pick.index! + pick[0].length);
+  return text === '' ? null : { line: Number(pick[1]), text };
+}
+
 /**
  * The console text of the Executor when the sketch calls abort() (src/runtime/values.ts
  * ABORT_MESSAGE, §6 item 3); kept here so the Python chunk does not load the runtime for it.
  */
 export const ABORT_TEXT = 'The sketch stopped: abort() was called.';
 
+/** One runtime text of the simulator and its Python words (§5.9). */
+export interface RuntimeWording {
+  /** Matches the whole console text of the simulator (src/runtime). */
+  pattern: RegExp;
+  /** The Python-mode text, from the match. */
+  python(match: RegExpExecArray): string;
+}
+
+/** A pin as the simulator names it ("13", "A1") → its number (13, 15); null when it is not one. */
+function runtimePin(name: string): number | null {
+  const analog = /^A([0-5])$/.exec(name);
+  if (analog) return 14 + Number(analog[1]);
+  return /^\d{1,2}$/.test(name) ? Number(name) : null;
+}
+
+/** "Pin 15 (A1, the red LED)", "Pin 0 (D0)": a pin as the translator's own messages write it (W-pwm-pin). */
+function pinWords(pin: number): string {
+  const part = Object.values(ZERO1_PINS).find((p) => p.value === pin)?.part;
+  return `Pin ${pin} (${pinLabel(pin)}${part ? `, the ${part}` : ''})`;
+}
+
+/** The name a program gives the pin: its ZERO1 name (LED_RED, LED_BUILTIN, A4) or its number. */
+function pinName(pin: number): string {
+  const zero1 = Object.entries(ZERO1_PINS).find(([, p]) => p.value === pin)?.[0];
+  return zero1 ?? (pin >= 14 && pin <= 19 ? pinLabel(pin) : String(pin));
+}
+
+/**
+ * The simulator's own runtime texts (src/runtime, src/peripherals) that a Python program can
+ * still trigger, in Python words (§5.9). Every entry is checked against the real text in
+ * tests/python-runtime.test.ts. Texts a translated program cannot trigger are left out and
+ * pass through unchanged: Serial.begin() missing (the translator always writes it when the
+ * program prints), a division by zero (every division, and map_range() with in_min == in_max,
+ * is guarded by a helper that stops with ZeroDivisionError on the Python line), sprintf, the parallel LCD and lcd.println(), tone() on a second pin (Python
+ * plays tones only on the buzzer), interrupts, an unknown pinMode() mode, a name the simulator
+ * does not have, and a sketch without setup() / loop().
+ */
+export const RUNTIME_WORDINGS: readonly RuntimeWording[] = [
+  {
+    // Pin(LED_RED) without Pin.OUT, then on() / value(1) (W-pin-no-out warns before the run)
+    pattern: /^digitalWrite\((\w+)\) but pinMode\(\1, OUTPUT\) was never called$/,
+    python: (m) => {
+      const pin = runtimePin(m[1]);
+      if (pin === null) return m[0];
+      return `${pinWords(pin)} is switched on or off but was not made with Pin.OUT: write Pin(${pinName(pin)}, Pin.OUT)`;
+    },
+  },
+  {
+    // Pin(n, …) with a number worked out while the program runs
+    pattern: /^pin (\S+) does not exist on the UNO \(use 0-13 or A0-A5\)$/,
+    python: (m) => message('E-pin', { pin: m[1] }),
+  },
+  {
+    // ADC(n) with a number worked out while the program runs
+    pattern: /^analogRead\((\S+)\): that is not an analog pin \(use A0-A5\)$/,
+    python: () => message('E-adc-pin'),
+  },
+  {
+    // PWM(Pin(9)) or PWM(Pin(10)) in a program with a Servo()
+    pattern: /^PWM on pins 9 and 10 is disabled while a Servo is attached$/,
+    python: () => 'PWM does not work on pins 9 and 10 while the program has a Servo(): the servo needs the timer that makes their PWM.',
+  },
+  {
+    // servo.angle() after servo.detach(), or in a function called before servo = Servo() ran
+    pattern: /^Servo\.write\(\) called before attach\(\): call \w+\.attach\(\d+\) in setup\(\)$/,
+    python: () => 'servo.angle() does nothing here: the servo was detached with detach(), or the line servo = Servo() has not run yet.',
+  },
+  {
+    // LCD(addr=…) at another address, or the LCD moved in the board settings
+    pattern: /^No I2C LCD found at address 0x([0-9A-F]{2}) \(the ZERO1 LCD is at 0x27\)$/,
+    python: (m) => `No LCD answers at I2C address 0x${m[1]}. The ZERO1 LCD is at 0x27 (LCD() uses it); example 34, the I2C scanner, shows the address of an LCD.`,
+  },
+  {
+    // a function that uses the LCD called before lcd = LCD() ran (Python: NameError)
+    pattern: /^the LCD was used before lcd\.init\(\): call lcd\.init\(\) \(or lcd\.begin\(\)\) in setup\(\)$/,
+    python: () => 'The LCD is used before the line lcd = LCD() has run (Python would stop with NameError): make the LCD at the top of the program.',
+  },
+  {
+    // a function that uses the RGB LED called before np = NeoPixel(…) ran (Python: NameError)
+    pattern: /^pixels\.show\(\) called before pixels\.begin\(\): call pixels\.begin\(\) in setup\(\)$/,
+    python: () => 'The RGB LED is used before the line np = NeoPixel(…) has run (Python would stop with NameError): make it at the top of the program.',
+  },
+];
+
 /**
  * Python-mode rewording of a runtime console message. When the Executor reports abort()
  * (§6 item 3), the last PY_FAIL_LINE of `serialTail` becomes the message and its line number
- * (works on every browser: no stack frames needed). Known runtime texts get Python words.
- *
- * Only the abort() part is done so far: other messages are returned unchanged (the table of
- * §5.9 comes with the runtime tests of §10.3).
+ * (works on every browser: no stack frames needed). Known runtime texts get Python words
+ * (RUNTIME_WORDINGS); other messages are returned unchanged.
  */
 export function pythonizeRuntimeMessage(msg: ConsoleMessage, serialTail: string): ConsoleMessage {
-  if (msg.text !== ABORT_TEXT) return msg;
-  const lines = serialTail.split('\n');
-  for (let k = lines.length - 1; k >= 0; k--) {
-    const m = PY_FAIL_LINE.exec(lines[k].replace(/\r$/, ''));
-    if (m) return { ...msg, text: m[2], line: Number(m[1]), source: 'python' };
+  if (msg.text === ABORT_TEXT) {
+    const lines = serialTail.split('\n');
+    // pyFail() writes last, but not always at the start of a line: after print(…, end="") or in
+    // the middle of print("Item:", nums[k]) its "Line N: …" follows the unfinished line.
+    const last = [...lines].reverse().find((l) => l.replace(/\r$/, '') !== '')?.replace(/\r$/, '') ?? '';
+    const fail = lastPyFail(last);
+    if (fail) return { ...msg, text: fail.text, line: fail.line, source: 'python' };
+    for (let k = lines.length - 1; k >= 0; k--) {
+      const m = PY_FAIL_LINE.exec(lines[k].replace(/\r$/, ''));
+      if (m) return { ...msg, text: m[2], line: Number(m[1]), source: 'python' };
+    }
+    return msg;
+  }
+  for (const wording of RUNTIME_WORDINGS) {
+    const m = wording.pattern.exec(msg.text);
+    if (m) return { ...msg, text: wording.python(m) };
   }
   return msg;
 }

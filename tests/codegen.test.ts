@@ -638,6 +638,21 @@ describe('codegen: X1 sandbox hardening (docs/CLASSROOM.md §3.4)', () => {
     expect(errorOf(`void setup() { String s = "a"; s.__proto__.x = 1; } ${LOOP}`).message).toMatch(NOT_AVAILABLE);
   });
 
+  it('a computed index on a runtime object or a function is a number: Serial[k] with a String k cannot reach Function', async () => {
+    const poc = `String k = "constructor", m = "availableForWrite", n = "peek";\nvoid setup() {\n  Serial[m] = Serial[k][k];\n  Serial[n] = Serial.availableForWrite("globalThis.__x1Pwned = 1");\n  Serial.peek();\n}\n${LOOP}`;
+    const r = transpile(poc);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.js).toContain('__rt.Serial[+(k)]');
+    expect(r.js).toContain('__rt.Serial[+(m)] = ');
+    await expect(run(poc)).rejects.toThrow(TypeError); // Serial["NaN"] is undefined
+    expect((globalThis as { __x1Pwned?: number }).__x1Pwned).toBeUndefined();
+    const f = transpile(`int f() { return 1; }\nString k = "constructor";\nvoid setup() { f[k]; }\n${LOOP}`);
+    expect(f.ok && f.js).toContain('f[+(k)]');
+    // numbers still index
+    expect(transpile(`int a[2];\nvoid setup() { a[1] = 3; bool t = true; a[t] = 4; }\n${LOOP}`).ok).toBe(true);
+  });
+
   it('still allows ordinary members, methods and string keys', async () => {
     const r = await run(`void setup() { Serial.begin(9600); Serial.println("ok"); int a[2]; a[1] = 3; String s = "hi"; s.toUpperCase(); } ${LOOP}`);
     expect(r.serial.join('')).toContain('ok');

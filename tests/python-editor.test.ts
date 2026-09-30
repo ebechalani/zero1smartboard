@@ -150,6 +150,19 @@ describe('ZERO1 completions (§7.4)', () => {
     expect(labels(zero1('from zero1 import L|')!.options)).toEqual(expect.arrayContaining(['LED_RED', 'LED_GREEN', 'LCD']));
   });
 
+  it('never offers the half-typed word itself (Enter would take it and swallow the new line)', async () => {
+    // localCompletionSource counts `Pi` in `from machine import Pi` as a name the program defines.
+    const pin = labels(await offered('from machine import Pi|'));
+    expect(pin).toContain('Pin');
+    expect(pin).not.toContain('Pi');
+    expect(labels(await offered('import ti|'))).not.toContain('ti');
+    expect(labels(await offered('from zero1 import LED_R|'))).not.toContain('LED_R');
+    // the program's own names are still offered elsewhere, but not the word being typed
+    const own = labels(await offered('counter = 0\ntotal = 1\ncou|'));
+    expect(own).toContain('counter');
+    expect(own).not.toContain('cou');
+  });
+
   it('offers the built-ins, keywords, snippets and the names of from m import *, and nothing inside text or comments', () => {
     const all = labels(zero1(`${PROGRAM}pr|`)!.options);
     expect(all).toEqual(expect.arrayContaining(['print', 'input', 'range', 'while', 'def', 'True', 'while True:', 'for i in range():', 'def', 'if … else']));

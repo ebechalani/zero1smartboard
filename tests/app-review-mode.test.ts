@@ -1,16 +1,21 @@
 // @vitest-environment happy-dom
 /**
- * Review mode tests (happy-dom, docs/CLASSROOM.md §7.3): the simulator inside
- * review.html's sandbox. `self.origin` is stubbed to 'null' and `location.hash`
- * to '#review'; Storage is spied so that no access at all is allowed. Blockly
- * is never loaded: a small fake panel stands in (as in app-header.test.ts).
+ * Review mode tests (happy-dom, docs/CLASSROOM.md §7.3, docs/PYTHON.md §7.13): the simulator
+ * inside review.html's sandbox. `self.origin` is stubbed to 'null' and `location.hash` to
+ * '#review'; Storage is spied so that no access at all is allowed. Blockly is never loaded: a
+ * small fake panel stands in (as in app-header.test.ts). Python hand-ins use the real Python
+ * chunk and translator (one test makes its download fail).
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { EditorView } from '@codemirror/view';
-import { makeBoard, settle } from './helpers';
+import { TICK_COST_MS, makeBoard, settle } from './helpers';
 import { isReviewFrame, mountApp, type App } from '../src/ui/app';
 import { MODE_STORAGE_KEY, type BlocksPanel, type BlocksPanelOptions } from '../src/ui/blocks-panel';
 import { CODE_STORAGE_KEY } from '../src/ui/editor';
+import { PYTHON_REVIEW } from '../src/ui/modes/python-mode';
+import { PYTHON_EXAMPLES, pythonToArduino } from '../src/python';
+import { VirtualClock } from '../src/runtime/clock';
+import { createZero1Board } from '../src/zero1';
 
 type FakeWorkspace = { blocks: { languageVersion: 0; blocks: { type: string; id: string }[] } };
 const ws = (...types: string[]): FakeWorkspace => ({ blocks: { languageVersion: 0, blocks: types.map((type, i) => ({ type, id: `${type}-${i}` })) } });
@@ -72,16 +77,34 @@ function sandbox(): void {
   location.hash = '#review';
 }
 
-function start(): HTMLElement {
+/**
+ * A virtual clock that lets the event loop run every 500 ticks, so that a running sketch does
+ * not starve the test's own timers (VirtualClock alone only yields microtasks).
+ */
+class SteppingClock extends VirtualClock {
+  private ticks = 0;
+  override async yield(): Promise<void> {
+    await super.yield();
+    if (++this.ticks % 500 === 0) await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+}
+
+function start(stepping = false): HTMLElement {
   const root = document.createElement('div');
   document.body.appendChild(root);
-  const { board, clock } = makeBoard();
-  app = mountApp(root, board, clock);
+  if (stepping) {
+    const clock = new SteppingClock({ yieldCostMs: TICK_COST_MS });
+    app = mountApp(root, createZero1Board(clock), clock);
+  } else {
+    const { board, clock } = makeBoard();
+    app = mountApp(root, board, clock);
+  }
   return root;
 }
 
-const editorText = (root: HTMLElement) => EditorView.findFromDOM(root.querySelector<HTMLElement>('[data-slot="editor"] .cm-editor')!)!.state.doc.toString();
-const mirrorText = (root: HTMLElement) => EditorView.findFromDOM(root.querySelector<HTMLElement>('[data-slot="mirror"] .cm-editor')!)!.state.doc.toString();
+const view = (root: HTMLElement, host: 'editor' | 'mirror' | 'panel-python') => EditorView.findFromDOM(root.querySelector<HTMLElement>(`[data-slot="${host}"] .cm-editor`)!)!;
+const editorText = (root: HTMLElement) => view(root, 'editor').state.doc.toString();
+const mirrorText = (root: HTMLElement) => view(root, 'mirror').state.doc.toString();
 const slot = <T extends HTMLElement = HTMLElement>(root: HTMLElement, name: string) => root.querySelector<T>(`[data-slot="${name}"]`)!;
 
 /** A message as the review page sends it (source = the parent window, the site's origin). */
@@ -98,6 +121,7 @@ afterEach(() => {
   app = null;
   fake.panel = null;
   fake.panelFails = false;
+  vi.doUnmock('../src/ui/python-chunk');
   document.body.innerHTML = '';
   vi.restoreAllMocks();
   Reflect.deleteProperty(window, 'origin');
@@ -168,6 +192,8 @@ describe('review mode', () => {
     expect(fake.panel).not.toBeNull();
     expect((fake.panel as FakePanel).getWorkspaceJson()).toEqual(blocks);
     expect(mirrorText(root)).toBe(sketchOf(blocks));
+    // The Code tab speaks to the teacher, not to the student ("Made from your blocks").
+    expect(slot(root, 'code-banner-text').textContent).toBe("Made from the student's blocks.");
     expect(storageCalls).toEqual([]);
 
     // A workspace that cannot be read: the generated sketch in Code mode, with the "made from blocks" banner.
@@ -184,20 +210,130 @@ describe('review mode', () => {
     expect(storageCalls).toEqual([]);
   });
 
-  it('shows a Python hand-in as its sketch in Code mode, with the "made from Python" banner, until Python review mode lands (docs/PYTHON.md §7.13)', async () => {
+  it('shows a Python hand-in in Python mode: the program read-only, its sketch in the Code tab, nothing run or saved (docs/PYTHON.md §7.13)', async () => {
     sandbox();
     spyStorage();
     vi.spyOn(window, 'postMessage').mockImplementation(() => undefined);
     const root = start();
-    post({ type: 'z1-review', payload: { v: 1, kind: 'python', code: MY_SKETCH, workspaceJson: '', python: 'print("Hi")\n', who: 'x', className: '', task: '', title: '', at: 0 } });
+    const run = vi.spyOn(app!, 'run');
+    const python = PYTHON_EXAMPLES[0].python;
+    const { sketch } = pythonToArduino(python);
+    post({ type: 'z1-review', payload: { v: 1, kind: 'python', code: sketch, workspaceJson: '', python, who: 'ali.k', className: '8B', task: '', title: '', at: 0 } });
+    await vi.waitFor(() => expect(document.body.dataset.mode).toBe('python'), { timeout: 10_000 });
+    await settle();
+    const editor = view(root, 'panel-python');
+    expect(editor.state.doc.toString()).toBe(python);
+    expect(editor.state.readOnly).toBe(true);
+    expect(editor.contentDOM.getAttribute('contenteditable')).toBe('true'); // still focusable and selectable
+    expect(root.querySelector('[data-slot="tab-python"]')!.getAttribute('aria-selected')).toBe('true');
+    expect(mirrorText(root)).toBe(sketch);
+    expect(root.querySelector('[data-slot="python-review"]')).toBeNull(); // today's translation is the handed-in sketch
+    expect(slot(root, 'code-banner').hidden).toBe(false);
+    expect(slot(root, 'code-banner-text').textContent).toBe("Made from the student's Python program.");
+    expect(slot(root, 'copy-to-code').hidden).toBe(true);
+    expect(run).not.toHaveBeenCalled();
+    expect(slot(root, 'status').dataset.status).toBe('idle');
+    await new Promise((r) => setTimeout(r, 800)); // past the live lint and the save debounce
+    app!.destroy();
+    app = null;
+    expect(storageCalls).toEqual([]);
+  });
+
+  it('when today\'s translation differs from the handed-in sketch, a banner offers it; the Code tab and Run then use it', async () => {
+    sandbox();
+    spyStorage();
+    vi.spyOn(window, 'postMessage').mockImplementation(() => undefined);
+    const root = start(true);
+    const python = 'print("today")\n';
+    const handedIn = 'void setup() {\n  Serial.begin(9600);\n  Serial.println("handed in");\n}\n\nvoid loop() {\n}\n';
+    post({ type: 'z1-review', payload: { v: 1, kind: 'python', code: handedIn, workspaceJson: '', python, who: 'ali.k', className: '8B', task: '', title: '', at: 0 } });
+    await vi.waitFor(() => expect(document.body.dataset.mode).toBe('python'), { timeout: 10_000 });
+    await settle();
+    expect(mirrorText(root)).toBe(pythonToArduino(python).sketch);
+    const banner = slot(root, 'python-review');
+    expect(banner.getAttribute('role')).toBe('note');
+    expect(banner.textContent).toBe(`${PYTHON_REVIEW.updated}${PYTHON_REVIEW.useHandedIn}`);
+    expect(PYTHON_REVIEW.updated).toBe("The simulator was updated since this hand-in: the Code tab shows today's translation.");
+    expect(banner.nextElementSibling!.classList.contains('z1-python-note')).toBe(true); // above the note and the program
+    expect(document.body.dataset.running).toBe('false'); // never run on its own
+
+    const use = slot<HTMLButtonElement>(root, 'use-handed-in');
+    expect(use.textContent).toBe('Use the handed-in sketch');
+    use.click();
+    expect(mirrorText(root)).toBe(handedIn);
+    expect(banner.textContent).toBe(PYTHON_REVIEW.usingHandedIn);
+    expect(root.querySelector('[data-slot="use-handed-in"]')).toBeNull();
+    expect(document.activeElement).toBe(banner);
+
+    await app!.run();
+    const serial = root.querySelector('.z1-serial')!.textContent!;
+    expect(serial).toContain('handed in');
+    expect(serial).not.toContain('today');
+    // The live lint after the switch keeps the handed-in sketch in the Code tab.
+    await new Promise((r) => setTimeout(r, 800));
+    expect(mirrorText(root)).toBe(handedIn);
+    app!.destroy();
+    app = null;
+    expect(storageCalls).toEqual([]);
+  });
+
+  it('shows a Python hand-in with errors as its sketch in Code mode, read-only, with the "made from Python" banner', async () => {
+    sandbox();
+    spyStorage();
+    vi.spyOn(window, 'postMessage').mockImplementation(() => undefined);
+    const root = start();
+    const broken = 'from machine import Pin\n\nwhile True\n    pass\n';
+    const { sketch } = pythonToArduino(broken); // the placeholder: "Your Python program has 1 error…"
+    post({ type: 'z1-review', payload: { v: 1, kind: 'python', code: sketch, workspaceJson: '', python: broken, who: 'x', className: '', task: '', title: '', at: 0 } });
+    await vi.waitFor(() => expect(editorText(root)).toBe(sketch), { timeout: 10_000 });
+    expect(document.body.dataset.mode).toBe('code');
+    expect(view(root, 'editor').state.readOnly).toBe(true);
+    expect(slot(root, 'code-banner').hidden).toBe(false);
+    expect(slot(root, 'code-banner-text').textContent).toBe("Made from the student's Python program.");
+    expect(root.querySelector('[data-slot="python-review"]')).toBeNull();
+
+    // Python mode then shows the student's program (read-only), not example 01.
+    slot(root, 'mode-python').click();
+    await settle();
+    expect(view(root, 'panel-python').state.doc.toString()).toBe(broken);
+    expect(view(root, 'panel-python').state.readOnly).toBe(true);
+    expect(storageCalls).toEqual([]);
+  });
+
+  it('shows a Python hand-in as its sketch in Code mode when the payload has no Python (an older review page) or the kind is unknown', async () => {
+    sandbox();
+    spyStorage();
+    vi.spyOn(window, 'postMessage').mockImplementation(() => undefined);
+    const root = start();
+    post({ type: 'z1-review', payload: { v: 1, kind: 'python', code: MY_SKETCH, workspaceJson: '', who: 'x', className: '', task: '', title: '', at: 0 } });
     await settle();
     expect(document.body.dataset.mode).toBe('code');
     expect(editorText(root)).toBe(MY_SKETCH);
-    expect(slot(root, 'code-banner').hidden).toBe(false);
+    expect(view(root, 'editor').state.readOnly).toBe(true);
     expect(slot(root, 'code-banner-text').textContent).toBe("Made from the student's Python program.");
     post({ type: 'z1-review', payload: { v: 1, kind: 'pyth0n', code: 'int ignored;\n', workspaceJson: '', who: 'x', className: '', task: '', title: '', at: 0 } });
     await settle();
     expect(editorText(root)).toBe(MY_SKETCH);
+    expect(storageCalls).toEqual([]);
+  });
+
+  it('shows a Python hand-in as its sketch in Code mode when the Python chunk cannot be loaded', async () => {
+    // The chunk's download fails (after a redeploy); resetModules drops the copy loaded by the tests above.
+    vi.doMock('../src/ui/python-chunk', () => {
+      throw new TypeError('Failed to fetch dynamically imported module: python-chunk.js');
+    });
+    vi.resetModules();
+    sandbox();
+    spyStorage();
+    vi.spyOn(window, 'postMessage').mockImplementation(() => undefined);
+    const root = start();
+    const python = PYTHON_EXAMPLES[0].python;
+    post({ type: 'z1-review', payload: { v: 1, kind: 'python', code: MY_SKETCH, workspaceJson: '', python, who: 'x', className: '', task: '', title: '', at: 0 } });
+    await vi.waitFor(() => expect(editorText(root)).toBe(MY_SKETCH), { timeout: 10_000 });
+    expect(root.querySelector('.z1-console-entry')!.textContent).toContain('The Python editor could not be loaded');
+    expect(document.body.dataset.mode).toBe('code');
+    expect(view(root, 'editor').state.readOnly).toBe(true);
+    expect(slot(root, 'code-banner-text').textContent).toBe("Made from the student's Python program.");
     expect(storageCalls).toEqual([]);
   });
 

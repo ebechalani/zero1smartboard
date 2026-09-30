@@ -320,6 +320,8 @@ describe('Overview (T5)', () => {
     expect(rows[0].textContent).toContain('10:42');
     expect(rows[0].textContent).toContain('Code');
     expect(rows[0].querySelector('.z1t-num')!.textContent).toBe('2');
+    // A phone shows each row as a card: the number reads "Versions 2" there (teacher.css).
+    expect(rows[0].querySelector('.z1t-num')!.getAttribute('data-label')).toBe('Versions');
     expect(rows[0].textContent).toContain('2 computers within an hour'); // 10:00 and 10:42 from two devices
     expect(rows[1].textContent).toContain('2 computers');
     expect(rows[1].querySelector('.z1t-badge-warn')).toBeNull();

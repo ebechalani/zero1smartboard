@@ -88,8 +88,24 @@ interface Code {
 const code = (c: string, p: Order, t: CType): Code => ({ c, p, t });
 const atom = (c: string, t: CType): Code => ({ c, p: Order.ATOMIC, t });
 
+/** The math functions Python stops with "ValueError: math domain error" outside their domain, and their guard (§3.9, §4.8). */
+const MATH_DOMAINS: Readonly<Record<string, { helper: string; inside: (x: number) => boolean }>> = {
+  'math.sqrt': { helper: 'pySqrt', inside: (x) => x >= 0 },
+  'math.log': { helper: 'pyLog', inside: (x) => x > 0 },
+  'math.log10': { helper: 'pyLog10', inside: (x) => x > 0 },
+  'math.asin': { helper: 'pyAsin', inside: (x) => x >= -1 && x <= 1 },
+  'math.acos': { helper: 'pyAcos', inside: (x) => x >= -1 && x <= 1 },
+};
+
 /** random.random(): `random(0, 1000000) / 1000000.0` (§3.9). */
 const RANDOM_FRACTION = code('random(0, 1000000) / 1000000.0', Order.MULTIPLICATIVE, 'float');
+
+/**
+ * duty_u16 (0..65535) → analogWrite (0..255): `v / 256` (§3.2). 65535 gives 255 and 32768 gives
+ * 128, the first value that switches a pin without PWM on (the UNO's analogWrite() writes HIGH
+ * from 128 on), so W-pwm-pin's "duty_u16() of 32768 or more switches it on" is true on the board.
+ */
+const DUTY_U16_SCALE = 256;
 
 const BITWISE = new Set([Order.SHIFT, Order.BITWISE_AND, Order.BITWISE_XOR, Order.BITWISE_OR]);
 const BINARY = new Set([Order.MULTIPLICATIVE, Order.ADDITIVE, Order.SHIFT, Order.RELATIONAL, Order.EQUALITY, Order.BITWISE_AND, Order.BITWISE_XOR, Order.BITWISE_OR, Order.LOGICAL_AND, Order.LOGICAL_OR]);
@@ -191,7 +207,8 @@ function withL(text: string): string {
 
 /** A trailing comment's text (C2): trailing whitespace trimmed, a final `\` (or `??/`) gets a `.`. */
 function commentText(text: string): string {
-  const t = text.replace(/\s+$/, '');
+  // A carriage return, vertical tab or form feed ends a `//` line in GCC (not in the simulator): never in a comment.
+  const t = text.replace(/[\r\v\f]/g, ' ').replace(/\s+$/, '');
   return /\\$|\?\?\/$/.test(t) ? `${t}.` : t;
 }
 
@@ -318,8 +335,13 @@ interface Ctx {
   out: Out;
   /** The loops around the statement, innermost last (`main`: the main loop, where `continue` is `return;`). */
   loops: Array<'main' | 'loop'>;
-  /** Lines that must come before the statement being written (a part made on the spot). */
-  pre: string[];
+  /**
+   * Lines that must come before the statement being written (a part made on the spot, a value
+   * worked out first); a pair is a line and its note.
+   */
+  pre: Array<string | readonly [string, string]>;
+  /** Values of the statement already worked out into a temporary (order(), hoist()): their C++ name. */
+  hoisted: Map<Expr, Code>;
   /** C++ names used for a variable inside a loop (the `i` of `for _ in …`). */
   names: Map<Variable, string>;
   /** Loop variables that index lists without pyIndex(): `for i in range(len(lst))`. */
@@ -351,6 +373,8 @@ class Emitter {
   private readonly guardComments = new Map<Stmt, Comment[]>();
   /** The imports the program starts with: their leading comments describe the program and go in the header (C1). */
   private readonly headerImports = new Set<Stmt>();
+  /** Own functions with effects (they print, read, change a list or a global, …): their calls are put in Python's order. */
+  private readonly effectFunctions = new Set<FunctionInfo>();
   private readonly functionScopes: Scope[];
 
   constructor(
@@ -412,14 +436,23 @@ class Emitter {
       const v = listVar(e);
       if (v?.list) this.passedWhole.add(v);
     };
+    /** Lists given whole to an own function: their parameter is `long …[]`, so they stay `long` lists. */
+    const toFunction = new Set<Variable>();
+    const bitmaps = new Set<Variable>();
     const visitExpr = (x: Expr) => {
       if (x.type === 'Call') {
         const t = typing.callTarget(x);
         if (t.kind === 'function' || (t.kind === 'builtin' && ['print', 'str', 'sum', 'min', 'max'].includes(t.name))) x.args.forEach(markWhole);
         if (t.kind === 'function') x.keywords.forEach((k) => markWhole(k.value));
+        if (t.kind === 'function') {
+          for (const a of [...x.args, ...x.keywords.map((k) => k.value)]) {
+            const v = listVar(a);
+            if (v?.list) toFunction.add(v);
+          }
+        }
         if (t.kind === 'method' && t.member.id === 'LCD.custom_char' && x.args[1]) {
           const v = listVar(x.args[1]);
-          if (v?.list) this.byteLists.add(v);
+          if (v?.list) bitmaps.add(v);
         }
         if (t.kind === 'list-method' && (t.name === 'pop' || t.name === 'clear')) {
           const v = listVar(t.receiver);
@@ -439,6 +472,9 @@ class Emitter {
     };
     visit(this.resolved.body);
     for (const fn of this.resolved.functions) visit(fn.def.body.stmts);
+    // An LCD bitmap is a `byte` list, unless it crosses a function call (parameters are never
+    // `byte`): then createChar() gets a byte copy (LCD.custom_char below).
+    for (const v of bitmaps) if (!v.isParam && !toFunction.has(v)) this.byteLists.add(v);
     for (const v of typing.variables) {
       if (!v.list) continue;
       if (v.list.growable) this.counts.set(v, this.fresh(v.sym.scope, `${v.cppName}Count`));
@@ -448,6 +484,48 @@ class Emitter {
     for (const v of typing.variables) {
       const stmt = this.globalInit(v)?.stmt;
       if (stmt) this.declaredGlobally.add(stmt);
+    }
+    this.findEffectFunctions();
+  }
+
+  /**
+   * The own functions whose calls have effects: they print, read Serial or a part, drive a part,
+   * wait, change a list item or a global, pop / append, raise, or call such a function. A function
+   * that only works out a value from its arguments (`half(x)`, `average(values)`) has none, so
+   * `print(half(3), half(4))` stays as it is.
+   */
+  private findEffectFunctions(): void {
+    const PURE_BUILTINS = new Set(['len', 'range', 'int', 'float', 'str', 'bool', 'abs', 'min', 'max', 'round', 'pow', 'chr', 'ord', 'sum']);
+    const pureCall = (x: Expr): boolean => {
+      const t = this.typing.callTarget(x as Call);
+      switch (t.kind) {
+        case 'builtin':
+          return PURE_BUILTINS.has(t.name);
+        case 'str-method':
+          return true;
+        case 'api':
+          return t.member.id.startsWith('math.') || t.member.id === 'zero1.map_range' || t.member.id === 'micropython.const';
+        case 'function':
+          return !this.effectFunctions.has(t.fn);
+        default:
+          return false;
+      }
+    };
+    const pureStmts = (stmts: readonly Stmt[]): boolean =>
+      stmts.every((st) => {
+        if (['Global', 'Raise', 'Assert', 'Try'].includes(st.type)) return false;
+        if ((st.type === 'Assign' && st.targets.some((t) => t.type !== 'Name')) || (st.type === 'AugAssign' && st.target.type !== 'Name')) return false;
+        let ok = true;
+        for (const e of stmtExpressions(st)) walkExpr(e, (x) => x.type === 'Call' && !pureCall(x) && (ok = false));
+        return ok && childBlocks(st).every((b) => pureStmts(b.stmts));
+      });
+    for (let changed = true; changed; ) {
+      changed = false;
+      for (const fn of this.resolved.functions) {
+        if (this.effectFunctions.has(fn) || pureStmts(fn.def.body.stmts)) continue;
+        this.effectFunctions.add(fn);
+        changed = true;
+      }
     }
   }
 
@@ -642,7 +720,7 @@ class Emitter {
   // ---- functions ------------------------------------------------------------------------------------------
 
   private ctxFor(scope: Scope, fn: FunctionInfo | null, out: Out, loops: Array<'main' | 'loop'> = []): Ctx {
-    return { scope, fn, out, loops, pre: [], names: new Map(), safe: [] };
+    return { scope, fn, out, loops, pre: [], hoisted: new Map(), names: new Map(), safe: [] };
   }
 
   private functionDef(fn: FunctionInfo): Line[] {
@@ -657,7 +735,7 @@ class Emitter {
       if (isListKind(kind)) {
         const elem = elementOf(kind)!;
         const count = (v && this.counts.get(v)) ?? this.fresh(fn.scope, `${name}Count`);
-        return `${v && this.byteLists.has(v) ? 'byte' : cppType(elem)} ${name}[], long ${count}`;
+        return `${cppType(elem)} ${name}[], long ${count}`;
       }
       return `${cppType(kind)} ${name}`;
     });
@@ -674,7 +752,8 @@ class Emitter {
     if (ft.returnKind !== 'none' && cfg?.fallsOff) out.line(`return ${zeroValue(ft.returnKind)};`, 0);
     out.depth = 0;
     out.line('}', 0);
-    return [...head, ...out.lines];
+    const paramNames = params.flatMap((p) => p.split(', ')).map((p) => /(\w+)(?:\[\])?$/.exec(p)![1]);
+    return [...head, ...quietUnused(out.lines, paramNames)];
   }
 
   // ---- setup() and loop() --------------------------------------------------------------------------------
@@ -687,7 +766,7 @@ class Emitter {
     this.block(stmts, loop ? [] : this.resolved.module.body.endComments, ctx, loop ? [...(this.guardComments.get(loop) ?? []), ...loop.leading] : []);
     const top = new Out();
     this.topDeclarations('setup', null, top);
-    return [...top.lines, ...out.lines];
+    return quietUnused([...top.lines, ...out.lines]);
   }
 
   private loopBody(): Line[] {
@@ -698,7 +777,7 @@ class Emitter {
     this.block(loop.body.stmts, loop.body.endComments, ctx);
     const top = new Out();
     this.topDeclarations('loop', null, top);
-    return [...top.lines, ...out.lines];
+    return quietUnused([...top.lines, ...out.lines]);
   }
 
   // ---- the whole sketch -----------------------------------------------------------------------------------
@@ -798,6 +877,7 @@ class Emitter {
       if (!hoisted) commentsHere();
       const afterComments = out.lines.length;
       ctx.pre = [];
+      ctx.hoisted = new Map();
       out.setTrailing(s.trailing);
       this.stmt(s, ctx);
       const pending = out.takeTrailing();
@@ -831,7 +911,10 @@ class Emitter {
 
   /** Lines that must come before the statement (parts made on the spot), written now. */
   private flushPre(ctx: Ctx, py: number): void {
-    for (const l of ctx.pre) ctx.out.line(l, py);
+    for (const l of ctx.pre) {
+      if (typeof l === 'string') ctx.out.line(l, py);
+      else ctx.out.line(l[0], py, l[1]);
+    }
     ctx.pre = [];
   }
 
@@ -864,6 +947,7 @@ class Emitter {
       case 'Raise':
         return this.raiseStmt(s, ctx);
       case 'Assert': {
+        this.order([s.test], ctx); // not the message: it is worked out only when the test fails
         const test = this.truth(s.test, ctx);
         const msg = s.msg ? this.textWith('AssertionError: ', s.msg, ctx) : '"AssertionError"';
         this.flushPre(ctx, s.line);
@@ -905,6 +989,8 @@ class Emitter {
       if (t.kind === 'list-method' && t.name === 'pop' && first.type === 'Name') return this.popStmt(value, first, s, ctx);
     }
     if ((value.type === 'ListLit' || value.type === 'ListRepeat') && first.type === 'Name') return this.listCreation(first, value, s, ctx);
+    // Python works out the value, then the targets' indexes.
+    this.order([value, ...s.targets.flatMap((t) => subscriptParts(t as Expr))], ctx);
     const kind = this.typing.kindOf(value);
     const valueCode = this.valueOf(value, kind, ctx);
     this.flushPre(ctx, s.line);
@@ -973,6 +1059,7 @@ class Emitter {
       });
       return hit;
     });
+    this.order([...values, ...tuple.elts.flatMap((t) => subscriptParts(t as Expr))], ctx);
     const codes = values.map((x, i) => this.valueOf(x, this.targetKind(tuple.elts[i] as Expr) ?? this.typing.kindOf(x), ctx));
     this.flushPre(ctx, s.line);
     if (!readsTarget) {
@@ -1011,6 +1098,13 @@ class Emitter {
 
   private augAssign(s: AugAssign, ctx: Ctx): void {
     const t = s.target;
+    // `lst[i] op= v` reads and writes lst[i]: an index with effects (`votes[int(input())] += 1`) is
+    // worked out once, first (Python's order: the index, then the value).
+    if (t.type === 'Subscript' && this.hasEffects(t.index)) {
+      this.order([t.index], ctx);
+      this.hoist(t.index, ctx, 'Python works out the index once');
+    }
+    this.order([s.value], ctx);
     if (t.type === 'Name') {
       const rv = this.typing.readVariableOf(t);
       const wv = this.typing.variableOf(t);
@@ -1049,7 +1143,7 @@ class Emitter {
   private simpleAug(op: string, kind: Kind, value: Expr): boolean {
     const vk = this.typing.kindOf(value);
     if (kind === 'str') return op === '+';
-    if (kind === 'int') return ['+', '-', '*', '&', '|', '^', '<<', '>>'].includes(op) && vk !== 'float';
+    if (kind === 'int') return (['+', '-', '*', '&', '|', '^'].includes(op) || ((op === '<<' || op === '>>') && this.fixedShift(value))) && vk !== 'float';
     if (kind === 'float') return ['+', '-', '*', '/'].includes(op);
     if (kind === 'bool') return ['&', '|', '^'].includes(op) && vk === 'bool';
     return false;
@@ -1116,7 +1210,7 @@ class Emitter {
         const out = [`pinMode(${name}, OUTPUT);`];
         const u16 = arg('duty_u16', -1);
         const duty = arg('duty', -1);
-        if (u16) out.push(`analogWrite(${name}, ${this.scaled(u16, 257, ctx)});`);
+        if (u16) out.push(`analogWrite(${name}, ${this.scaled(u16, DUTY_U16_SCALE, ctx)});`);
         else if (duty) out.push(`analogWrite(${name}, ${this.scaled(duty, 4, ctx)});`);
         return out;
       }
@@ -1146,7 +1240,7 @@ class Emitter {
     }
   }
 
-  /** `v / 257` for duty_u16 (`/ 4` for duty), folded for a literal (§3.2). */
+  /** `v / 256` for duty_u16 (`/ 4` for duty), folded for a literal (§3.2). */
   private scaled(e: Expr, by: number, ctx: Ctx): string {
     const c = this.typing.constValue(e);
     if (c && c.type === 'int' && e.type === 'Num') return String(Math.floor(c.value / by));
@@ -1251,7 +1345,8 @@ class Emitter {
     const fixed = v.list && !v.list.growable && !v.isParam ? v.list.length : null;
     if (fixed !== null && c && (c.type === 'int' || c.type === 'bool')) {
       const n = Number(c.type === 'bool' ? c.value : c.value);
-      if (n >= 0 && n < fixed) return this.expr(index, ctx).c;
+      // True / False as an index is 1 / 0 (the simulator's JavaScript would read a property "true").
+      if (n >= 0 && n < fixed) return c.type === 'bool' ? String(n) : this.expr(index, ctx).c;
       if (n < 0 && n >= -fixed) return String(fixed + n);
     }
     if (index.type === 'Name') {
@@ -1321,12 +1416,13 @@ class Emitter {
   // ---- compound statements ---------------------------------------------------------------------------------
 
   private nested(ctx: Ctx, loop: 'main' | 'loop' | null = null): Ctx {
-    return { ...ctx, loops: loop ? [...ctx.loops, loop] : ctx.loops, pre: [] };
+    return { ...ctx, loops: loop ? [...ctx.loops, loop] : ctx.loops, pre: [], hoisted: new Map() };
   }
 
   private ifStmt(s: If, ctx: Ctx): void {
     // The tests of the whole chain first: a part made on the spot in a test goes before the if.
     const chain: Array<{ node: If; test: Code }> = [];
+    this.order([s.test], ctx); // not the elif tests: they run only sometimes
     for (let node: If | null = s; node; ) {
       chain.push({ node, test: this.truth(node.test, ctx) });
       const next: Stmt | undefined = node.orelse?.stmts[0];
@@ -1373,6 +1469,7 @@ class Emitter {
     if (!v || !def) return;
     const info = this.flow.forLoops.get(s);
     const simple = this.headerOnly(v) || (this.declaredAt(v, def) && !!info && info.assignedInBody.length === 0 && !info.readAfter);
+    this.order([s.iter], ctx);
     const inner = this.nested(ctx, 'loop');
     inner.names = new Map(ctx.names);
     const underscore = v.sym.name === '_';
@@ -1638,6 +1735,7 @@ class Emitter {
     // Form V: NAME = int(text) / float(text)
     if (t.kind === 'builtin' && (t.name === 'int' || t.name === 'float') && call.args[0]) {
       const arg = call.args[0];
+      this.order([arg], ctx);
       let text = this.textCode(arg, ctx);
       this.flushPre(ctx, first.line);
       withTrailing(first.trailing);
@@ -1672,6 +1770,7 @@ class Emitter {
       ctx.out.line(kind === 'none' ? 'return;' : `return ${zeroValue(kind)};`, s.line);
       return;
     }
+    this.order([s.value], ctx);
     const value = this.valueOf(s.value, kind, ctx);
     this.flushPre(ctx, s.line);
     ctx.out.line(`return ${value.c};`, s.line);
@@ -1681,6 +1780,7 @@ class Emitter {
     const e = s.exc;
     const name = e.type === 'Name' ? e.id : e.type === 'Call' && e.func.type === 'Name' ? e.func.id : 'Exception';
     const arg = e.type === 'Call' ? e.args[0] : undefined;
+    if (arg) this.order([arg], ctx);
     const text = arg ? this.textWith(`${name}: `, arg, ctx) : cString(name);
     this.flushPre(ctx, s.line);
     this.fail();
@@ -1715,6 +1815,7 @@ class Emitter {
       if (t.name === 'append' && count && call.args[0]) {
         const helper = `pyAppend${this.listSuffix(v)}`;
         this.helpers.add(helper);
+        this.order([call.args[0]], ctx);
         const value = v.list.elem === 'Pin' ? this.pinCode(call.args[0], ctx) : this.valueOf(call.args[0], v.list.elem as Kind, ctx);
         this.flushPre(ctx, s.line);
         out.line(`${count} = ${helper}(${this.nameOf(v, ctx)}, ${count}, ${v.list.capacity}, ${value.c}, ${call.line});`, s.line);
@@ -1740,6 +1841,7 @@ class Emitter {
           break;
       }
     }
+    this.order([call], ctx);
     const c = this.call(call, ctx);
     this.flushPre(ctx, s.line);
     if (c.c !== '') out.line(`${c.c};`, s.line);
@@ -1755,6 +1857,7 @@ class Emitter {
     const endE = kw('end');
     const sep = sepE && sepE.type === 'Str' ? sepE.value : ' ';
     const end = endE && endE.type === 'Str' ? endE.value : '\n';
+    this.orderPrinted(this.printedItems(call.args, sep), ctx);
     const pieces: Piece[] = [];
     call.args.forEach((a, i) => {
       if (i > 0) pieces.push({ text: sep });
@@ -1785,6 +1888,7 @@ class Emitter {
     const lcd = this.receiver(recv, ctx).c;
     const arg = call.args[0];
     if (!arg) return;
+    this.orderPrinted(this.printedItems([arg], ''), ctx);
     const merged = mergePieces(this.pieces(arg, ctx, true));
     this.flushPre(ctx, s.line);
     for (const p of merged) ctx.out.line(`${lcd}.print(${'text' in p ? cString(p.text, true) : p.print});`, s.line);
@@ -1887,6 +1991,118 @@ class Emitter {
     return acc;
   }
 
+  // ---- Python's order of evaluation (§2.6) ------------------------------------------------------------------
+
+  /** A call whose effects Python puts in order: an own function with effects, input(), pop(). */
+  private isEffectCall(x: Expr): boolean {
+    if (x.type !== 'Call') return false;
+    const t = this.typing.callTarget(x);
+    return (t.kind === 'function' && this.effectFunctions.has(t.fn)) || (t.kind === 'builtin' && t.name === 'input') || (t.kind === 'list-method' && t.name === 'pop');
+  }
+
+  private hasEffects(e: Expr): boolean {
+    let hit = false;
+    walkExpr(e, (x) => {
+      if (this.isEffectCall(x)) hit = true;
+    });
+    return hit;
+  }
+
+  /**
+   * The parts of `e` with effects, in the order Python works them out (inner calls first): the
+   * effect calls, and a whole `and` / `or` / `… if … else …` that holds one (its parts run only
+   * sometimes, so they stay together).
+   */
+  private effectUnits(e: Expr, out: Expr[] = []): Expr[] {
+    if (e.type === 'BoolOp' || e.type === 'IfExp') {
+      if (this.hasEffects(e)) out.push(e);
+      return out;
+    }
+    for (const c of evaluatedParts(e)) this.effectUnits(c, out);
+    if (this.isEffectCall(e)) out.push(e);
+    return out;
+  }
+
+  /**
+   * Python works out `exprs` (and their parts) from left to right; C++ leaves the order of the
+   * operands of `+`, `<`, … and of the arguments of a call open (avr-g++ often goes from right to
+   * left, the simulator from left to right). The parts with effects that could run out of order
+   * are worked out first, into temporaries: all but the last ones that are nested in each other
+   * (`show(ask())` stays as it is). Only for values the statement works out every time it runs.
+   */
+  private order(exprs: readonly Expr[], ctx: Ctx): void {
+    const units: Expr[] = [];
+    for (const e of exprs) this.effectUnits(e, units);
+    let keep = units.length - 1;
+    while (keep > 0 && contains(units[keep], units[keep - 1])) keep--;
+    for (const u of units.slice(0, Math.max(0, keep))) this.hoist(u, ctx);
+  }
+
+  /** `e` into a temporary before the statement (`String value1 = pyInput("A? ");`); later uses read it. */
+  private hoist(e: Expr, ctx: Ctx, note = 'Python works out the values from left to right'): void {
+    const kind = this.typing.kindOf(e);
+    if (ctx.hoisted.has(e) || kind === null || kind === 'none' || isListKind(kind)) return;
+    const c = this.valueOf(e, kind, ctx);
+    const name = this.numbered(ctx.scope, 'value');
+    const line = `${cppType(kind)} ${name} = ${c.c};`;
+    ctx.pre.push(ctx.hoisted.size === 0 ? [line, note] : line);
+    ctx.hoisted.set(e, atom(name, ctypeOf(kind)));
+  }
+
+  /** `base1`, `base2`, …: the first one free in `scope` (taken from then on). */
+  private numbered(scope: Scope, base: string): string {
+    for (let k = 1; ; k++) {
+      const name = `${base}${k}`;
+      if (this.temp(scope, name) === name) {
+        scope.cppNames.add(name);
+        return name;
+      }
+    }
+  }
+
+  /**
+   * print() and putstr() print piece by piece, but Python works out every value before it prints
+   * anything (§2.11): when a value with effects comes after something printed, the values up to
+   * the last such one go into temporaries first, in order (not the values a call cannot change:
+   * constants and locals; and not lists: Python prints a list as it is once the values are worked
+   * out).
+   */
+  private orderPrinted(items: ReadonlyArray<{ text: string } | { value: Expr }>, ctx: Ctx): void {
+    const firstOut = items.findIndex((it) => 'value' in it || it.text !== '');
+    const last = items.map((it) => 'value' in it && this.hasEffects(it.value)).lastIndexOf(true);
+    if (last <= firstOut) {
+      this.order(items.flatMap((it) => ('value' in it ? [it.value] : [])), ctx);
+      return;
+    }
+    for (const it of items.slice(0, last + 1)) {
+      if (!('value' in it) || (!this.hasEffects(it.value) && !this.readsGlobal(it.value))) continue;
+      this.order([it.value], ctx);
+      this.hoist(it.value, ctx);
+    }
+  }
+
+  /** `e` reads a global variable (that a function with effects may change). */
+  private readsGlobal(e: Expr): boolean {
+    let hit = false;
+    walkExpr(e, (x) => {
+      const v = x.type === 'Name' ? this.typing.variableOf(x) : null;
+      if (v && v.storage === 'global' && !v.constant) hit = true;
+    });
+    return hit;
+  }
+
+  /** The texts and values print() / putstr() prints, in order (`sep` between the arguments). */
+  private printedItems(args: readonly Expr[], sep: string): Array<{ text: string } | { value: Expr }> {
+    const items: Array<{ text: string } | { value: Expr }> = [];
+    args.forEach((a, i) => {
+      if (i > 0) items.push({ text: sep });
+      if (a.type === 'Str') items.push({ text: a.value });
+      else if (a.type === 'FString') for (const p of a.parts) items.push(p.type === 'text' ? { text: p.value } : { value: p.value });
+      else items.push({ value: a });
+    });
+    return items;
+  }
+
   // ---- values ----------------------------------------------------------------------------------------------
 
   /** A value that goes into a place of kind `kind` (a colour tuple, a text literal, …). */
@@ -1914,12 +2130,40 @@ class Emitter {
     return c;
   }
 
+  /** A shift count C++ shifts by like Python: a fixed whole number 0..31. */
+  private fixedShift(count: Expr): boolean {
+    const c = this.typing.constValue(count);
+    return !!c && (c.type === 'int' || c.type === 'bool') && Number(c.value) >= 0 && Number(c.value) < 32;
+  }
+
   private isIntLiteral(e: Expr): boolean {
     if (e.type === 'Num') return !e.isFloat;
     return e.type === 'UnaryOp' && e.op === '-' && e.operand.type === 'Num' && !e.operand.isFloat;
   }
 
+  /** An int expression of literals, + - * and parentheses only (`50000 * 50000`): C++ works it out while compiling. */
+  private literalArithmetic(e: Expr): boolean {
+    if (this.isIntLiteral(e)) return true;
+    return e.type === 'BinOp' && ['+', '-', '*'].includes(e.op) && this.literalArithmetic(e.left) && this.literalArithmetic(e.right);
+  }
+
+  /** The exact value of literalArithmetic() `e`, and whether a step leaves the 32-bit range. */
+  private exactValue(e: Expr): { value: bigint; overflow: boolean } {
+    if (e.type === 'Num') return { value: BigInt(e.value), overflow: false };
+    if (e.type === 'UnaryOp') {
+      const x = this.exactValue(e.operand);
+      return { value: -x.value, overflow: x.overflow };
+    }
+    const b = e as BinOp;
+    const l = this.exactValue(b.left);
+    const r = this.exactValue(b.right);
+    const value = b.op === '+' ? l.value + r.value : b.op === '-' ? l.value - r.value : l.value * r.value;
+    return { value, overflow: l.overflow || r.overflow || BigInt.asIntN(32, value) !== value };
+  }
+
   private expr(e: Expr, ctx: Ctx): Code {
+    const hoisted = ctx.hoisted.get(e);
+    if (hoisted) return hoisted;
     switch (e.type) {
       case 'Num':
         return e.isFloat ? atom(floatLiteral(e.value), 'float') : atom(intLiteral(e.raw, e.value), 'lit');
@@ -2013,6 +2257,16 @@ class Emitter {
     const kl = leftKind ?? this.typing.kindOf(leftE);
     const kr = this.typing.kindOf(rightE);
     const isInt = (k: Kind | null) => k === 'int' || k === 'bool';
+    // E3: literals only, and a step goes beyond 32 bits (`50000 * 50000`): GCC would warn (-Woverflow)
+    // about what the board does anyway, so the sketch has the board's result (-1794967296).
+    if (node && kind === 'int' && this.literalArithmetic(node)) {
+      const exact = this.exactValue(node);
+      if (exact.overflow) {
+        const wrapped = BigInt.asIntN(32, exact.value);
+        // -2147483648 is written -2147483647L - 1 (2147483648 does not fit a long).
+        return wrapped === -2147483648n ? code('-2147483647L - 1', Order.ADDITIVE, 'long') : atom(String(wrapped), 'lit');
+      }
+    }
     switch (op) {
       case '+':
       case '-':
@@ -2075,6 +2329,11 @@ class Emitter {
       }
       default: {
         const p = op === '&' ? Order.BITWISE_AND : op === '|' ? Order.BITWISE_OR : op === '^' ? Order.BITWISE_XOR : Order.SHIFT;
+        if ((op === '<<' || op === '>>') && !this.fixedShift(rightE)) {
+          // A count that is not a fixed 0..31: Python's ValueError for a negative one, 0 (or -1) for 32 or more
+          this.helpers.add('pyShift');
+          return atom(`pyShift(${this.intOperand(L()).c}, ${this.intOperand(this.expr(rightE, ctx)).c}, ${op === '<<'}, ${line})`, 'long');
+        }
         if (kind === 'bool') return binary(L(), op, this.expr(rightE, ctx), p, 'bool');
         return binary(this.intOperand(L()), op, this.intOperand(this.expr(rightE, ctx)), p, 'long');
       }
@@ -2348,14 +2607,32 @@ class Emitter {
       }
       case 'micropython.const':
         return v('value');
-      case 'zero1.map_range':
-        return atom(`map(${['x', 'in_min', 'in_max', 'out_min', 'out_max'].map((n) => v(n).c).join(', ')})`, 'long');
+      case 'zero1.map_range': {
+        const args = ['x', 'in_min', 'in_max', 'out_min', 'out_max'].map((n) => v(n).c);
+        const low = this.typing.constValue(a('in_min')!);
+        const high = this.typing.constValue(a('in_max')!);
+        if (low && high && low.type !== 'str' && high.type !== 'str' && 'value' in low && 'value' in high && Number(low.value) !== Number(high.value)) return atom(`map(${args.join(', ')})`, 'long');
+        // in_min == in_max: map() would divide by 0 (the board goes on with any value, the simulator stops)
+        this.helpers.add('pyMapRange');
+        return atom(`pyMapRange(${args.join(', ')}, ${line})`, 'long');
+      }
       case 'zero1.input_available':
         this.serial = true;
         return code('Serial.available() > 0', Order.RELATIONAL, 'bool');
-      default:
+      default: {
+        const guarded = MATH_DOMAINS[m.id];
+        if (guarded) {
+          // Python stops with ValueError outside the function's domain (the board gives nan or -inf)
+          const c = this.typing.constValue(a('x')!);
+          const inside = c && (c.type === 'int' || c.type === 'float') && guarded.inside(c.value);
+          if (!inside) {
+            this.helpers.add(guarded.helper);
+            return atom(`${guarded.helper}(${v('x').c}, ${line})`, 'float');
+          }
+        }
         if (m.id.startsWith('math.')) return atom(`${m.name}(${m.params.map((p) => v(p.name).c).join(', ')})`, 'float');
         return atom('', 'void');
+      }
     }
   }
 
@@ -2392,7 +2669,7 @@ class Emitter {
         return atom(`digitalWrite(${p}, !digitalRead(${p}))`, 'void');
       }
       case 'PWM.duty_u16':
-        return atom(`analogWrite(${r()}, ${this.scaled(a('value')!, 257, ctx)})`, 'void');
+        return atom(`analogWrite(${r()}, ${this.scaled(a('value')!, DUTY_U16_SCALE, ctx)})`, 'void');
       case 'PWM.duty':
         return atom(`analogWrite(${r()}, ${this.scaled(a('value')!, 4, ctx)})`, 'void');
       case 'PWM.deinit':
@@ -2448,8 +2725,14 @@ class Emitter {
       case 'LCD.custom_char': {
         const lcd = r();
         const bm = a('bitmap')!;
-        const list = bm.type === 'ListLit' || bm.type === 'ListRepeat' ? this.tempArray(bm, 'bitmap', 'byte', ctx).list : this.listArgs(bm, ctx).list;
-        return atom(`${lcd}.createChar(${v('slot').c}, ${list})`, 'void');
+        if (bm.type === 'ListLit' || bm.type === 'ListRepeat') return atom(`${lcd}.createChar(${v('slot').c}, ${this.tempArray(bm, 'bitmap', 'byte', ctx).list})`, 'void');
+        const { list, v: lv } = this.listArgs(bm, ctx);
+        if (lv && this.byteLists.has(lv)) return atom(`${lcd}.createChar(${v('slot').c}, ${list})`, 'void');
+        // A list of `long` items (it is also given to a function, or is a parameter): its 8 rows copied into bytes.
+        const copy = this.fresh(ctx.scope, 'bitmap');
+        const row = this.temp(ctx.scope, 'row');
+        ctx.pre.push(`byte ${copy}[8];`, `for (int ${row} = 0; ${row} < 8; ${row}++) ${copy}[${row}] = ${list}[${row}];`);
+        return atom(`${lcd}.createChar(${v('slot').c}, ${copy})`, 'void');
       }
       case 'LCD.putstr':
         return atom(`${r()}.print(${this.textCode(a('text')!, ctx).c})`, 'void');
@@ -2669,6 +2952,103 @@ function pure(e: Expr): boolean {
   return ok;
 }
 
+/**
+ * A local the emitter declares (`long x = 0;`, `const int led = 13;`, `float t[3] = {…};`,
+ * `byte bitmap[8];`), on a line of its own. Not String: GCC does not warn about unused Strings.
+ */
+const LOCAL_DECLARATION = /^(\s*)(?:const )?(?:long|float|bool|unsigned long|int|byte) ([A-Za-z_]\w*)(?:\[\d+\])?(?: = [^;]*)?;/;
+
+/** A C++ line without its string and character literals and its `//` comment (to look for names). */
+function codeOnly(text: string): string {
+  return text.replace(/"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'/g, '""').replace(/\/\/.*$/, '');
+}
+
+/** `code` reads `name`: it names it other than as the target of an assignment (`name = …;`, `name[…] = …;`). */
+function readsName(code: string, name: string): boolean {
+  for (const m of code.matchAll(new RegExp(`\\b${name}\\b`, 'g'))) {
+    const before = code.slice(0, m.index).trimEnd();
+    if (before.endsWith('.')) continue; // a member with the same name (`sensor.read()`)
+    let rest = code.slice(m.index! + name.length);
+    if (rest.startsWith('[')) {
+      let depth = 0;
+      let k = 0;
+      for (; k < rest.length; k++) {
+        if (rest[k] === '[') depth++;
+        else if (rest[k] === ']' && --depth === 0) break;
+      }
+      rest = rest.slice(k + 1);
+    }
+    const statementStart = before === '' || /[;{)]$/.test(before);
+    if (!(statementStart && /^\s*=(?!=)/.test(rest))) return true;
+  }
+  return false;
+}
+
+/**
+ * E3: a local or parameter that the C++ code never reads (a variable only written, a loop
+ * variable not used, `lst` when only len(lst) is used) gets `(void)name;` after its declaration,
+ * or after the opening line for a parameter: avr-g++ -Wall -Wextra warns about it otherwise.
+ * `lines` is a function body (`params`: its parameters, the first line its opening line) or the
+ * body of setup() / loop().
+ */
+function quietUnused(lines: readonly Line[], params: readonly string[] = []): Line[] {
+  const code = lines.map((l) => codeOnly(l.text));
+  const read = (name: string, at: number) => code.some((c, i) => i !== at && readsName(c, name));
+  const quiet = (indent: string, name: string, py: number): Line => ({ text: withComment(`${indent}(void)${name};`, `// '${name}' is never used: this line tells the compiler that is fine`), py });
+  const out: Line[] = [];
+  lines.forEach((l, i) => {
+    out.push(l);
+    if (i === 0 && params.length > 0) {
+      for (const p of params) if (!read(p, 0)) out.push(quiet('  ', p, l.py));
+      return;
+    }
+    const m = LOCAL_DECLARATION.exec(code[i]);
+    if (m && !read(m[2], i)) out.push(quiet(m[1], m[2], l.py));
+  });
+  return out;
+}
+
+/** The parts of `e` Python works out, in its order (not the parts of `and` / `or` / `if … else`: effectUnits keeps those whole). */
+function evaluatedParts(e: Expr): Expr[] {
+  switch (e.type) {
+    case 'Call':
+      return [e.func, ...e.args, ...e.keywords.map((k) => k.value)];
+    case 'Attribute':
+      return [e.value];
+    case 'Subscript':
+      return [e.value, e.index];
+    case 'BinOp':
+      return [e.left, e.right];
+    case 'UnaryOp':
+      return [e.operand];
+    case 'Compare':
+      return [e.left, ...e.comparators];
+    case 'ListLit':
+    case 'TupleLit':
+      return e.elts;
+    case 'ListRepeat':
+      return [e.list, e.count];
+    case 'FString':
+      return e.parts.flatMap((p) => (p.type === 'field' ? [p.value] : []));
+    default:
+      return [];
+  }
+}
+
+/** The parts of an assignment target Python works out after the value: a subscript's list and index. */
+function subscriptParts(t: Expr): Expr[] {
+  return t.type === 'Subscript' ? [t.value, t.index] : [];
+}
+
+/** `inner` is `outer` or one of its parts. */
+function contains(outer: Expr, inner: Expr): boolean {
+  let hit = false;
+  walkExpr(outer, (x) => {
+    if (x === inner) hit = true;
+  });
+  return hit;
+}
+
 /** The expressions of a statement, targets included (for the program scan). */
 function stmtExpressions(s: Stmt): Expr[] {
   switch (s.type) {
@@ -2701,12 +3081,15 @@ function stmtExpressions(s: Stmt): Expr[] {
 /** The lines of a module docstring: one leading and one trailing newline dropped. */
 function moduleDocLines(value: string): string[] {
   const text = value.replace(/^\n/, '').replace(/\n$/, '');
-  return text === '' ? [] : text.split('\n');
+  return text === '' ? [] : text.split(LINE_BREAK);
 }
+
+/** Where GCC and CodeMirror end a line: `\r\n`, `\r` or `\n` (a docstring's `\r` escape is one too). */
+const LINE_BREAK = /\r\n|\r|\n/;
 
 /** The lines of a function docstring, dedented like inspect.cleandoc(). */
 function docLines(value: string): string[] {
-  const lines = value.split('\n');
+  const lines = value.split(LINE_BREAK);
   const rest = lines.slice(1).filter((l) => l.trim() !== '');
   const indent = rest.length > 0 ? Math.min(...rest.map((l) => l.length - l.trimStart().length)) : 0;
   const out = [lines[0].trim(), ...lines.slice(1).map((l) => l.slice(indent).replace(/\s+$/, ''))];

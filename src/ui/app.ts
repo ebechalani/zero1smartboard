@@ -20,7 +20,7 @@ import { findExample, type Example } from '../examples';
 import type { Clock, ConsoleMessage, Diagnostic, ExecutorStatus, TranspileResult } from '../types';
 import { codeFromHash, createEditor, type Editor } from './editor';
 import { APP_MODES, blocksFromHash, isAppMode, loadMode, saveMode, type AppMode } from './blocks-panel';
-import { createSerialMonitor, detectBaud, type SerialMonitor } from './serial-monitor';
+import { SKETCH_SERIAL_WORDS, createSerialMonitor, detectBaud, type SerialMonitor } from './serial-monitor';
 import { createPinMap, type PinMap } from './pinmap';
 import { createConsolePanel, type ConsolePanel } from './console-panel';
 import { createControls, type Controls } from './controls';
@@ -57,6 +57,8 @@ export { BLANK_SKETCH } from './modes/code-mode';
 
 /** Tooltip of the Share ▾ button; the Hand in item exists only when the class platform is configured. */
 const SHARE_TITLE = 'Share: copy the link or download an .ino file';
+/** The Examples menu while the current mode's chunk (Blockly, Python) is on the way (§7.7). */
+export const EXAMPLES_LOADING = 'Loading…';
 const SHARE_TITLE_CLASS = 'Share: copy the link, download an .ino file or hand in to your teacher';
 /** Shown when the clipboard refuses the link. */
 export const COPY_FALLBACK = 'Press Ctrl+C to copy the link';
@@ -252,7 +254,7 @@ export class App {
       isTabSelected: (tab) => this.activeTab === tab,
       toast: (text) => this.toast(text),
       examplesChanged: (mode) => {
-        if (mode === this.mode) this.examplesMenu.setExamples(mode.examples());
+        if (mode === this.mode) this.showExamples();
       },
       showMirror: (mode, sketch, problem) => this.showMirror(mode, sketch, problem),
       loadFailed: (what, err) => this.loadFailed(what, err),
@@ -277,6 +279,8 @@ export class App {
     // A share link decides the mode (a `#code=` link opens in Code mode even after a Blocks visit).
     // In review mode the payload decides it later; nothing is read from storage.
     this.mode = this.modes[review ? this.codeMode.id : (modeLink?.kind ?? loadMode())];
+    // The link's mode is remembered like a switch: a reload stays in it (z1.mode).
+    if (!review && modeLink) saveMode(modeLink.kind);
 
     this.boardView = createBoardView(this.slot('board'), board);
 
@@ -379,7 +383,13 @@ export class App {
 
     // --- loops ------------------------------------------------------------
     this.applyMode();
-    void this.mode.enter(modeLink);
+    const first = this.mode;
+    void (async () => {
+      // A #python= link asks first when the saved Python program is not untouched (§7.6), like
+      // a link opened later; declined, the saved program stays.
+      const ok = !modeLink || !first.confirmsStartLink || (await first.confirmLink());
+      await first.enter(ok ? modeLink : null);
+    })();
     this.setStatus('idle', 'Ready');
     this.scheduleLiveLint(this.codeMode.editor);
     this.frameHandle = requestAnimationFrame(this.frame);
@@ -413,13 +423,14 @@ export class App {
 
   /**
    * Show the hand-in in its own mode when that mode can (Blocks: the blocks when they can be
-   * read), else the handed-in sketch in Code mode, with a banner naming what it was made from.
+   * read; Python: the program when it translates, docs/PYTHON.md §7.13), else the handed-in
+   * sketch in Code mode (read-only for Python), with a banner naming what it was made from.
    */
   private async loadReview(payload: ReviewMessage): Promise<void> {
     const kind = this.modes[payload.kind];
     if (await kind.review(payload)) return;
     this.setMode(this.codeMode.id);
-    this.codeMode.showHandedIn(payload.code);
+    this.codeMode.showHandedIn(payload.code, kind.reviewReadOnly === true);
     const note = kind.mirror?.review ?? null;
     this.codeBannerText.textContent = note ?? '';
     this.codeBanner.hidden = note === null;
@@ -461,6 +472,7 @@ export class App {
   async run(): Promise<void> {
     const mode = this.mode;
     const prepared = await mode.sketch();
+    if (mode !== this.mode) return; // the student switched modes while the program was loading
     if (!prepared.ok) {
       this.showSketchFailure(mode, prepared);
       return;
@@ -468,6 +480,7 @@ export class App {
     const code = prepared.sketch;
     const result = safeTranspile(code);
     this.consolePanel.clear();
+    this.sketchLinesMode = mode;
     // Python: the console shows the program's own warnings (on Python lines), not the sketch's.
     this.showDiagnostics(result, !prepared.diagnostics || !result.ok);
     for (const d of prepared.diagnostics ?? []) {
@@ -583,6 +596,7 @@ export class App {
       return;
     }
     this.consolePanel.clear();
+    this.sketchLinesMode = mode;
     const diagnostics = failure.diagnostics ?? [];
     for (const d of diagnostics) {
       this.consolePanel.push({ level: d.severity === 'error' ? 'error' : 'warn', text: d.message, line: d.line, source: mode.lineSource });
@@ -688,16 +702,24 @@ export class App {
     }
   }
 
+  /** The mode whose sketch the console's sketch lines belong to (the console is cleared at each run). */
+  private sketchLinesMode: ModeController | null = null;
+
   /**
    * Console "line N" (§7.10): a Python line opens the Python tab (switching to Python mode when
    * needed, e.g. after a run in Python mode) and moves the Python editor there; a sketch line
-   * opens the Code tab of the current mode.
+   * opens the Code tab and the editor of that line — the sketch of the mode that made it, after
+   * a switch back to that mode when needed.
    */
   private readonly jumpToLine: Record<'sketch' | 'python', (line: number) => void> = {
-    sketch: (line) => {
-      this.selectTab('code');
-      this.sketchEditor().goToLine(line);
-    },
+    sketch: (line) =>
+      void (async () => {
+        const mode = this.sketchLinesMode ?? this.mode;
+        if (mode !== this.mode) await this.switchMode(mode.id);
+        if (mode !== this.mode) return;
+        this.selectTab('code');
+        this.sketchEditor().goToLine(line);
+      })(),
     python: (line) => void this.goToProgramLine(this.modes.python, line),
   };
 
@@ -764,7 +786,8 @@ export class App {
     this.slot('code-lock').hidden = words === null;
     const codeTab = this.tabButtons.get('code')!;
     if (words) {
-      this.codeBannerText.textContent = words.banner;
+      // The review frame shows the teacher the student's work: "Made from the student's Python program."
+      this.codeBannerText.textContent = this.review ? words.review : words.banner;
       this.mirror.setLabel(words.label);
       codeTab.setAttribute('aria-label', 'Code (read only)');
     } else {
@@ -779,11 +802,19 @@ export class App {
     this.ideButton.setAttribute('aria-label', mode.words.ide);
     this.uploadSlot.setAttribute('aria-label', mode.words.upload);
 
-    this.examplesMenu.setExamples(mode.examples());
+    this.showExamples();
     this.shareMenu.setItems(this.shareItems());
-    // Python's input() reads one line: the Serial Monitor sends Newline in Python mode (§7.9).
+    // Python's input() reads one line: the Serial Monitor sends Newline in Python mode (§7.9),
+    // and its hint and send box speak of the program and print().
     this.serialMonitor.forceNewline(mode.runWords.newlineOnly ?? null);
+    this.serialMonitor.setWords(mode.runWords.serial ?? SKETCH_SERIAL_WORDS);
     this.selectTab(mode.firstTab);
+  }
+
+  /** The Examples menu: the current mode's examples, "Loading…" while its chunk is on the way (§7.7). */
+  private showExamples(): void {
+    const mode = this.mode;
+    this.examplesMenu.setExamples(mode.examples(), mode.examplesLoading?.() ? EXAMPLES_LOADING : undefined);
   }
 
   /** A mode's sketch for the mirror (only the current mode's is shown). */
@@ -849,9 +880,21 @@ export class App {
     const work = this.exportWork();
     if (work?.sketchProblem) {
       this.toast(work.sketchProblem);
+      this.showProgramErrors();
       return null;
     }
     return work;
+  }
+
+  /**
+   * The toast of a refused export says "see the console": the program's errors go there, as
+   * Run shows them (header "N errors", the lines, the cursor on the first one).
+   */
+  private showProgramErrors(): void {
+    const mode = this.mode;
+    void mode.sketch().then((r) => {
+      if (!r.ok && mode === this.mode) this.showSketchFailure(mode, r);
+    });
   }
 
   /**
@@ -979,7 +1022,11 @@ export class App {
     const mode = this.mode;
     const work = mode.exportWork();
     if (!work || 'error' in work) return work;
-    if (work.sketchProblem) return { error: work.sketchProblem };
+    if (work.sketchProblem) {
+      this.showProgramErrors();
+      return { error: work.sketchProblem };
+    }
+    this.sketchLinesMode = mode; // a compile error of the upload names a line of this sketch
     return {
       code: work.sketch,
       kind: work.kind,
@@ -1234,7 +1281,7 @@ export class App {
             <div data-slot="settings"></div>
             <div data-slot="share"></div>
             <button type="button" class="z1-btn" data-slot="ide" aria-label="Open this sketch in the Arduino IDE" title="Open in the Arduino IDE"><span aria-hidden="true">∞</span> <span class="z1-btn-label">Arduino IDE</span></button>
-            <button type="button" class="z1-btn" data-slot="upload" aria-label="Upload this sketch to the ZERO1 board" title="Compile in the browser and upload to the board over USB" hidden><span aria-hidden="true">⬆</span> Upload to board</button>
+            <button type="button" class="z1-btn" data-slot="upload" aria-label="Upload this sketch to the ZERO1 board" title="Compile in the browser and upload to the board over USB" hidden><span aria-hidden="true">⬆</span> <span class="z1-btn-label">Upload to board</span></button>
           </nav>
           <div class="z1-run-status" data-slot="status" data-status="idle" role="status" aria-live="polite">
             <span class="z1-run-dot" aria-hidden="true"></span>

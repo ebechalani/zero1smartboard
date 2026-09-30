@@ -145,10 +145,24 @@ export function zero1Completions(table: Zero1CompletionTable): CompletionSource 
 /** Make pasted non-breaking spaces visible (the NBSP is not in CodeMirror's default special characters). */
 export const showNonBreakingSpaces: Extension = highlightSpecialChars({ addSpecialChars: / /g });
 
+/**
+ * The program's own names (`localCompletionSource`) without the word being typed: in
+ * `from machine import Pi` that half-typed name is a "definition" too, and offered first it would
+ * take Enter (neither `Pin` nor a new line). Nothing in an import line: the ZERO1 list has them.
+ */
+const localNames: CompletionSource = (context) => {
+  const line = context.state.doc.lineAt(context.pos);
+  if (/^\s*(?:import|from)\s/.test(line.text.slice(0, context.pos - line.from))) return null;
+  const result = localCompletionSource(context);
+  if (!result) return result;
+  const word = context.state.sliceDoc(result.from, context.pos);
+  return { ...result, options: result.options.filter((o) => o.label !== word) };
+};
+
 /** The Python editor's language: Lezer Python, local names and ZERO1 Python's completions. */
 export function pythonLanguageSupport(table?: Zero1CompletionTable): LanguageSupport {
   return new LanguageSupport(pythonLanguage, [
     ...(table ? [pythonLanguage.data.of({ autocomplete: zero1Completions(table) })] : []),
-    pythonLanguage.data.of({ autocomplete: localCompletionSource }),
+    pythonLanguage.data.of({ autocomplete: localNames }),
   ]);
 }

@@ -88,6 +88,7 @@ describe('bundle boundary', () => {
     const graph = reachable([src('main.ts')]);
     expect(graph.has(src('ui/modes/python-mode.ts'))).toBe(true); // the mode itself is in the entry graph…
     expect(graph.has(src('ui/python-chunk.ts'))).toBe(false); // …its chunk is not
+    expect(graph.has(src('ui/python-examples-chunk.ts'))).toBe(false); // …nor the examples' chunk
     // The chunk's own UI files (language support and completions, paste clean-up, What works) come with it.
     const chunkOnly = ['ui/python-language.ts', 'ui/python-paste.ts', 'ui/python-help-dialog.ts'].map(src);
     const local = [...graph.keys()].filter((f) => f.startsWith(src('python/')) || f.startsWith(src('examples/python/')) || chunkOnly.includes(f));
@@ -98,6 +99,7 @@ describe('bundle boundary', () => {
   it('python-mode.ts reaches the Python chunk with import() only', () => {
     const text = readFileSync(src('ui/modes/python-mode.ts'), 'utf8');
     expect(text).toMatch(/import\('\.\.\/python-chunk'\)/);
+    expect(text).toMatch(/import\('\.\.\/python-examples-chunk'\)/);
     expect(staticImports(src('ui/modes/python-mode.ts')).filter((s) => s.includes('python-chunk') || s.includes('/python'))).toEqual([]);
   });
   it('only the two barrels import the SDK packages', () => {

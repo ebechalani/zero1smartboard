@@ -18,11 +18,11 @@ import { HELPER_BOARD_VALUES, HELPER_GLOBALS, HELPER_STOPS, HELPER_VALUES, helpe
 
 /** The helpers §4.8 lists, in its order. */
 const SPEC_HELPERS = [
-  'pyFail', 'pyFloorDiv', 'pyMod', 'pyFloatMod', 'pyNonZero', 'pyNonZeroF', 'pyPow', 'pyPow10', 'pyRound', 'pyRoundTo',
+  'pyFail', 'pyFloorDiv', 'pyMod', 'pyFloatMod', 'pyNonZero', 'pyNonZeroF', 'pyPow', 'pyPow10', 'pyRound', 'pyRoundTo', 'pyShift',
   'pyAbsL', 'pyAbsF', 'pyMinL', 'pyMaxL', 'pyMinF', 'pyMaxF', 'pyBool', 'pyFloat', 'pyDigits', 'pySignificant', 'pyPad',
   'pyHex', 'pyBin', 'pyInput', 'pyIsInt', 'pyInt', 'pyIsFloat', 'pyFloatOf', 'pyIsDigit', 'pyUpper', 'pyLower', 'pyStrip',
   'pyReplace', 'pyCharAt', 'pyIndex', 'pyAppendL', 'pyPopL', 'pyListTextL', 'pySumL', 'pyMinListL', 'pyMaxListL', 'pyInListL',
-  'pySleep', 'pySleepMs', 'pyDistanceCm',
+  'pySleep', 'pySleepMs', 'pyMapRange', 'pySqrt', 'pyLog', 'pyLog10', 'pyAsin', 'pyAcos', 'pyDistanceCm',
 ];
 
 function specHelperBlock(): string {

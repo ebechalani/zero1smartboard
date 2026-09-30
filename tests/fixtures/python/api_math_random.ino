@@ -98,10 +98,14 @@ long pyRound(float x) {
   return n;
 }
 
-// Python's round(x, n)
+// Python's round(x, n): halves go to the even number too (round(1.25, 1) == 1.2)
 float pyRoundTo(float x, int decimals) {
   float scale = pyPow10(decimals);
-  return floor(x * scale + 0.5) / scale;
+  float y = x * scale;
+  float n = floor(y);
+  float rest = y - n;
+  if (rest > 0.5 || (rest == 0.5 && fmod(n, 2) != 0)) n += 1;
+  return n == 0 && x < 0 ? -0.0 : n / scale;
 }
 
 // Python's abs(), min() and max(): each value is worked out once (Arduino's abs/min/max are macros)
@@ -123,7 +127,7 @@ String pyBool(bool b) {
 String pyFloat(float x) {
   if (isnan(x)) return "nan";
   if (isinf(x)) return x > 0 ? "inf" : "-inf";
-  if (x == 0) return "0.0";
+  if (x == 0) return 1 / x < 0 ? "-0.0" : "0.0";
   float size = fabs(x);
   int exponent = floor(log10(size));
   if (size < pyPow10(exponent)) exponent--;

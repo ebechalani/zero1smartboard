@@ -23,6 +23,10 @@ export const HELPER_VALUES: ReadonlyArray<readonly [string, string]> = [
   ['pyFloat(pyPow10(3))', '1000.0'], ['pyFloat(pyPow10(-2))', '0.01'],
   ['pyRound(2.5)', '2'], ['pyRound(3.5)', '4'], ['pyRound(-2.5)', '-2'], ['pyRound(0.5)', '0'], ['pyRound(1.5)', '2'], ['pyRound(2.4)', '2'], ['pyRound(2.6)', '3'], ['pyRound(-0.6)', '-1'],
   ['pyFloat(pyRoundTo(3.14159, 2))', '3.14'], ['pyFloat(pyRoundTo(-1.25, 1))', '-1.2'], ['pyFloat(pyRoundTo(2.0, 3))', '2.0'],
+  // round(x, n) sends halves to the even number too (all exact in float32), and keeps the sign of 0
+  ['pyFloat(pyRoundTo(1.25, 1))', '1.2'], ['pyFloat(pyRoundTo(0.125, 2))', '0.12'], ['pyFloat(pyRoundTo(2.5, 0))', '2.0'], ['pyFloat(pyRoundTo(3.5, 0))', '4.0'], ['pyFloat(pyRoundTo(-0.4, 0))', '-0.0'],
+  // << and >> by a count worked out while running
+  ['pyShift(5, 2, true, 1)', '20'], ['pyShift(1024, 3, false, 1)', '128'], ['pyShift(-1024, 3, false, 1)', '-128'], ['pyShift(-1024, 40, false, 1)', '-1'], ['pyShift(1024, 40, false, 1)', '0'],
   // abs, min, max
   ['pyAbsL(-5)', '5'], ['pyAbsL(7)', '7'], ['pyFloat(pyAbsF(-2.5))', '2.5'], ['pyMinL(3, -2)', '-2'], ['pyMaxL(3, -2)', '3'], ['pyFloat(pyMinF(2.5, 1.5))', '1.5'], ['pyFloat(pyMaxF(2.5, -2))', '2.5'],
   // how Python shows values
@@ -30,7 +34,7 @@ export const HELPER_VALUES: ReadonlyArray<readonly [string, string]> = [
   ['pyFloat(0.1 + 0.2)', '0.3'], ['pyFloat(1.0 / 3)', '0.3333333'], ['pyFloat(24.3)', '24.3'], ['pyFloat(1234567.0)', '1234567.0'], ['pyFloat(12345678.0)', '1.234568e+07'],
   ['pyFloat(0.0001)', '0.0001'], ['pyFloat(0.00012345678)', '0.0001234568'], ['pyFloat(1e-07)', '1e-07'], ['pyFloat(1.5e-05)', '1.5e-05'], ['pyFloat(1e+10)', '1e+10'], ['pyFloat(1e+07)', '1e+07'],
   ['pyFloat(-2.5e-06)', '-2.5e-06'], ['pyFloat(99999.99)', '99999.99'], ['pyFloat(3.0)', '3.0'], ['pyFloat(-0.5)', '-0.5'], ['pyFloat(9999999.6)', '1e+07'], ['pyFloat(100.0)', '100.0'], ['pyFloat(123456.7)', '123456.7'],
-  ['pyFloat(0.0)', '0.0'], ['pyFloat(sqrt(-1))', 'nan'], ['pyFloat(1.0 / 0.0)', 'inf'], ['pyFloat(-1.0 / 0.0)', '-inf'],
+  ['pyFloat(0.0)', '0.0'], ['pyFloat(-0.0)', '-0.0'], ['pyFloat(0.0 * -5)', '-0.0'], ['pyFloat(sqrt(-1))', 'nan'], ['pyFloat(1.0 / 0.0)', 'inf'], ['pyFloat(-1.0 / 0.0)', '-inf'],
   // f-string widths, hex and binary
   [`pyPad("5", 3, '>')`, '  5'], [`pyPad("-5", 3, '0')`, '-05'], [`pyPad("7", 3, '0')`, '007'], [`pyPad("ab", 5, '<') + "|"`, 'ab   |'], [`pyPad("abc", 2, '<')`, 'abc'],
   ['pyHex(255, false)', 'ff'], ['pyHex(255, true)', 'FF'], ['pyHex(-1, false)', '-1'], ['pyHex(-255, true)', '-FF'], ['pyHex(0, false)', '0'],
@@ -45,6 +49,8 @@ export const HELPER_VALUES: ReadonlyArray<readonly [string, string]> = [
   ['pyUpper("abc")', 'ABC'], ['pyLower("AbC")', 'abc'], ['pyStrip("  hi  ") + "|"', 'hi|'], ['pyReplace("banana", "a", "o")', 'bonono'],
   ['pyCharAt("hello", 1, 1)', 'e'], ['pyCharAt("hello", -1, 1)', 'o'], ['pyIndex(-1, 3, 1)', '2'], ['pyIndex(2, 3, 1)', '2'],
   // lists: [3, 1, 2]
+  // map_range() and the math functions with a domain
+  ['pyMapRange(5, 0, 10, 0, 100, 1)', '50'], ['pyFloat(pySqrt(6.25, 1))', '2.5'], ['pyFloat(pyLog(1, 1))', '0.0'], ['pyFloat(pyLog10(0.01, 1))', '-2.0'], ['pyFloat(pyAsin(0, 1))', '0.0'], ['pyFloat(pyAcos(1, 1))', '0.0'],
   ['pyListTextL(nums, numsCount)', '[3, 1, 2]'], ['pySumL(nums, numsCount)', '6'], ['pyMinListL(nums, numsCount, 1)', '1'], ['pyMaxListL(nums, numsCount, 1)', '3'],
   ['pyBool(pyInListL(nums, numsCount, 2))', 'True'], ['pyBool(pyInListL(nums, numsCount, 5))', 'False'],
   ['pyListTextF(decimals, 2)', '[1.5, 2.0]'], ['pyFloat(pySumF(decimals, 2))', '3.5'], ['pyListTextS(words, 2)', "['a', 'b']"], ['pyListTextB(flags, 2)', '[True, False]'], ['pyListTextC(colours, 2)', '[(255, 0, 0), (0, 128, 255)]'],
@@ -59,6 +65,13 @@ export const HELPER_STOPS: ReadonlyArray<readonly [string, string, string]> = [
   ['pyNonZero', 'Serial.println(10 / pyNonZero(0, 12));', message('R-zero')],
   ['pyNonZeroF', 'Serial.println(1.5 / pyNonZeroF(0.0, 12));', message('R-zero')],
   ['pyPow', 'Serial.println(pyPow(2, -1, 12));', message('R-neg-power')],
+  ['pyShift', 'Serial.println(pyShift(1, -1, true, 12));', message('R-shift')],
+  ['pyMapRange', 'Serial.println(pyMapRange(3, 5, 5, 0, 100, 12));', message('R-zero')],
+  ['pySqrt', 'Serial.println(pySqrt(-1, 12));', message('R-math-domain')],
+  ['pyLog', 'Serial.println(pyLog(0, 12));', message('R-math-domain')],
+  ['pyLog10', 'Serial.println(pyLog10(-2.5, 12));', message('R-math-domain')],
+  ['pyAsin', 'Serial.println(pyAsin(1.5, 12));', message('R-math-domain')],
+  ['pyAcos', 'Serial.println(pyAcos(-2, 12));', message('R-math-domain')],
   ['pyInt', 'Serial.println(pyInt("12abc", 12));', message('R-int', { text: '12abc' })],
   ['pyFloatOf', 'Serial.println(pyFloatOf("abc", 12));', message('R-float', { text: 'abc' })],
   ['pyCharAt', 'Serial.println(pyCharAt("hi", 5, 12));', message('R-str-index')],
@@ -77,6 +90,7 @@ export const HELPER_STOPS: ReadonlyArray<readonly [string, string, string]> = [
 export const HELPER_BOARD_VALUES: ReadonlyArray<readonly [string, string, string]> = [
   ['pyFloat(pyRoundTo(2.675, 2))', '2.68', '2.67'], // in float32, 2.675 × 100 is exactly 267.5
   ['pyPow(2, 31, 1)', '-2147483648', '2147483648'], // whole numbers are 32 bits
-  ['pyFloat(pyRoundTo(2.5, 0))', '3.0', '2.0'], // round(x, n) rounds halves up (only round(x) goes to the even number)
+  ['pyShift(1, 31, true, 1)', '-2147483648', '2147483648'], // whole numbers are 32 bits
+  ['pyShift(1, 40, true, 1)', '0', '1099511627776'], // whole numbers are 32 bits
   ['pyBool(pyIsInt("1_000"))', 'False', 'True'], // int() of text with _ is not supported on the board
 ];

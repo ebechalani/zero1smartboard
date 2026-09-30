@@ -64,11 +64,12 @@ void loop() {
   } else {
     n = 0;
   }
+  float value1 = read_number("x? ");  // Python works out the values from left to right
   Serial.print(n);
   Serial.print(" ");
   Serial.print(pyFloat(d));
   Serial.print(" ");
-  Serial.println(pyFloat(read_number("x? ")));
+  Serial.println(pyFloat(value1));
 }
 
 // ---- Helpers that make C++ behave like Python ----
@@ -96,7 +97,7 @@ float pyPow10(int n) {
 String pyFloat(float x) {
   if (isnan(x)) return "nan";
   if (isinf(x)) return x > 0 ? "inf" : "-inf";
-  if (x == 0) return "0.0";
+  if (x == 0) return 1 / x < 0 ? "-0.0" : "0.0";
   float size = fabs(x);
   int exponent = floor(log10(size));
   if (size < pyPow10(exponent)) exponent--;

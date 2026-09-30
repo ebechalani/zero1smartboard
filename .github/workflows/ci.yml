@@ -38,6 +38,9 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }} # finds the toolchain release without hitting the anonymous API rate limit
       - run: npm run test:hardware-sim
+        env:
+          # Python on the chip (docs/PYTHON.md §10.6): with the release's WebAssembly tools, else apt's avr-g++; never skipped
+          ZERO1_REQUIRE_TOOLCHAIN: '1'
 
   emulator-tests:
     runs-on: ubuntu-latest

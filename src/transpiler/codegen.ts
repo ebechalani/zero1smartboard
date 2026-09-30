@@ -101,6 +101,8 @@ export const PRELUDE_HELPERS = [
   '__idiv',
   '__imod',
   '__imul',
+  '__shl',
+  '__shr',
   '__ftoi',
   '__ftou',
   '__tick',
@@ -700,11 +702,16 @@ export class CodeGen {
   // expressions
   // ---------------------------------------------------------------------------
 
+  /** Expressions already worked out, with the code that reads them (indexedOnce). */
+  private readonly fixed = new Map<Expression, ExprResult>();
+
   private result(node: Expression, code: string, type: StaticType, extra: Partial<ExprResult> = {}): ExprResult {
     return { node, code, type, lvalue: false, ...extra };
   }
 
   genExpr(e: Expression, valueUsed = true): ExprResult {
+    const fixed = this.fixed.get(e);
+    if (fixed) return fixed;
     switch (e.kind) {
       case 'IntLiteral': {
         const v = e.value;
@@ -726,7 +733,8 @@ export class CodeGen {
       case 'CharLiteral':
         return this.result(e, String(e.value), T.char, { constValue: e.value });
       case 'StringLiteral':
-        return this.result(e, JSON.stringify(e.value), T.cstring);
+        // A literal is a C string: print, String(...), strlen, + … all stop at its first NUL on the board.
+        return this.result(e, JSON.stringify(cStringText(e.value)), T.cstring);
       case 'BoolLiteral':
         return this.result(e, e.value ? 'true' : 'false', T.bool, { constValue: e.value ? 1 : 0 });
       case 'Identifier':
@@ -763,6 +771,8 @@ export class CodeGen {
       case 'CastExpr': {
         const type = this.declaredType(e.type, 0, e.pos);
         const v = this.genExpr(e.argument);
+        // `(void)x;`: evaluates x and throws the value away (how C++ code says "x is unused on purpose").
+        if (type.kind === 'void') return this.result(e, `void (${v.code})`, T.void);
         if (type.kind === 'string') return this.result(e, `__rt.String(${this.boxForPrint(v)})`, T.string);
         const helper = wrapHelper(type);
         if (!helper) this.fail(e.pos, `cannot cast to ${describeType(type)}`);
@@ -804,16 +814,43 @@ export class CodeGen {
   }
 
   private genIndex(e: Expression & { kind: 'IndexExpr' }): ExprResult {
-    if (e.index.kind === 'StringLiteral') this.checkMemberName(e.index.value, e.index.pos);
     const o = this.genExpr(e.object);
     const i = this.genExpr(e.index);
+    return this.indexed(e, o, i, o.code, i.code);
+  }
+
+  /** `object[index]` of `e`, with the object and the index written `oCode` and `iCode`. */
+  private indexed(e: Expression & { kind: 'IndexExpr' }, o: ExprResult, i: ExprResult, oCode: string, iCode: string): ExprResult {
+    if (e.index.kind === 'StringLiteral') this.checkMemberName(e.index.value, e.index.pos);
     if (o.type.kind === 'array') {
       const type: StaticType = o.type.dims > 1 ? { kind: 'array', elem: o.type.elem, dims: o.type.dims - 1 } : o.type.elem;
-      return this.result(e, `${o.code}[${i.code}]`, type, { lvalue: type.kind !== 'array', arrayLengths: o.arrayLengths?.slice(1) });
+      // a[true] is a[1] (JavaScript would read a property "true")
+      const index = i.type.kind === 'bool' ? `+${iCode}` : iCode;
+      return this.result(e, `${oCode}[${index}]`, type, { lvalue: type.kind !== 'array', arrayLengths: o.arrayLengths?.slice(1) });
     }
-    if (isStringLike(o.type)) return this.result(e, `__charAt(${o.code}, ${i.code})`, T.char);
-    if (o.type.kind === 'unknown' || o.type.kind === 'class') return this.result(e, `${o.code}[${i.code}]`, T.unknown, { lvalue: true });
+    if (isStringLike(o.type)) return this.result(e, `__charAt(${oCode}, ${iCode})`, T.char);
+    // X1: only a number can index a runtime object or a function (`Serial[k]` with a String k
+    // would reach its methods and Function): any other key becomes "NaN".
+    if (o.type.kind === 'unknown' || o.type.kind === 'class') return this.result(e, `${oCode}[+(${iCode})]`, T.unknown, { lvalue: true });
     this.fail(e.pos, `'${this.describeNode(e.object)}' is a ${describeType(o.type)}, not an array`);
+  }
+
+  /**
+   * `a[i] op= v`, `a[i]++`: when the array or the index has effects (`votes[readVote()] += 1`),
+   * they are worked out once, like on the board, and `gen` makes the rest with the item written
+   * `$obj[$idx]` (a sketch name cannot contain $). Null when the target needs nothing of the kind.
+   */
+  private indexedOnce(target: Expression, gen: () => ExprResult): ExprResult | null {
+    if (target.kind !== 'IndexExpr' || (isPure(target.object) && isPure(target.index))) return null;
+    const o = this.genExpr(target.object);
+    const i = this.genExpr(target.index);
+    this.fixed.set(target, this.indexed(target, o, i, '$obj', '$idx'));
+    try {
+      const r = gen();
+      return { ...r, code: `(await (async ($obj, $idx) => ${r.code})(${o.code}, ${i.code}))` };
+    } finally {
+      this.fixed.delete(target);
+    }
   }
 
   private genUnary(e: Expression & { kind: 'UnaryExpr' }, valueUsed: boolean): ExprResult {
@@ -863,6 +900,10 @@ export class CodeGen {
   }
 
   private genIncDec(e: Expression & { kind: 'UnaryExpr' }, valueUsed: boolean): ExprResult {
+    return this.indexedOnce(e.argument, () => this.incDec(e, valueUsed)) ?? this.incDec(e, valueUsed);
+  }
+
+  private incDec(e: Expression & { kind: 'UnaryExpr' }, valueUsed: boolean): ExprResult {
     const target = this.genExpr(e.argument);
     this.requireLvalue(target, e.argument);
     if (!isNumeric(target.type) && target.type.kind !== 'unknown') {
@@ -981,6 +1022,19 @@ export class CodeGen {
       return this.result(e, unsigned ? `__u32(${imul})` : imul, type, { constValue: value, wrapped: wrapHelper(type)! });
     }
     const value = raw !== undefined ? this.foldCast(raw, type) : undefined;
+    // A shift count outside 0..31 (JavaScript takes it mod 32), or known only while running: the board's result.
+    if (shift && !(r.constValue !== undefined && r.constValue >= 0 && r.constValue < 32)) {
+      const bits = bitWidth(type);
+      if (r.constValue !== undefined) {
+        // avr-gcc works a fixed count of 32 or more (or a negative one) out while compiling: 0, or -1 for >> of a negative signed value
+        const sign = op === '>>' && !unsigned;
+        const constValue = l.constValue === undefined ? undefined : sign && l.constValue < 0 ? -1 : 0;
+        return this.result(e, sign ? `((${l.code}) < 0 ? -1 : 0)` : `((${l.code}), 0)`, type, { constValue });
+      }
+      if (op === '<<') return this.wrapInteger(e, `__shl(${l.code}, ${r.code}, ${bits})`, `__shl(${l.code}, ${r.code}, ${bits})`, type, undefined, undefined);
+      const operand = unsigned ? this.convertOperand(l, type).code : l.code;
+      return this.result(e, `__shr(${operand}, ${r.code}, ${bits}, ${!unsigned})`, type);
+    }
     if (op === '+' || op === '-' || op === '*' || op === '<<') {
       return this.wrapInteger(e, `(${l.code} ${op} ${r.code})`, `${l.code} ${op} ${r.code}`, type, raw, value);
     }
@@ -1040,6 +1094,11 @@ export class CodeGen {
   }
 
   private genAssign(e: Expression & { kind: 'AssignExpr' }): ExprResult {
+    // `a[i] op= v` reads and writes a[i]: an index with effects is worked out once.
+    return (e.op !== '=' ? this.indexedOnce(e.target, () => this.assign(e)) : null) ?? this.assign(e);
+  }
+
+  private assign(e: Expression & { kind: 'AssignExpr' }): ExprResult {
     const target = this.genExpr(e.target);
     this.requireLvalue(target, e.target);
     if (target.type.kind === 'array') this.fail(e.pos, 'arrays cannot be assigned as a whole; copy the elements one by one in a loop');
@@ -1196,7 +1255,10 @@ export class CodeGen {
       this.fail(callee.pos, `arrays have no methods; use sizeof(${this.describeNode(callee.object)}) / sizeof(${this.describeNode(callee.object)}[0]) for the length`);
     }
 
-    const argResults = e.args.map((a) => ({ r: this.argExpr(a), a }));
+    // write(buffer, n) sends n bytes, so a literal buffer keeps what follows a NUL ("\x02\0\x10", 3).
+    const bytesOf = (a: Expression, i: number): ExprResult | null =>
+      name === 'write' && i === 0 && e.args.length === 2 && a.kind === 'StringLiteral' ? this.result(a, JSON.stringify(a.value), T.cstring) : null;
+    const argResults = e.args.map((a, i) => ({ r: bytesOf(a, i) ?? this.argExpr(a), a }));
     const args = argResults.map(({ r, a }) => this.wrapRuntimeArg(r, a, name)).join(', ');
     const type = METHOD_RETURN[name] ?? T.unknown;
     if (recv.type.kind === 'class') return this.runtimeResult(e, `(await ${recv.code}.${name}(${args}))`, type);
@@ -1418,6 +1480,16 @@ function isPure(e: Expression): boolean {
     default:
       return false;
   }
+}
+
+/**
+ * The text of a string literal as a C string: up to its first NUL. On the board a literal is a
+ * `const char*` and every use as text reads it with `strlen` (`Serial.print("ab\0cd")` prints
+ * "ab", `String("ab\0cd")` holds "ab"). Only `char s[] = "…"` and `write(literal, n)` see the bytes after it.
+ */
+function cStringText(value: string): string {
+  const nul = value.indexOf('\0');
+  return nul < 0 ? value : value.slice(0, nul);
 }
 
 /** Whether avr-gcc converts a float to integer type `t` with `__fixunssfsi` (16- and 32-bit unsigned) rather than `__fixsfsi`. */

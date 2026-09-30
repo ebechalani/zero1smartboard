@@ -65,7 +65,16 @@ const FIXED: Readonly<Record<string, string>> = {
 }`,
   pyRoundTo: String.raw`float pyRoundTo(float x, int decimals) {
   float scale = pyPow10(decimals);
-  return floor(x * scale + 0.5) / scale;
+  float y = x * scale;
+  float n = floor(y);
+  float rest = y - n;
+  if (rest > 0.5 || (rest == 0.5 && fmod(n, 2) != 0)) n += 1;
+  return n == 0 && x < 0 ? -0.0 : n / scale;
+}`,
+  pyShift: String.raw`long pyShift(long a, long n, bool left, int line) {
+  if (n < 0) pyFail(line, "ValueError: negative shift count");
+  if (n >= 32) return left || a >= 0 ? 0 : -1;
+  return left ? a << n : a >> n;
 }`,
   pyAbsL: String.raw`long pyAbsL(long x) {
   return x < 0 ? -x : x;
@@ -91,7 +100,7 @@ const FIXED: Readonly<Record<string, string>> = {
   pyFloat: String.raw`String pyFloat(float x) {
   if (isnan(x)) return "nan";
   if (isinf(x)) return x > 0 ? "inf" : "-inf";
-  if (x == 0) return "0.0";
+  if (x == 0) return 1 / x < 0 ? "-0.0" : "0.0";
   float size = fabs(x);
   int exponent = floor(log10(size));
   if (size < pyPow10(exponent)) exponent--;
@@ -251,6 +260,30 @@ const FIXED: Readonly<Record<string, string>> = {
   if (ms < 0) pyFail(line, "ValueError: sleep length must be non-negative");
   delay(ms);
 }`,
+  pyMapRange: String.raw`long pyMapRange(long x, long inMin, long inMax, long outMin, long outMax, int line) {
+  if (inMin == inMax) pyFail(line, "ZeroDivisionError: division by zero");
+  return map(x, inMin, inMax, outMin, outMax);
+}`,
+  pySqrt: String.raw`float pySqrt(float x, int line) {
+  if (x < 0) pyFail(line, "ValueError: math domain error");
+  return sqrt(x);
+}`,
+  pyLog: String.raw`float pyLog(float x, int line) {
+  if (x <= 0) pyFail(line, "ValueError: math domain error");
+  return log(x);
+}`,
+  pyLog10: String.raw`float pyLog10(float x, int line) {
+  if (x <= 0) pyFail(line, "ValueError: math domain error");
+  return log10(x);
+}`,
+  pyAsin: String.raw`float pyAsin(float x, int line) {
+  if (x < -1 || x > 1) pyFail(line, "ValueError: math domain error");
+  return asin(x);
+}`,
+  pyAcos: String.raw`float pyAcos(float x, int line) {
+  if (x < -1 || x > 1) pyFail(line, "ValueError: math domain error");
+  return acos(x);
+}`,
   pyDistanceCm: String.raw`float pyDistanceCm(int trigPin, int echoPin, int line) {
   digitalWrite(trigPin, LOW);
   delayMicroseconds(2);
@@ -274,7 +307,11 @@ const COMMENTS: ReadonlyArray<{ comment: string; group: readonly string[] }> = [
   { comment: "// Python's ** for whole numbers", group: ['pyPow'] },
   { comment: '// 10 to the power n, exact on the board (pow() is not)', group: ['pyPow10'] },
   { comment: "// Python's round(x): halves go to the even number (round(2.5) == 2)", group: ['pyRound'] },
-  { comment: "// Python's round(x, n)", group: ['pyRoundTo'] },
+  { comment: "// Python's round(x, n): halves go to the even number too (round(1.25, 1) == 1.2)", group: ['pyRoundTo'] },
+  {
+    comment: "// Python's << and >> when the count is not a fixed number: a negative count stops with ValueError,\n// 32 or more gives the 32-bit value of Python's result (0, or -1 for >> of a negative number)",
+    group: ['pyShift'],
+  },
   { comment: "// Python's abs(), min() and max(): each value is worked out once (Arduino's abs/min/max are macros)", group: ['pyAbsL', 'pyAbsF', 'pyMinL', 'pyMaxL', 'pyMinF', 'pyMaxF'] },
   { comment: '// How Python shows True and False', group: ['pyBool'] },
   {
@@ -296,6 +333,8 @@ const COMMENTS: ReadonlyArray<{ comment: string; group: readonly string[] }> = [
   { comment: "// list[i] with Python's negative indexes and IndexError", group: ['pyIndex'] },
   { comment: "// Python's time.sleep(seconds) for a value that is not a fixed number", group: ['pySleep'] },
   { comment: "// Python's time.sleep_ms(ms) for a value that is not a fixed number", group: ['pySleepMs'] },
+  { comment: '// zero1.map_range(): Arduino\'s map(), but in_min == in_max stops like Python (map() would divide by 0)', group: ['pyMapRange'] },
+  { comment: '// math.sqrt(), log(), log10(), asin() and acos() stop with ValueError where Python does (the board gives nan or -inf)', group: ['pySqrt', 'pyLog', 'pyLog10', 'pyAsin', 'pyAcos'] },
   {
     comment: '// HC-SR04: a 10 µs pulse on trig, then the echo time on echo; no echo gives 0,\n// or stops the program with MicroPython\'s OSError when line > 0',
     group: ['pyDistanceCm'],
@@ -422,6 +461,13 @@ const NEEDS: Readonly<Record<string, readonly string[]>> = {
   pyNonZeroF: ['pyFail'],
   pyPow: ['pyFail'],
   pyRoundTo: ['pyPow10'],
+  pyShift: ['pyFail'],
+  pyMapRange: ['pyFail'],
+  pySqrt: ['pyFail'],
+  pyLog: ['pyFail'],
+  pyLog10: ['pyFail'],
+  pyAsin: ['pyFail'],
+  pyAcos: ['pyFail'],
   pyFloat: ['pyPow10', 'pyDigits', 'pySignificant'],
   pyDigits: ['pyPow10'],
   pyInt: ['pyIsInt', 'pyFail'],

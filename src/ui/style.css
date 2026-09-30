@@ -95,6 +95,9 @@ p {
 
 .z1-right {
   display: grid;
+  /* The column never grows past the page: the tab strip wraps and the editors scroll inside it
+     (at 390 px Python mode's five tabs are wider than the page). */
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: auto minmax(0, 1fr) minmax(140px, 26%);
   gap: 0;
   min-height: 0;
@@ -197,6 +200,16 @@ p {
 @media (min-width: 1366px) and (max-width: 1439px) {
   .z1-toolbar [data-slot='settings'] .z1-btn-label,
   .z1-toolbar [data-slot='ide'] .z1-btn-label {
+    display: none;
+  }
+}
+/* "Upload to board" (shown only where uploading works) makes the row about
+   155 px longer: up to 1759 px its ⬆ and the ∞ of Arduino IDE show alone, so the
+   header stays on one row with a remembered student name and the longest run
+   status (measured in Chromium at 1366, 1440, 1536 and 1600 px). */
+@media (min-width: 1366px) and (max-width: 1759px) {
+  .z1-toolbar [data-slot='upload'] .z1-btn-label,
+  .z1-toolbar:has([data-slot='upload']:not([hidden])) [data-slot='ide'] .z1-btn-label {
     display: none;
   }
 }
@@ -575,6 +588,7 @@ input[type='range'] {
 
 .z1-tabs {
   display: flex;
+  flex-wrap: wrap; /* a narrow window: a second row rather than a page that scrolls sideways */
   gap: 2px;
   padding: 0 4px;
 }
@@ -680,18 +694,22 @@ input[type='range'] {
 
 /* ---------------------------------------------------------------- python */
 
-/* The Python tab: a one-line note ("… What works · Esc then Tab …"), then the
-   Python editor fills the rest (docs/PYTHON.md §7.3). */
+/* The Python tab: in the review frame the "simulator was updated" banner
+   (docs/PYTHON.md §7.13), a one-line note ("… What works · Esc then Tab …"),
+   then the Python editor fills the rest (§7.3). */
 .z1-panel-python {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr);
   overflow: hidden;
 }
 .z1-panel-python .z1-editor-host {
-  grid-row: 2;
+  grid-row: 3;
+}
+.z1-python-review {
+  grid-row: 1;
 }
 .z1-python-note {
-  grid-row: 1;
+  grid-row: 2;
   margin: 0;
   padding: 6px 12px;
   border-bottom: 1px solid var(--border);
@@ -704,6 +722,7 @@ input[type='range'] {
   font-weight: 600;
 }
 .z1-python-loading {
+  grid-row: 1 / -1;
   display: grid;
   place-items: center;
   height: 100%;

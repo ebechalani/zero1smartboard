@@ -54,8 +54,9 @@ void loop() {
   showSegments(0b10000000);
   tone(BUZZER, 440, 50);
   if (Serial.available() > 0) {
+    String value1 = pyInput("");  // Python works out the values from left to right
     Serial.print("You typed ");
-    Serial.println(pyInput(""));
+    Serial.println(value1);
     noTone(BUZZER);
     servo.detach();
   }

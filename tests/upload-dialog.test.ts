@@ -341,6 +341,21 @@ describe('installUploadButton', () => {
     expect(service.calls).toContain('dispose');
   });
 
+  it('shows nothing when disposed before the detection ends (the review frame, docs/CLASSROOM.md §4.11)', async () => {
+    const button = document.createElement('button');
+    const parent = document.createElement('div');
+    document.body.append(button, parent);
+    const service = new FakeUploadService();
+    const installed = installUploadButton({ button, parent, service, detect: async () => ({ ok: true, message: '' }), getSketch: () => ({ code: SKETCH, kind: 'code' }) });
+    installed.dispose();
+    await installed.ready;
+    expect(button.hidden).toBe(true);
+    expect(installed.dialog()).toBeNull();
+    expect(parent.querySelector('dialog')).toBeNull();
+    button.click();
+    expect(installed.isOpen()).toBe(false);
+  });
+
   it('keeps the button hidden when unsupported', async () => {
     const button = document.createElement('button');
     const parent = document.createElement('div');

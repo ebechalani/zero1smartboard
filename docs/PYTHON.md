@@ -389,7 +389,9 @@ or a list/object/colour with anything else → E-retype (a ZERO1 limit, "ZERO1 P
 … yet" wording, both lines named).
 
 **Parameters** take the combined kind of the arguments at every call site (`int`+`float` →
-float); text at one call and a number at another → E-param-kinds. Uncalled functions: parameters
+float); text at one call and a number at another → E-param-kinds, and so are lists of other
+items at two calls (a list of whole numbers and one of decimal numbers: a C++ array parameter has
+one item type; the message names the items, "a list of whole numbers"). Uncalled functions: parameters
 are int, W-unused-function. **Return kinds** combine the same way; text and numbers → E-return-kinds.
 Recursion is resolved by a fixed point (≤ 8 passes; unresolved → int). Cloning a function per
 argument-kind combination is v1.1 (§14 S11).
@@ -457,7 +459,10 @@ board also ends with MemoryError when memory runs out).
 ### 2.11 `print()`, f-strings and text conversion
 
 `print(a, b, c)` becomes one `Serial.print(…)` per piece and a final `Serial.println(…)`
-(Arduino sends `\r\n`; the monitor shows the same thing). `sep` (default `" "`) is merged into
+(Arduino sends `\r\n`; the monitor shows the same thing). Python works out every value before it
+prints: when a value with effects (`input()`, a function that prints, …) comes after something
+printed, the values up to the last such one are worked out first (§4.7 E4):
+`print("Hello", input("Name? "))` asks for the name, then prints `Hello Bob`. `sep` (default `" "`) is merged into
 adjacent literal pieces; `end=""` makes the last call `Serial.print`; another `end` literal is
 printed after the pieces. `print()` → `Serial.println();`. The same piece rules build `String`
 values for f-strings / `str()` outside `print` and drive `lcd.putstr()`.
@@ -489,7 +494,7 @@ board and `2` in Python (§2.13).
 `pyFloat` prints like MicroPython up to v1.25 on a single-precision port (esp32, rp2:
 `py/objfloat.c` formats with `'g'` and precision 7, then appends `.0`): 7 significant digits, trailing
 zeros removed, `.0` kept for whole values, and `1e-05` / `1e+07` notation below 0.0001 and from
-10,000,000 on; `nan`, `inf`, `-inf`. Examples: `0.1 + 0.2` → `0.3`, `1/3` → `0.3333333`,
+10,000,000 on; `nan`, `inf`, `-inf`, and `-0.0` for a negative zero (`-x` of `0.0`, `0.0 * -5`), like Python. Examples: `0.1 + 0.2` → `0.3`, `1/3` → `0.3333333`,
 `24.3` → `24.3`, `1234567.0` → `1234567.0`, `12345678.0` → `1.234568e+07`. Verified identical on
 the simulator and avr8js for 21 values (Appendix B, f5).
 
@@ -581,7 +586,7 @@ Every row has a test (§10).
 | `time.sleep(-1)` | ValueError | stops with the same ValueError | `pySleep` guard |
 | `time.sleep_ms(1.5)` | (MicroPython: TypeError) | refused before running (E-sleep-ms-float) | |
 | growing a list | no limit | 20 extra items by default, then MemoryError (§2.10) | |
-| `len("été")` | 3 | 5 (bytes) | W-text-bytes |
+| `len("été")` | 3 | 5 (bytes) | W-text-bytes. *2026-09-30: the simulator still keeps text as characters and gives 3 (printing is the same); the chip's 5 is tested in tests-hardware-sim. Making the simulator count bytes is a runtime change (`src/runtime`).* |
 | `time.ticks_ms()` | (MicroPython: wraps after a port-specific period) | `(long)millis()`: wraps after 24.8 days | use `ticks_diff` (W-ticks-diff) |
 | deep recursion | RecursionError at 1000 | the board crashes at ~50 levels; the simulator does not notice | W-recursion |
 | `input()` | reads a line | same, the typed line is echoed; waits forever if nothing is sent | Python mode forces the Newline line ending (§7.9) |
@@ -668,8 +673,8 @@ pins this way: pyboard-D `LED_RED`, Pico `"LED"`).
 | `p.value(x)`, `p(x)` | `digitalWrite(p, x);` | int or bool |
 | `p.toggle()` | `digitalWrite(p, !digitalRead(p));` | exists on esp32, esp8266, rp2, samd |
 | `p.init()`, `p.irq()` | NA-api (irq hint: "check the pin in your while True loop instead") | |
-| `PWM(pin)`, `PWM(pin, freq=…, duty_u16=…)` | `pinMode(p, OUTPUT);` (+ `analogWrite(p, duty / 257);`) | W-pwm-pin for pins other than 3 5 6 9 10 11; on `BUZZER` → W-pwm-buzzer; on `SERVO_PIN` or `freq(50)` → W-pwm-servo |
-| `pwm.duty_u16(v)` | `analogWrite(p, v / 257);` (literals folded: 32768 → 127) | 65535 / 257 = 255 exactly |
+| `PWM(pin)`, `PWM(pin, freq=…, duty_u16=…)` | `pinMode(p, OUTPUT);` (+ `analogWrite(p, duty / 256);`) | W-pwm-pin for pins other than 3 5 6 9 10 11; on `BUZZER` → W-pwm-buzzer; on `SERVO_PIN` or `freq(50)` → W-pwm-servo |
+| `pwm.duty_u16(v)` | `analogWrite(p, v / 256);` (literals folded: 32768 → 128) | 65535 / 256 → 255; 32768 → 128, where `analogWrite` switches a pin without PWM on (it writes HIGH from 128 on), so W-pwm-pin's "32768 or more switches it on" holds on the board. *Was `v / 257` until 2026-09-30: 32768 gave 127, which switched such a pin off.* |
 | `pwm.duty(v)` (esp32/esp8266, 0..1023) | `analogWrite(p, v / 4);` | |
 | `pwm.freq(f)` | nothing + W-pwm-freq | |
 | `pwm.deinit()` | `analogWrite(p, 0);` | |
@@ -739,11 +744,11 @@ copied from elsewhere); another pin → E-part-pin.
 | Python | C++ declaration / setup line | Methods → C++ |
 |---|---|---|
 | `Servo()` | `#include <Servo.h>`; `Servo servo;`; `servo.attach(SERVO_PIN);` | `angle(a)` → `servo.write(a);` · `angle()` → `servo.read()` · `detach()` → `servo.detach();` |
-| `LCD()` (`addr=0x27, cols=16, rows=2` accepted) | `#include <Wire.h>`, `<LiquidCrystal_I2C.h>`; `LiquidCrystal_I2C lcd(0x27, 16, 2);`; `lcd.init(); lcd.backlight();` | `clear()` · `move_to(col, row)` → `setCursor` · `putstr(text)` → `lcd.print(…)` per piece (text only: E-api-kind) · `putchar(chr(n))` → `lcd.write((byte)n);` · `putchar("A")` → `lcd.print("A");` · `custom_char(slot, bitmap)` → `lcd.createChar(slot, bitmap);` (`bitmap` a list of 8 ints 0..31, declared `byte`) · `backlight_on/off()` · `display_on/off()` · `show_cursor/hide_cursor()` · `blink_cursor_on/off()` (method names of dhylands/python_lcd) |
+| `LCD()` (`addr=0x27, cols=16, rows=2` accepted) | `#include <Wire.h>`, `<LiquidCrystal_I2C.h>`; `LiquidCrystal_I2C lcd(0x27, 16, 2);`; `lcd.init(); lcd.backlight();` | `clear()` · `move_to(col, row)` → `setCursor` · `putstr(text)` → `lcd.print(…)` per piece (text only: E-api-kind) · `putchar(chr(n))` → `lcd.write((byte)n);` · `putchar("A")` → `lcd.print("A");` · `custom_char(slot, bitmap)` → `lcd.createChar(slot, bitmap);` (`bitmap` a list of 8 ints 0..31, declared `byte`; a list that is also given to an own function, or a list parameter, stays `long`, and `createChar` gets a `byte` copy of its 8 rows) · `backlight_on/off()` · `display_on/off()` · `show_cursor/hide_cursor()` · `blink_cursor_on/off()` (method names of dhylands/python_lcd) |
 | `Buzzer()` | `pinMode(BUZZER, OUTPUT);` | `tone(freq)` → `tone(BUZZER, freq);` · `tone(freq, ms)` → `tone(BUZZER, freq, ms);` (does not wait) · `no_tone()` → `noTone(BUZZER);`. Click on/off: `Pin(BUZZER, Pin.OUT)` |
 | `SevenSegment()` | `pinMode(SEG_DATA, OUTPUT);` ×3; helpers `showSegments`, `showDigit` (verbatim from the Blocks generator) | `show(d)` → `showDigit(d);` (0..9, others blank) · `segments(bits)` → `showSegments(bits);` · `clear()` → `showSegments(0);` |
 | `HCSR04()` | §3.7 | §3.7 |
-| `map_range(x, in_min, in_max, out_min, out_max)` | `map(…)` (whole numbers, Arduino rounding) | |
+| `map_range(x, in_min, in_max, out_min, out_max)` | `map(…)` (whole numbers, Arduino rounding) when `in_min` and `in_max` are different constants; else `pyMapRange(…, line)` (§4.8) | `in_min == in_max` stops with ZeroDivisionError (R-zero) on the board too, where `map()` would divide by 0 and go on with any value |
 | `input_available()` | `(Serial.available() > 0)` | |
 
 Not in v1: `Motor` (use `Pin(MOTOR, Pin.OUT)`), `Buzzer.on()/off()` (use a `Pin`).
@@ -759,7 +764,7 @@ buzzer = Buzzer()".
 | Python | C++ |
 |---|---|
 | `math.pi`, `math.e` | `PI`, `EULER` |
-| `math.sqrt sin cos tan asin acos atan atan2 exp log log10 fabs` | same names |
+| `math.sqrt sin cos tan asin acos atan atan2 exp log log10 fabs` | same names; `sqrt`, `log`, `log10`, `asin`, `acos` of a value that is not a constant inside their domain → `pySqrt(x, line)` … (§4.8): outside it Python stops with `ValueError: math domain error` (R-math-domain), where the C++ function gives `nan` or `-inf` |
 | `math.floor(x)`, `ceil`, `trunc` | `(long)floor(x)`, `(long)ceil(x)`, `(long)trunc(x)` (Python gives ints) |
 | `math.pow(a, b)` | `pow(a, b)` |
 | `math.radians(x)`, `degrees(x)` | `radians(x)`, `degrees(x)` |
@@ -1034,7 +1039,27 @@ void loop() { … }
   never across names (`delay(round(BLINK_TIME * 1000))` keeps the student's constant).
 - **E3** Every generated sketch must `transpile()` without errors and without warnings, and
   compile with avr-g++ `-Wall -Wextra` without warnings; tests enforce both (§10.6). A
-  `transpile()` warning that still happens in the field is shown mapped (W-sketch).
+  `transpile()` warning that still happens in the field is shown mapped (W-sketch). So a local
+  or parameter the C++ code never reads (a variable only assigned, `for v in …` without `v`, a
+  list whose only use is `len()`, the hidden length of a list parameter) gets
+  `(void)name;  // 'name' is never used: this line tells the compiler that is fine` after its
+  declaration (after the opening line for a parameter), and arithmetic of int literals only
+  that leaves 32 bits somewhere (`50000 * 50000`) is written as the board's result
+  (`-1794967296`; `-2147483648` as `-2147483647L - 1`).
+- **E4** Python works out operands and arguments from left to right; C++ leaves their order open
+  (avr-g++ often goes right to left, the simulator left to right). When one statement has two
+  or more parts with effects — calls of own functions that print, read, drive a part, change a
+  list or a global, …, `input()`, `pop()` — whose order C++ does not fix, all but the last ones
+  nested in each other are worked out first into temporaries `value1`, `value2`, … (the first
+  with the note `// Python works out the values from left to right`):
+  `full = input("A? ") + input("B? ")` → `String value1 = pyInput("A? ");` then
+  `String full = value1 + pyInput("B? ");`; keyword arguments go in the order written. Only where
+  the value is worked out each time the statement runs: not in `elif` or `while` tests, the
+  message of `assert`, or the right side of `and` / `or` and the branches of `… if … else …`
+  (those stay whole). print() and putstr() print piece by piece: when a value with effects comes
+  after something printed, the values up to it are worked out first (§2.11). An augmented
+  assignment to a list item whose index has effects works the index out once
+  (`votes[int(input())] += 1` → `long value1 = pyInt(…); votes[pyIndex(value1, 3, 2)] += 1;`).
 
 ### 4.8 C++ helpers (verbatim; emitted once each, only when used)
 
@@ -1114,10 +1139,22 @@ long pyRound(float x) {
   return n;
 }
 
-// Python's round(x, n)
+// Python's round(x, n): halves go to the even number too (round(1.25, 1) == 1.2)
 float pyRoundTo(float x, int decimals) {
   float scale = pyPow10(decimals);
-  return floor(x * scale + 0.5) / scale;
+  float y = x * scale;
+  float n = floor(y);
+  float rest = y - n;
+  if (rest > 0.5 || (rest == 0.5 && fmod(n, 2) != 0)) n += 1;
+  return n == 0 && x < 0 ? -0.0 : n / scale;
+}
+
+// Python's << and >> when the count is not a fixed number: a negative count stops with ValueError,
+// 32 or more gives the 32-bit value of Python's result (0, or -1 for >> of a negative number)
+long pyShift(long a, long n, bool left, int line) {
+  if (n < 0) pyFail(line, "ValueError: negative shift count");
+  if (n >= 32) return left || a >= 0 ? 0 : -1;
+  return left ? a << n : a >> n;
 }
 
 // Python's abs(), min() and max(): each value is worked out once (Arduino's abs/min/max are macros)
@@ -1155,7 +1192,7 @@ String pyBool(bool b) {
 String pyFloat(float x) {
   if (isnan(x)) return "nan";
   if (isinf(x)) return x > 0 ? "inf" : "-inf";
-  if (x == 0) return "0.0";
+  if (x == 0) return 1 / x < 0 ? "-0.0" : "0.0";
   float size = fabs(x);
   int exponent = floor(log10(size));
   if (size < pyPow10(exponent)) exponent--;
@@ -1406,6 +1443,38 @@ void pySleep(float seconds, int line) {
 void pySleepMs(long ms, int line) {
   if (ms < 0) pyFail(line, "ValueError: sleep length must be non-negative");
   delay(ms);
+}
+
+// zero1.map_range(): Arduino's map(), but in_min == in_max stops like Python (map() would divide by 0)
+long pyMapRange(long x, long inMin, long inMax, long outMin, long outMax, int line) {
+  if (inMin == inMax) pyFail(line, "ZeroDivisionError: division by zero");
+  return map(x, inMin, inMax, outMin, outMax);
+}
+
+// math.sqrt(), log(), log10(), asin() and acos() stop with ValueError where Python does (the board gives nan or -inf)
+float pySqrt(float x, int line) {
+  if (x < 0) pyFail(line, "ValueError: math domain error");
+  return sqrt(x);
+}
+
+float pyLog(float x, int line) {
+  if (x <= 0) pyFail(line, "ValueError: math domain error");
+  return log(x);
+}
+
+float pyLog10(float x, int line) {
+  if (x <= 0) pyFail(line, "ValueError: math domain error");
+  return log10(x);
+}
+
+float pyAsin(float x, int line) {
+  if (x < -1 || x > 1) pyFail(line, "ValueError: math domain error");
+  return asin(x);
+}
+
+float pyAcos(float x, int line) {
+  if (x < -1 || x > 1) pyFail(line, "ValueError: math domain error");
+  return acos(x);
 }
 
 // HC-SR04: a 10 µs pulse on trig, then the echo time on echo; no echo gives 0,
@@ -1936,7 +2005,7 @@ errors stores as `code`):
 | NA-lambda | `lambda` | ZERO1 Python does not have lambda yet. Write a small def function instead. |
 | NA-comprehension | `[x for …]` and friends | ZERO1 Python does not have [… for … in …] yet. Make the list first, then fill it in a for loop: squares = [0] * 10 |
 | NA-dict | `{…}`, `dict()`, `set()` | ZERO1 Python does not have dictionaries and sets yet. Use lists or separate variables. |
-| NA-tuple | a tuple that is not a colour or a parallel assignment | ZERO1 Python does not have tuples yet, except colours: np[0] = (255, 0, 0) |
+| NA-tuple | a tuple that is not a colour or a parallel assignment; a colour printed or turned into text | ZERO1 Python does not have tuples yet, except colours: np[0] = (255, 0, 0) / ZERO1 Python does not have printing colours yet: print the parts: print(r, g, b) |
 | NA-unpack | `a, b = pair`, star targets | ZERO1 Python does not have this unpacking yet. Write a, b = x, y or one assignment per line. |
 | NA-slice | `a[i:j]` | ZERO1 Python does not have slices [a:b] yet. |
 | NA-nested-def | `def` inside `def` | ZERO1 Python does not have a def inside another def yet. Move '{f}' to the left edge of the program. |
@@ -1961,7 +2030,8 @@ errors stores as `code`):
 | NA-escape-N | `\N{…}` | ZERO1 Python does not have \N{…} yet: type the character itself, for example ° |
 | NA-list-method | other list methods | ZERO1 Python does not have list.{sort}() yet. {hint} |
 | NA-list-size | `[0] * n` with a variable | ZERO1 Python needs a fixed size for [v] * n: readings = [0] * 10 |
-| NA-list-value | `return lst`, `lst == lst2`, `lst + lst2`, `b = a` | ZERO1 Python does not have whole-list values here yet. Use the items: {lst}[0], {lst}[1], … |
+| NA-list-value | `return lst`, `lst == lst2`, `lst + lst2`, `b = a`; a list literal where a whole list is needed (`print([1, 2])`, `sum([1, 2, 3])`, `show([1, 2, 3])`) | ZERO1 Python does not have whole-list values here yet. Use the items: {lst}[0], {lst}[1], … / ZERO1 Python does not have whole lists made on the spot here yet: give the list a name first, for example values = {[1, 2]} |
+| NA-value | a part, function, method, built-in function, module, kind of part or error class used where a value is needed (assigned, printed, passed, returned); a part made on the spot where a value is needed, or put in a list other than a list of Pins | ZERO1 Python does not have {what} as values yet: {hint} — `{what}` is parts, functions, methods, built-in functions, modules, kinds of part, errors or parts made on the spot; for example `x = beep` → "ZERO1 Python does not have functions as values yet: call it with (): beep()" |
 | NA-list-param-grow | append/pop on a list parameter | ZERO1 Python does not have append() on a list passed to a function yet: append to the list where it is made. |
 | NA-pop-here | `pop()` inside a bigger expression | ZERO1 Python needs pop() on its own line: x = {lst}.pop() |
 | NA-nested-list | list of lists | ZERO1 Python does not have lists inside lists yet. |
@@ -1978,7 +2048,7 @@ errors stores as `code`):
 | NA-object-here | a library part created inside a def, loop or if | Make the {Servo} at the top of the program (not inside a def, a loop or an if): the board prepares it once when it starts. |
 | NA-object-reassign | an object variable given another value | ZERO1 Python keeps one part per variable: '{led}' already holds a Pin. Use another name. |
 | E-retype | one web holds text and a number (§2.9) | ZERO1 Python does not have variables that are sometimes text and sometimes a number yet: '{x}' can be text (line {a}) or a number (line {b}) on line {c}. Use two names. |
-| E-param-kinds | | ZERO1 Python does not have functions that take text and numbers in the same place yet: {show}() gets a number on line {a} and text on line {b}. Use str(): show(str(42)) |
+| E-param-kinds | | ZERO1 Python does not have functions that take text and numbers in the same place yet: {show}() gets a number on line {a} and text on line {b}. Use str(): show(str(42)) / for other kinds, lists by their items: ZERO1 Python does not have functions that take {a list of whole numbers} and {a list of decimal numbers} in the same place yet: {avg}() gets … on line {a} and … on line {b}. |
 | E-return-kinds | | ZERO1 Python does not have functions that give text and numbers yet: '{check}' gives text on line {a} and a number on line {b}. |
 | E-list-kinds | | ZERO1 Python does not have lists that mix text and numbers yet: '{items}' gets a number on line {a} and text on line {b}. |
 
@@ -2014,6 +2084,8 @@ click jumps to the line.
 | R-dht | OSError: [Errno 110] ETIMEDOUT |
 | R-sonar | OSError: Out of range |
 | R-neg-power | a negative power of a whole number is a decimal number: write 2.0 ** n |
+| R-shift | ValueError: negative shift count (`<<` / `>>` by a count that is not a fixed number: `pyShift`) |
+| R-math-domain | ValueError: math domain error (`math.sqrt` of a negative number, `math.log` / `log10` of 0 or less, `math.asin` / `acos` outside -1..1: `pySqrt` …) |
 | R-assert | AssertionError / AssertionError: {message} |
 | R-raise | {Name}: {message} |
 
@@ -2070,6 +2142,21 @@ matches a real text). Examples: "digitalWrite(15) but pinMode(15, OUTPUT) was ne
 `tone()` on a pin without the buzzer → "Buzzer().tone() plays on the buzzer (pin 8)". Unknown
 texts pass through unchanged.
 
+*Built 2026-09-30 (`RUNTIME_WORDINGS` in messages.ts, tested in tests/python-runtime.test.ts,
+each entry triggered by a real Python program): a Pin switched without `Pin.OUT` ("Pin 15 (A1, the
+red LED) is switched on or off but was not made with Pin.OUT: write Pin(LED_RED, Pin.OUT)" — the
+simulator names the pin A1, so the words use the ZERO1 name); a pin or ADC number worked out
+while running (the E-pin / E-adc-pin texts);
+PWM on pins 9/10 next to a `Servo()`; `servo.angle()` after `detach()`; an LCD at another I2C
+address; the LCD or the RGB LED used by a function called before the line that makes it (Python
+would raise NameError there; the translator does not catch that yet). The `tone()` example above
+has no entry: the simulator has no such text, and a Python program plays tones only through
+`Buzzer()` on pin 8. `map_range()` with `in_min == in_max` had one ("division by zero" → R-zero)
+until `pyMapRange` (§4.8) made it a runtime stop of its own; no division of a translated program
+can reach the simulator's text any more. The other texts of src/runtime (Serial.begin missing, sprintf, the parallel
+LCD, lcd.println, a second tone pin, interrupts, pinMode modes, unknown names) cannot come from a
+translated program.*
+
 ---
 
 ## 6. Simulator fidelity work (prerequisite PR "C0", owner C)
@@ -2099,6 +2186,15 @@ modes included — and are required by the Python board-twin tests (§10.6).
    `10000000000.0`). Values checked in Appendix B f4 already match.
 5. **Float literals ≥ 1e21 with an exponent** (`3.4e38`) are emitted as invalid JS today
    (`3.4e+38.0`, "missing ) after argument list"); emit `String(value)` when it contains `e`.
+
+*Added 2026-09-30 (review of the Python stage, also in Code mode):* a shift by a count outside
+0..31 or known only while running follows avr-gcc (`__shl` / `__shr`: a loop on the count's low
+byte, so 32..128 steps give 0 or −1 and a count of 0, 129..255 or −1 does not shift; a fixed count
+of 32 or more gives 0 or −1) instead of JavaScript's count mod 32; `a[i] op= v` and `a[i]++` work
+out an index with effects once (`votes[next()] += 1`); `a[true]` is `a[1]`; and a computed index
+on a runtime object or a function is a number (`Serial[+(k)]`), so `Serial[k]` with a String `k`
+cannot reach `Function` (the X1 sandbox rule of docs/CLASSROOM.md §3.4). `(void)x;` is accepted.
+Chip values in tests/runtime-fidelity.test.ts.
 
 Tests (C, `tests/codegen.test.ts`, `tests/runtime-fidelity.test.ts`): one per rule, with the
 board values measured on avr8js: `int p = analogRead(A3) * 100 / 1023;` → −15 at A3 = 512;
@@ -2372,8 +2468,9 @@ read-only, the handed-in `code`, banner "Made from the student's Python program.
 
 - The Python chunk is reached only through `import('./python-chunk')` from `python-mode.ts`;
   `src/ui/python-chunk.ts` re-exports what the UI needs (`pythonToArduino`, `BLANK_PYTHON`,
-  `PYTHON_EXAMPLES`, `API_COMPLETIONS`, help text, `pythonizeRuntimeMessage`, the language
-  support). Code outside the chunk uses `import type` only.
+  `PYTHON_FIRST_EXAMPLE`, `API_COMPLETIONS`, help text, `pythonizeRuntimeMessage`, the language
+  support); `src/ui/python-examples-chunk.ts` the other examples (`PYTHON_EXAMPLES`, see below).
+  Code outside the chunks uses `import type` only.
 - `tests/bundle-boundary.test.ts`: no static import from `src/main.ts` reaches `src/python`,
   `src/examples/python`, `@codemirror/lang-python` or `@lezer/python` (`import type` ignored).
 - `scripts/check-bundle.mjs`: the chunk named `python-chunk-*.js` is found by name; budget =
@@ -2381,7 +2478,14 @@ read-only, the handed-in `code`, banner "Made from the student's Python program.
   60–65 KB); marker check: no chunk in the `index.html` closure contains
   "ZERO1 Python does not have". *Raised to 128 KB on 2026-09-30: the finished translator is
   ≈ 90 KB gzip, 4 times the estimate; measured 112.6 KB with the emitter (the sizes are in
-  scripts/check-bundle.mjs).*
+  scripts/check-bundle.mjs). With all 33 examples the chunk measured 131.2 KB (the examples
+  are ≈ 17 KB gzip), so the examples other than 01 are a lazy chunk of their own,
+  `src/ui/python-examples-chunk.ts` (`export { PYTHON_EXAMPLES } from '../examples/python'`),
+  which `python-mode.ts` fetches together with the Python chunk (`Promise.all`: when the editor
+  exists, "is this an example?" always sees all 33); the Python chunk exports
+  `PYTHON_FIRST_EXAMPLE` (`src/examples/python/first.ts`, the first visit's program) instead of
+  `PYTHON_EXAMPLES`. Measured 2026-09-30 after the review fixes: 116.9 KB + 18.3 KB for the
+  examples chunk (its own budget: 24 KB).*
 - `package.json`: `@codemirror/lang-python@^6.2.1` (brings `@lezer/python@^1.1.4`); the installed
   `@codemirror/autocomplete` 6.20.3, `language` 6.12.4, `state` 6.7.4 and `@lezer/common` 1.5.2
   satisfy its ranges, so nothing is duplicated.
@@ -2470,7 +2574,8 @@ all three modes; Blocks already ships exactly these 20 plus its own 12 lessons) 
 Dropped for now: 04 (Adafruit `ColorHSV`/`gamma32`), 05 (`shiftOut`), 10 ≈ 45, 13 ≈ 50, 14 ≈ 57,
 15 ≈ 52, 30 ≈ 54, 33 (a mix of the others).
 
-Files `src/examples/python/NN_name.py` + `index.ts` (`PYTHON_EXAMPLES: PythonExample[]`, same `id`,
+Files `src/examples/python/NN_name.py` + `index.ts` (the lessons) and `parts.ts` (examples 40–59,
+`PYTHON_PART_EXAMPLES`) (`PYTHON_EXAMPLES: PythonExample[]` = both, same `id`,
 `title`, `group` as the `.ino` twin, in the same relative order — a test checks that the list is
 an in-order subset of `EXAMPLES`). Header: a module docstring with the four sections of the `.ino`
 headers — first line `ZERO1 Smart Board - NN Title`, then **WHAT IT TEACHES**, **PARTS AND PINS**,
@@ -2515,7 +2620,22 @@ Serial lines, timings, pins). Every example translates with **no warning**. Impo
 
 `16_serial_echo` has its own behaviour test (its Serial output also contains the echoed input);
 the no-echo / sensor-unplugged branches of 52–58 get their own Python tests (the Arduino twins
-print a value there instead).
+print a value there instead). *16 uses form V for a command that is a whole number: typing `3`
+blinks the red LED 3 times and prints "Blinked 3 times" (the `.ino` twin answers "Unknown
+command" there); every other command behaves like the twin.*
+
+*Built 2026-09-30 (all 33; each passes its twin's assertions). Choices in the part-by-part
+examples: 40 writes `time.sleep(WAIT_TIME)` with `WAIT_TIME = 0.5` (§3's `import time`
+convention and the twin's constant) for the table's `sleep(0.5)`; 42 counts with `for n in range(1, 11)` (not `for _ in range(10)`: it prints
+"Blink 1" … "Blink 10" like its twin); 47/48 use the colours `(80, 0, 0)`, `(0, 80, 0)`,
+`(0, 0, 80)` — the twins call `setBrightness(80)`, which `neopixel` does not have, so the same
+light (and the same test values) needs 80 in the tuple; 56 names its loop variable
+`round_number`, not `round`, so the example does not shadow the built-in `round()` (the
+translator gives no W-shadow for a `for` target, a gap). The `except OSError:` branches:
+52 and 54 print "No echo (is the sensor plugged in?)" (54 does not beep); 53 also switches both
+LEDs off; 56 prints "Round N: no echo -> servo 0" and keeps the servo at 0; 57 and 58 print
+"DHT22 error (is it plugged in?)" and 58 leaves the servo where it is. The hardware-sim suite
+compares 42, 50, 54, 56 and 57 with the chip (distances within 1 cm, §10.6).*
 
 ---
 
@@ -2626,7 +2746,10 @@ console error with the Python text and line, and the `Line N: …` text on the S
 (arithmetic, `//`, `%`, `round`, f-strings, text methods, lists, loops, functions, webs) with
 their CPython 3.12 output committed as `*.out` (regenerated by `scripts/record-cpython.mjs` where
 `python3` exists). The simulator's Serial output must equal it line by line, except lines listed
-in `*.deviations` with a §2.13 row id (e.g. float digits, 32-bit wrap).
+in `*.deviations` with a §2.13 row id (e.g. float digits, 32-bit wrap). *Format, one line per
+differing line: `<line> | <row id> | <the board's line>` (row ids: `int-32`, `float-digits`,
+`float-eq`, `fstring-round`, `round-float32`, `one-kind`); the simulator must print the board's
+line exactly.*
 
 ### 10.4 Examples (A)
 
@@ -2665,7 +2788,12 @@ skipping):
   renaming (`long B1_ = 0;`, `long square_ = 0;`, …) compiles.
 
 Contingency if the release is late: a native adapter (`tests-hardware-sim/native-toolchain.ts`)
-runs the same `buildSketch` pipeline with the `avr-g++` 7.3 that CI already installs.
+runs the same `buildSketch` pipeline with the `avr-g++` 7.3 that CI already installs. *Built
+2026-09-30: without the WebAssembly tools the suite (and the golden compile of
+tests/python-emit.test.ts) uses the installed avr-g++ when the bundle is built
+(`ZERO1_TOOLCHAIN=native` prefers it anyway, to compare the two; both give the same results
+here), and ci.yml / deploy.yml set `ZERO1_REQUIRE_TOOLCHAIN=1` for `test:hardware-sim`, so CI
+compiles every Python sketch at `-Wall -Wextra` and runs them on avr8js today.*
 
 ### 10.7 App (B, happy-dom)
 
@@ -2888,7 +3016,7 @@ reviewer (B blocker, M major, m minor, L later).
 | I3 | M | ~30 two-way mode checks | Accepted: mode registry first, with a lint test | §7.1 |
 | I4 | M | Bundle budget unworkable as specified | Accepted: `python-chunk-*` name, exclusive budget, marker check, `BLANK_PYTHON` only via the chunk | §7.16 |
 | I5 | M | Stale rules mutations; weak limit test; R6.6 uses `'python'` | Accepted: regenerate, drift test, exact clause strings, `'pyth0n'`, `mutations.sh` in CI | §10.8 |
-| I6 | M | GCC test would skip in CI | Accepted: step 0 release, tests in `test:hardware-sim` with `ZERO1_REQUIRE_TOOLCHAIN`, native fallback; avr8js twin | §10.6 |
+| I6 | M | GCC test would skip in CI | Accepted: step 0 release, tests in `test:hardware-sim` with `ZERO1_REQUIRE_TOOLCHAIN`, native fallback; avr8js twin. *The native fallback is built (2026-09-30) and CI requires a toolchain.* | §10.6 |
 | I7 | M | Deploy order | Accepted: rules first + permission-denied text | §11.4, §8.3 |
 | I8 | M | Tab position against the fixed decision | Accepted | §7.2 |
 | I9 | M | File collisions, Day-1 type breakage | Accepted: ownership table, Day-1 contract PR | §11.1, §11.2 |

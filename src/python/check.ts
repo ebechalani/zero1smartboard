@@ -17,6 +17,7 @@ import {
   API_PARTS,
   BUILTINS,
   EXCEPTION_NAMES,
+  IMPORT_ORDER,
   MODULE_NAMES,
   PWM_PINS,
   REFUSED_BUILTINS,
@@ -43,7 +44,7 @@ import {
 } from './kinds';
 import { message, type MessageCode } from './messages';
 import { C_HABIT_NAMES } from './tokens';
-import { isBuiltinFunction, type DefSite, type FunctionInfo, type PySymbol, type Resolved, type Scope, type UseSite } from './scope';
+import { isBuiltinFunction, walkExpr, type DefSite, type FunctionInfo, type PySymbol, type Resolved, type Scope, type UseSite } from './scope';
 
 // ---------------------------------------------------------------------------
 // tables
@@ -69,8 +70,6 @@ const LIST_METHOD_HINTS: Readonly<Record<string, string>> = {
   copy: 'Make a new list with [0] * n and copy the items in a for loop.',
 };
 
-/** The modules a missing name is looked up in for E-missing-import (ZERO1 names from zero1 first). */
-const IMPORT_ORDER: readonly ModuleName[] = ['machine', 'time', 'neopixel', 'dht', 'zero1', 'math', 'random', 'micropython', 'hcsr04'];
 
 /** How to make each part, for the messages (E-class-not-part, E-attr-int-pin). */
 const MAKE_PART: Readonly<Record<PartName, string>> = {
@@ -368,6 +367,10 @@ class Checker {
 
   private subscriptWrite(t: Subscript, s: Stmt, ctx: Ctx): void {
     this.expr(t.value, 'callee', ctx);
+    if (this.guessedValue(t.value)) {
+      this.expr(t.index, 'value', ctx);
+      return;
+    }
     const k = this.typing.kindOf(t.value);
     if (k === 'NeoPixel') {
       this.index(t.index, ctx);
@@ -380,6 +383,8 @@ class Checker {
     }
     if (k === null) {
       this.expr(t.index, 'value', ctx);
+      const type = this.nonValueType(t.value);
+      if (type) this.error('E-index-float', t, { type }, 3);
       return;
     }
     if (isListKind(k)) {
@@ -670,7 +675,7 @@ class Checker {
           return;
         }
         this.listCreation(e, null, ctx);
-        this.error('NA-list-value', e, { lst: 'items' });
+        this.listMadeOnTheSpot(e);
         return;
       case 'TupleLit':
         return this.tuple(e, mode, ctx);
@@ -692,7 +697,7 @@ class Checker {
     } else if (isPartKind(k) && mode !== 'callee' && mode !== 'stmt' && !(mode === 'pin' && (k === 'Pin' || k === 'ADC'))) {
       this.error('NA-value', e, { what: 'parts', hint: `use their methods, for example ${MAKE_PART[k].split(' = ')[0]}.${firstMethod(k)}()` });
     } else if (k === 'color' && mode === 'piece') {
-      this.error('NA-tuple', e);
+      this.error('NA-tuple', e, {}, 1);
     } else if (k === 'none' && mode !== 'stmt') {
       // reported by the call
     }
@@ -996,14 +1001,22 @@ class Checker {
       else if (k !== null && k !== 'int' && k !== 'bool' && !this.reported.has(x)) this.error('E-api-kind', x, { f: 'the colour (r, g, b)', need: API_KIND_WORDS.int.need, fix: '(255, 0, 0)' });
     }
     if (this.typing.constValue(e) === null && !this.typing.neoPixel && !e.elts.some((x) => this.reported.has(x))) this.error('E-colour', e);
-    if (mode === 'piece') this.error('NA-tuple', e);
+    if (mode === 'piece') this.error('NA-tuple', e, {}, 1);
+  }
+
+  /** A list literal where a whole list is needed (`print([1, 2])`, `sum([1, 2, 3])`): it needs a name first. */
+  private listMadeOnTheSpot(e: Expr): void {
+    const text = this.text(e);
+    this.error('NA-list-value', e, { list: text.length <= 40 ? text : '[…]' }, 1);
   }
 
   private subscriptRead(e: Subscript, mode: Mode, ctx: Ctx): void {
     this.expr(e.value, 'callee', ctx);
     const k = this.typing.kindOf(e.value);
-    if (k === null) {
+    if (k === null || this.guessedValue(e.value)) {
       this.expr(e.index, 'value', ctx);
+      const type = this.nonValueType(e.value);
+      if (type) this.error('E-index-float', e, { type }, 2);
       return;
     }
     if (isListKind(k) || k === 'str') {
@@ -1015,6 +1028,52 @@ class Checker {
     this.expr(e.index, 'value', ctx);
     if (k === 'NeoPixel') this.error('NA-api', e, { name: `reading ${this.text(e.value)}[i]`, hint: 'Keep the colours in variables or a list of your own.' });
     else this.error('E-index-float', e, { type: pythonType(k) }, 2);
+  }
+
+  /**
+   * `e` names a variable whose every value comes from an expression that already has an error
+   * (`led = foo(13)` with `foo` undefined): its kind is only a guess (a whole number), so no
+   * AttributeError or TypeError is reported on it (CPython stops at the first error).
+   */
+  private guessedValue(e: Expr): boolean {
+    if (e.type !== 'Name') return false;
+    const v = this.typing.readVariableOf(e);
+    if (!v || v.defs.length === 0) return false;
+    return v.defs.every((d) => {
+      if (d.kind !== 'assign' || !d.value) return false;
+      let hit = false;
+      walkExpr(d.value, (x) => {
+        if (this.reported.has(x)) hit = true;
+      });
+      return hit;
+    });
+  }
+
+  /**
+   * CPython's type name of a name that is not a value: a function, a module, a built-in or API
+   * function, a method, a class of part or an error class (`f[0]`: "TypeError: 'function' object
+   * is not subscriptable"); null for a value or a name already reported.
+   */
+  private nonValueType(e: Expr): string | null {
+    if (this.reported.has(e)) return null;
+    const d = this.typing.denote(e);
+    switch (d.kind) {
+      case 'function':
+        return 'function';
+      case 'module':
+        return 'module';
+      case 'class':
+        return 'type';
+      case 'builtin':
+        return /(?:Error|Exception|Warning|Interrupt|Exit|Iteration)$/.test(d.name) ? 'type' : 'builtin_function_or_method';
+      case 'api':
+      case 'method':
+      case 'str-method':
+      case 'list-method':
+        return 'builtin_function_or_method';
+      default:
+        return null;
+    }
   }
 
   private attribute(e: Attribute, mode: Mode, ctx: Ctx, called = false): void {
@@ -1060,7 +1119,7 @@ class Checker {
       }
       case 'value': {
         const t = base.type;
-        if (t === null) return;
+        if (t === null || this.guessedValue(e.value)) return;
         if (isPartKind(t)) {
           const part = API_PARTS[t];
           if (Object.prototype.hasOwnProperty.call(part.methods, name)) {
@@ -1268,7 +1327,7 @@ class Checker {
       const mode: Mode = isListKind(pk) ? 'list' : pk === 'Pin' ? 'pin' : 'value';
       if (a.type === 'ListLit' || a.type === 'ListRepeat') {
         this.listCreation(a, null, ctx);
-        this.error('NA-list-value', a, { lst: 'items' });
+        this.listMadeOnTheSpot(a);
         continue;
       }
       this.expr(a, mode, ctx);
@@ -1316,7 +1375,7 @@ class Checker {
         for (const a of call.args) {
           if (a.type === 'ListLit' || a.type === 'ListRepeat') {
             this.listCreation(a, null, ctx);
-            this.error('NA-list-value', a, { lst: 'items' });
+            this.listMadeOnTheSpot(a);
           } else {
             this.expr(a, 'piece', ctx);
           }
@@ -1385,7 +1444,7 @@ class Checker {
           const a = call.args[0];
           if (a.type === 'ListLit' || a.type === 'ListRepeat') {
             this.listCreation(a, null, ctx);
-            this.error('NA-list-value', a, { lst: 'items' });
+            this.listMadeOnTheSpot(a);
             return;
           }
           this.expr(a, 'list', ctx);
@@ -1454,7 +1513,7 @@ class Checker {
         const a = call.args[0];
         if (a.type === 'ListLit' || a.type === 'ListRepeat') {
           this.listCreation(a, null, ctx);
-          this.error('NA-list-value', a, { lst: 'items' });
+          this.listMadeOnTheSpot(a);
           return;
         }
         this.expr(a, 'list', ctx);
@@ -1486,7 +1545,7 @@ class Checker {
       const kind = p?.kind;
       if (a.type === 'ListLit' || a.type === 'ListRepeat') {
         this.listCreation(a, null, ctx);
-        if (kind !== 'list' && kind !== 'intList') this.error('NA-list-value', a, { lst: 'items' });
+        if (kind !== 'list' && kind !== 'intList') this.listMadeOnTheSpot(a);
       } else {
         this.expr(a, kind === 'list' || kind === 'intList' ? 'list' : kind === 'pin' ? 'pin' : 'value', ctx);
       }
@@ -2116,7 +2175,12 @@ function kindWords(k: Kind): string {
   if (k === 'bool') return 'True / False';
   if (k === 'color') return 'a colour';
   if (k === 'none') return 'nothing';
-  if (isListKind(k)) return 'a list';
+  if (isListKind(k)) {
+    // By the items: two list kinds are told apart (an int list and a float list cannot share a parameter).
+    const items: Record<string, string> = { str: 'text', int: 'whole numbers', float: 'decimal numbers', bool: 'True / False', color: 'colours', Pin: 'pins' };
+    const elem = elementOf(k);
+    return elem && items[elem] ? `a list of ${items[elem]}` : 'a list';
+  }
   return `a ${k}`;
 }
 

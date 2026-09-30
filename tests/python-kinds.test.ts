@@ -104,6 +104,12 @@ describe('functions (§2.9)', () => {
   it('text at one call and a number at another → E-param-kinds', () => {
     expect(codes('def show(x):\n    print(x)\nshow(42)\nshow("a")\n')).toEqual(['E-param-kinds@4']);
   });
+  it('lists of other items at two calls → E-param-kinds (a C++ array parameter has one item type); scalars still combine', () => {
+    expect(codes('def avg(values):\n    return sum(values) / len(values)\nt = [20, 21, 22]\nprint(avg(t))\nt2 = [1.5, 2.5]\nprint(avg(t2))\n')).toEqual(['E-param-kinds@6']);
+    expect(codes('def total(v):\n    return sum(v)\nx = [1, 2, 3]\ny = [True, False]\nprint(total(x))\nprint(total(y))\n')).toEqual(['E-param-kinds@6']);
+    expect(codes('def total(v):\n    return sum(v)\nx = [1, 2, 3]\ny = [4, 5]\nprint(total(x))\nprint(total(y))\n')).toEqual([]);
+    expect(fnKinds('def f(a):\n    print(a)\nf(1)\nf(True)\n')).toEqual([['f', ['int'], 'none']]);
+  });
   it('uncalled functions: parameters are int (or the default), W-unused-function', () => {
     expect(fnKinds('def f(a, b="x"):\n    return a\n')).toEqual([['f', ['int', 'str'], 'int']]);
     expect(codes('def f(a):\n    return a\n')).toEqual(['W-unused-function@1']);

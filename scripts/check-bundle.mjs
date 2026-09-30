@@ -5,8 +5,8 @@
  * - the same for teacher.html and review.html when they exist (their Firebase is lazy);
  * - the chunks reachable from the student SDK barrel stay under 70 KB gzip, the teacher's under 200 KB;
  * - the Python chunk (docs/PYTHON.md §7.16) exists, adds at most 128 KB gzip to the simulator
- *   page (its static closure minus index.html's), and no chunk of index.html's closure contains
- *   the translator's messages.
+ *   page (its static closure minus index.html's), the Python examples chunk at most 24 KB more,
+ *   and no chunk of index.html's closure contains the translator's messages.
  * Rollup may share a chunk between pages, which a source scan (tests/bundle-boundary.test.ts)
  * cannot see; this script reads the emitted chunks and follows their static imports.
  * Usage: node scripts/check-bundle.mjs [dist]
@@ -34,11 +34,15 @@ const TEACHER_LIMIT = 200 * 1024;
  * the emitter in: 112.6 KB = src/python ≈ 90 KB (emitter ≈ 17, checks ≈ 14, reserved names ≈ 10,
  * kinds ≈ 9, api ≈ 7.5, parser ≈ 7.5, messages ≈ 6.5, tokenizer ≈ 5, helpers ≈ 4.5, scopes ≈ 4,
  * data flow ≈ 3) + @codemirror/lang-python and @lezer/python ≈ 16 KB + the editor's Python UI
- * ≈ 5 KB. Splitting the translator into a chunk of its own would not make Python mode download
- * less (the editor needs it at once for the live lint and the Code tab), so the budget counts all
- * of it. It leaves room for the other 32 examples (≈ 12 KB, §1.2).
+ * ≈ 5 KB; 116.9 KB after the review fixes (evaluation order, the new helpers). Splitting the
+ * translator into a chunk of its own would not make Python mode download less (the editor needs
+ * it at once for the live lint and the Code tab), so the budget counts all of it. The examples
+ * are not in it: with all 33 the chunk measured 131.2 KB, so examples 02–59 are a lazy chunk of
+ * their own (python-examples-chunk, PYTHON_EXAMPLES_LIMIT) and this one carries example 01 only.
  */
 const PYTHON_LIMIT = 128 * 1024;
+/** The Python examples other than 01 (src/ui/python-examples-chunk.ts): measured 18.7 KB gzip for 32 examples. */
+const PYTHON_EXAMPLES_LIMIT = 24 * 1024;
 /** A text only the translator's messages contain (src/python/messages.ts). */
 const PYTHON_MARKER = 'ZERO1 Python does not have';
 
@@ -128,6 +132,17 @@ function checkPython() {
   const total = own.reduce((n, c) => n + gzipSize(c), 0);
   console.log(`python-chunk: ${own.length} chunk(s) beyond index.html, ${kb(total)} gzip (limit ${kb(PYTHON_LIMIT)})`);
   if (total > PYTHON_LIMIT) fail(`python-chunk: ${kb(total)} gzip exceeds the limit of ${kb(PYTHON_LIMIT)}`);
+  // The examples: what their chunk adds beyond the page and the Python chunk.
+  const exampleEntries = readdirSync(ASSETS).filter((n) => /^python-examples-chunk-[\w-]+\.js$/.test(n));
+  if (exampleEntries.length === 0) {
+    fail('python-examples-chunk: no chunk emitted (src/ui/modes/python-mode.ts must load it with import())');
+    return;
+  }
+  const loaded = new Set(own);
+  const examples = closure(exampleEntries.map((n) => resolve(ASSETS, n))).filter((c) => !page.has(c) && !loaded.has(c));
+  const examplesTotal = examples.reduce((n, c) => n + gzipSize(c), 0);
+  console.log(`python-examples-chunk: ${examples.length} chunk(s) beyond them, ${kb(examplesTotal)} gzip (limit ${kb(PYTHON_EXAMPLES_LIMIT)})`);
+  if (examplesTotal > PYTHON_EXAMPLES_LIMIT) fail(`python-examples-chunk: ${kb(examplesTotal)} gzip exceeds the limit of ${kb(PYTHON_EXAMPLES_LIMIT)}`);
 }
 
 if (!existsSync(DIST)) {

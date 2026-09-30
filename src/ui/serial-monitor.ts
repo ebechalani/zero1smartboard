@@ -1,6 +1,7 @@
 /**
  * Serial Monitor tab: shows what the sketch prints with `Serial.print` and
- * lets the student type text back to the sketch, like the Arduino IDE.
+ * lets the student type text back to the sketch, like the Arduino IDE. In
+ * Python mode its texts speak of the program and print() (`setWords`).
  */
 
 export type LineEnding = 'none' | 'newline' | 'cr' | 'both';
@@ -23,6 +24,28 @@ const LINE_ENDING_LABELS: Readonly<Record<LineEnding, string>> = {
 /** Default number of lines kept in the output area. */
 export const DEFAULT_MAX_LINES = 5000;
 
+/**
+ * The texts that name what prints and what reads the typed text: the sketch (Code and Blocks
+ * mode), the program (Python mode, docs/PYTHON.md §7.9).
+ */
+export interface SerialWords {
+  /** The hint while nothing is printed; `{ code }` parts are shown as code. */
+  hint: readonly (string | { code: string })[];
+  /** The send box's placeholder and `aria-label`. */
+  placeholder: string;
+  inputLabel: string;
+  /** The Send button's `aria-label`. */
+  sendLabel: string;
+}
+
+/** Code and Blocks mode: the Arduino sketch prints and reads. */
+export const SKETCH_SERIAL_WORDS: SerialWords = {
+  hint: ['Nothing printed yet. Put ', { code: 'Serial.begin(9600);' }, ' in ', { code: 'setup()' }, ' and use ', { code: 'Serial.println("Hello");' }, ' to see text here.'],
+  placeholder: 'Type text to send to the sketch and press Enter',
+  inputLabel: 'Text to send to the sketch',
+  sendLabel: 'Send text to the sketch',
+};
+
 export interface SerialMonitorOptions {
   /** Called with the text to inject into the sketch's RX buffer (line ending included). */
   onSend(text: string): void;
@@ -44,6 +67,8 @@ export interface SerialMonitor {
    * student's own setting (null). Python's input() reads one line (docs/PYTHON.md §7.9).
    */
   forceNewline(title: string | null): void;
+  /** The hint and the send box's texts of the current mode (default SKETCH_SERIAL_WORDS). */
+  setWords(words: SerialWords): void;
   /** Send whatever is in the input box (same as pressing Enter). */
   send(): void;
   /** Whole output as plain text, lines joined with '\n'. */
@@ -81,15 +106,12 @@ export function createSerialMonitor(container: HTMLElement, options: SerialMonit
       <span class="z1-serial-baud" data-role="baud" aria-live="polite">9600 baud</span>
     </div>
     <div class="z1-serial-output" data-role="output" role="log" aria-live="polite" aria-label="Serial output" tabindex="0">
-      <div class="z1-serial-hint" data-role="hint">
-        Nothing printed yet. Put <code>Serial.begin(9600);</code> in <code>setup()</code> and use
-        <code>Serial.println("Hello");</code> to see text here.
-      </div>
+      <div class="z1-serial-hint" data-role="hint"></div>
     </div>
     <form class="z1-serial-input" data-role="form">
-      <input type="text" data-role="input" placeholder="Type text to send to the sketch and press Enter" aria-label="Text to send to the sketch" autocomplete="off" spellcheck="false" />
+      <input type="text" data-role="input" autocomplete="off" spellcheck="false" />
       <select data-role="ending" aria-label="Line ending">${lineEndingOptions}</select>
-      <button type="submit" class="z1-btn z1-btn-small" aria-label="Send text to the sketch">Send</button>
+      <button type="submit" class="z1-btn z1-btn-small" data-role="send">Send</button>
     </form>
   `;
 
@@ -100,6 +122,22 @@ export function createSerialMonitor(container: HTMLElement, options: SerialMonit
   const input = must<HTMLInputElement>(container, 'input');
   const endingSelect = must<HTMLSelectElement>(container, 'ending');
   const form = must<HTMLFormElement>(container, 'form');
+  const sendButton = must<HTMLButtonElement>(container, 'send');
+
+  function setWords(words: SerialWords): void {
+    hint.replaceChildren(
+      ...words.hint.map((part) => {
+        if (typeof part === 'string') return part;
+        const code = document.createElement('code');
+        code.textContent = part.code;
+        return code;
+      }),
+    );
+    input.placeholder = words.placeholder;
+    input.setAttribute('aria-label', words.inputLabel);
+    sendButton.setAttribute('aria-label', words.sendLabel);
+  }
+  setWords(SKETCH_SERIAL_WORDS);
 
   /** The student's own line-ending choice while Newline is forced (null: not forced). */
   let ownEnding: LineEnding | null = null;
@@ -212,6 +250,7 @@ export function createSerialMonitor(container: HTMLElement, options: SerialMonit
         endingSelect.removeAttribute('title');
       }
     },
+    setWords,
     send,
     getText() {
       return Array.from(output.querySelectorAll<HTMLElement>('.z1-serial-line'))

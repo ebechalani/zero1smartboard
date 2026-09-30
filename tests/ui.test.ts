@@ -10,7 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BoardConfig, IBoard, PinState } from '../src/types';
 import { DEFAULT_BOARD_CONFIG, PIN_COUNT } from '../src/types';
 import type { Zero1Board } from '../src/zero1';
-import { applyLineEnding, createSerialMonitor, detectBaud, type LineEnding } from '../src/ui/serial-monitor';
+import { SKETCH_SERIAL_WORDS, applyLineEnding, createSerialMonitor, detectBaud, type LineEnding } from '../src/ui/serial-monitor';
 import { codeFromHash, decodeShareCode, encodeShareCode } from '../src/ui/editor';
 import { CONFIG_STORAGE_KEY, createSettingsDialog, loadConfig, sanitizeConfig, saveConfig } from '../src/ui/settings';
 import { PIN_MAP_ROWS, createPinMap, describePinValue } from '../src/ui/pinmap';
@@ -89,6 +89,28 @@ describe('serial monitor output', () => {
     monitor.clear();
     expect(hint.hidden).toBe(false);
     expect(monitor.getText()).toBe('');
+  });
+
+  it('names the sketch in its hint and send box, or what setWords() gives (Python mode: the program)', () => {
+    const monitor = createSerialMonitor(mount(), { onSend: () => {} });
+    const hint = document.querySelector<HTMLElement>('.z1-serial-hint')!;
+    const input = document.querySelector<HTMLInputElement>('[data-role="input"]')!;
+    const send = document.querySelector<HTMLButtonElement>('[data-role="send"]')!;
+    expect(hint.textContent).toBe('Nothing printed yet. Put Serial.begin(9600); in setup() and use Serial.println("Hello"); to see text here.');
+    expect(Array.from(hint.querySelectorAll('code'), (c) => c.textContent)).toEqual(['Serial.begin(9600);', 'setup()', 'Serial.println("Hello");']);
+    expect([input.placeholder, input.getAttribute('aria-label'), send.getAttribute('aria-label')]).toEqual([
+      'Type text to send to the sketch and press Enter',
+      'Text to send to the sketch',
+      'Send text to the sketch',
+    ]);
+    monitor.setWords({ hint: ['Use ', { code: 'print("<b>")' }, ' here.'], placeholder: 'p', inputLabel: 'i', sendLabel: 's' });
+    expect(hint.innerHTML).toBe('Use <code>print("&lt;b&gt;")</code> here.'); // text, never markup
+    expect([input.placeholder, input.getAttribute('aria-label'), send.getAttribute('aria-label')]).toEqual(['p', 'i', 's']);
+    monitor.append('x');
+    expect(hint.hidden).toBe(true); // still the hint: hidden once something is printed
+    monitor.setWords(SKETCH_SERIAL_WORDS);
+    expect(hint.hidden).toBe(true);
+    expect(hint.textContent).toContain('Serial.println("Hello");');
   });
 
   it('keeps at most maxLines lines', () => {

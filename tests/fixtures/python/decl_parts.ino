@@ -42,7 +42,7 @@ void setup() {
   pinMode(green, OUTPUT);
   pinMode(builtin, OUTPUT);
   pinMode(dimmer, OUTPUT);
-  analogWrite(dimmer, 127);
+  analogWrite(dimmer, 128);
   Wire.begin();
   servo.attach(SERVO_PIN);
   lcd.init();
@@ -62,7 +62,7 @@ void loop() {
   digitalWrite(led, digitalRead(button));
   digitalWrite(green, !digitalRead(green));
   digitalWrite(builtin, 0);
-  analogWrite(dimmer, (long)analogRead(adc) * 64L / 257);
+  analogWrite(dimmer, (long)analogRead(adc) * 64L / 256);
   servo.write(90);
   lcd.clear();
   np.fill(0x000020);
@@ -97,7 +97,7 @@ float pyPow10(int n) {
 String pyFloat(float x) {
   if (isnan(x)) return "nan";
   if (isinf(x)) return x > 0 ? "inf" : "-inf";
-  if (x == 0) return "0.0";
+  if (x == 0) return 1 / x < 0 ? "-0.0" : "0.0";
   float size = fabs(x);
   int exponent = floor(log10(size));
   if (size < pyPow10(exponent)) exponent--;

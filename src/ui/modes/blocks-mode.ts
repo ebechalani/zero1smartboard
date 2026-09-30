@@ -59,6 +59,8 @@ export class BlocksMode implements ModeController {
   private panel: BlocksPanel | null = null;
   private loading: Promise<BlocksPanel | null> | null = null;
   private blockExamples: BlockExample[] = [];
+  /** The last download of Blockly failed (the Examples menu then says there are none). */
+  private chunkFailed = false;
   /** Last sketch generated from the blocks (null until the blocks have been loaded). */
   private lastGeneratedCode: string | null = null;
   /** Fingerprint of the workspace right after the last example / link was loaded (null = unknown origin). */
@@ -72,6 +74,11 @@ export class BlocksMode implements ModeController {
 
   examples(): readonly MenuExample[] {
     return this.blockExamples;
+  }
+
+  /** Blockly and the block examples are on the way (or about to be: the mode is entered right after it shows) (§7.7). */
+  examplesLoading(): boolean {
+    return this.blockExamples.length === 0 && this.panel === null && !this.chunkFailed;
   }
 
   /**
@@ -199,6 +206,7 @@ export class BlocksMode implements ModeController {
 
   /** First use of Blocks mode: load Blockly, restore the saved workspace (else the default) and the block examples. */
   private async createPanel(): Promise<BlocksPanel | null> {
+    this.chunkFailed = false;
     // The examples travel in the same chunk as the block definitions: fill the menu at the same time.
     const examples = loadBlockExamples().then(
       (list) => {
@@ -214,6 +222,8 @@ export class BlocksMode implements ModeController {
       });
     } catch (err) {
       this.loading = null; // the next attempt (Run, mode switch) tries again
+      this.chunkFailed = true;
+      this.host.examplesChanged(this);
       this.host.loadFailed('block editor', err);
       return null;
     }
@@ -232,6 +242,7 @@ export class BlocksMode implements ModeController {
     // after a reload is still not worth a question.
     this.lastLoadedBlocks = saved ? loadBlocksBaseline() : this.defaultBlocks;
     this.panel = panel;
+    this.host.examplesChanged(this); // no longer "Loading…", also when there is no example
     return panel;
   }
 

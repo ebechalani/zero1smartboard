@@ -4,7 +4,8 @@
  * The review page (docs/CLASSROOM.md §7.3, C): the payload from the hash and from a handoff,
  * expired and broken texts, the iframe with exactly sandbox="allow-scripts" and the review src,
  * the CSP meta of review.html, the handshake (only the frame's z1-review-ready with origin 'null'
- * is answered), Download .ino and Copy from the payload, and the textContent matrix.
+ * is answered), the page at the window's height (the frame fills the rest on a phone too),
+ * Download .ino and Copy from the payload, and the textContent matrix.
  */
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -129,6 +130,29 @@ describe('review page: sandbox', () => {
     expect(posted).toEqual([]);
     send(frameWindow, 'null', { type: 'z1-review-ready' });
     expect(posted).toEqual([{ msg: { type: 'z1-review', payload: PAYLOAD }, origin: '*' }]);
+  });
+
+  it('the page is the window’s height at every width, so the frame fills the space under the banner', () => {
+    // Below 1000 px style.css gives html and body `height: auto`; a root of `height: 100%` then left
+    // the frame at an iframe's default 150 px on a phone (measured in Chromium at 390 × 844).
+    const style = document.createElement('style');
+    style.textContent = ['src/ui/style.css', 'src/review/review.css'].map((f) => readFileSync(resolve(process.cwd(), f), 'utf8')).join('\n');
+    document.head.appendChild(style);
+    const { happyDOM } = window as unknown as { happyDOM: { setViewport(v: { width: number; height: number }): void } };
+    try {
+      const { root } = mount(`#review=${encodeReviewPayload(PAYLOAD)}`);
+      root.id = 'review';
+      for (const width of [390, 1440]) {
+        happyDOM.setViewport({ width, height: 844 });
+        expect(getComputedStyle(root).height, `${width} px`).toBe('844px');
+        expect(getComputedStyle(root.querySelector('.z1r-frame')!).flexGrow, `${width} px`).toBe('1');
+      }
+      happyDOM.setViewport({ width: 390, height: 844 });
+      expect(getComputedStyle(document.body).height).toBe('auto');
+    } finally {
+      style.remove();
+      happyDOM.setViewport({ width: 1024, height: 768 });
+    }
   });
 });
 

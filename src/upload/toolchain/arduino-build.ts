@@ -143,7 +143,7 @@ export interface BuildFailure extends BuildCommon {
 export type BuildResult = BuildSuccess | BuildFailure;
 
 /** Compile + link one sketch with the WASM tools against the prebuilt bundle. */
-export async function buildSketch(tc: WasmToolchain, bundle: Bundle, opts: BuildOptions): Promise<BuildResult> {
+export async function buildSketch(tc: Pick<WasmToolchain, 'run'>, bundle: Bundle, opts: BuildOptions): Promise<BuildResult> {
   const { manifest } = bundle;
   const A = manifest.cc1plusArgs;
   const fileName = opts.fileName || 'sketch.ino';

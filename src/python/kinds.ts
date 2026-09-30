@@ -13,6 +13,8 @@
 import type { Call, Expr, For, Name, Stmt } from './ast';
 import {
   API_PARTS,
+  IMPORT_ORDER,
+  MODULE_NAMES,
   isPartName,
   lookupMember,
   pinOfText,
@@ -541,7 +543,9 @@ class Inference {
       const flagged = new Set<number>();
       const add = (i: number, k: IKind | null, line: number) => {
         if (k === null || k === 'none' || k === 'list<?>') return;
-        const c = combineI(kinds[i], k);
+        // A C++ array parameter has one item type: lists of other items at two calls do not combine (§2.9).
+        const lists = kinds[i] !== null && isListKind(kinds[i] as Kind) && isListKind(k as Kind);
+        const c = lists && kinds[i] !== k ? { kind: kinds[i], conflict: true } : combineI(kinds[i], k);
         if (c.conflict && this.finalPass && !flagged.has(i) && seen[i]) {
           flagged.add(i);
           // The number first, then the text (the message's order); other kinds in program order.
@@ -807,6 +811,10 @@ class Inference {
           if (!m) return { kind: 'unknown' };
           return this.memberDenotation(m, imp.module);
         }
+        case 'undefined':
+          // A §3 name used without its import (E-missing-import): what the import would give, so
+          // that `led = Pin(13, Pin.OUT)` is a Pin and the NameError is the only error.
+          return this.missingImport(e.id) ?? { kind: 'unknown' };
         default:
           return { kind: 'unknown' };
       }
@@ -842,6 +850,16 @@ class Inference {
       return { kind: 'unknown' };
     }
     return { kind: 'value', type: this.kindOfI(e) as Kind | null };
+  }
+
+  /** What `import name` or `from m import name` would give an undefined name (E-missing-import's fix), or null. */
+  private missingImport(name: string): Denotation | null {
+    if ((MODULE_NAMES as readonly string[]).includes(name) || name === 'utime') return { kind: 'module', module: name as ModuleName };
+    for (const m of IMPORT_ORDER) {
+      const member = lookupMember(m, name);
+      if (member && member.kind !== 'refused') return this.memberDenotation(member, m);
+    }
+    return null;
   }
 
   private memberDenotation(m: ApiConstant | ApiFunction | ApiClass | ApiRefused, module: ModuleName): Denotation {

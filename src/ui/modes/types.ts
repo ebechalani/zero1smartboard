@@ -14,6 +14,7 @@ import type { AppMode } from '../blocks-panel';
 import type { ConsolePanel } from '../console-panel';
 import type { MenuExample } from '../examples-menu';
 import type { HandinWork } from '../handin-dialog';
+import type { SerialWords } from '../serial-monitor';
 
 export type { AppMode };
 
@@ -62,7 +63,10 @@ export interface MirrorWords {
   banner: string;
   /** The toast when the student types into it. */
   typing: string;
-  /** Review mode, when the hand-in can only be shown as its sketch: the banner above the Code editor. */
+  /**
+   * Review mode: the banner above the Code tab's sketch (the mirror, or the handed-in sketch when
+   * the hand-in can only be shown as its sketch).
+   */
   review: string;
   /** Put before an error in the sketch: the simulator made it, the student's program is not at fault. */
   errorPrefix: string;
@@ -86,6 +90,8 @@ export interface RunWords {
   printHint?: { text: string; action: string };
   /** Python: the Serial Monitor sends Newline only (the line-ending choice is off, with this tooltip; §7.9). */
   newlineOnly?: string;
+  /** Python: the Serial Monitor's hint and send box speak of the program and print() (default: of the sketch). */
+  serial?: SerialWords;
 }
 
 /** A Share ▾ download of the mode's own program ("Download .py", §7.11). */
@@ -173,6 +179,8 @@ export interface ModeController {
   readonly lineSource: 'sketch' | 'python';
   /** The Examples menu in this mode ([] while the mode's chunk loads). */
   examples(): readonly MenuExample[];
+  /** The mode's chunk (and with it its examples) is being downloaded: the menu says "Loading…" (§7.7). */
+  examplesLoading?(): boolean;
   /**
    * The mode became the current one (the app has already shown its tabs): show its own program,
    * or the link's when `link` is given (loaded without a question: `confirmLink()` asked before).
@@ -192,12 +200,16 @@ export interface ModeController {
   untouched(): HandinWork['unchanged'];
   /** Before a share link replaces the mode's program: true when nothing would be lost or the student agreed. */
   confirmLink(): Promise<boolean>;
+  /** A share link opened with the page asks with confirmLink() too, like one opened later (Python, §7.6). */
+  readonly confirmsStartLink?: boolean;
   /** Move the cursor to a line of the mode's own program; absent in Blocks mode (no text editor). */
   goToLine?(line: number, column?: number): void;
   /** The mode's own tab became visible or the window was resized (Blocks: Blockly measures again). */
   resize?(): void;
   /** Review mode: show the hand-in in this mode; false = the app shows the handed-in sketch in Code mode. */
   review(message: ReviewMessage): Promise<boolean>;
+  /** Review mode, when `review()` returned false: the handed-in sketch is read-only in Code mode (Python, §7.13). */
+  readonly reviewReadOnly?: boolean;
   /** Write pending saves now (update prompt, page hide). */
   flush(): void;
   destroy(): void;

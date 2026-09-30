@@ -8,12 +8,17 @@
  * the program 700 ms after an edit and also checks the sketch with transpile(): its errors
  * become X-sketch-error and its warnings W-sketch, on the Python lines they were made from.
  *
- * The translator, the examples and the editor's language support live in the lazy Python
- * chunk (src/ui/python-chunk.ts, §7.16): this file imports its types only and loads it with
- * `import()` on first use, so Code and Blocks users never download it.
+ * The translator, example 01 and the editor's language support live in the lazy Python chunk
+ * (src/ui/python-chunk.ts, §7.16), the other examples in a lazy chunk of their own
+ * (src/ui/python-examples-chunk.ts): this file imports their types only and loads both with
+ * `import()` on first use, so Code and Blocks users never download them.
+ *
+ * In the teacher's review frame (§7.13) a Python hand-in shows read-only, with today's
+ * translation in the Code tab and, when that is not the handed-in sketch, a banner that offers
+ * the handed-in one.
  */
 import { transpile } from '../../transpiler';
-import type { Diagnostic } from '../../types';
+import type { ConsoleMessage, Diagnostic } from '../../types';
 import { createEditor, loadText, saveText, type Editor } from '../editor';
 import type { MenuExample } from '../examples-menu';
 import type { HandinWork } from '../handin-dialog';
@@ -23,6 +28,7 @@ import { encodeSharePython } from '../../share-link';
 import type { ExportedWork, ModeController, ModeHost, ModeLink, ProgramFile, ReviewMessage, RunWords, SketchResult } from './types';
 
 type PythonChunk = typeof import('../python-chunk');
+type PythonExamplesChunk = typeof import('../python-examples-chunk');
 
 /** localStorage key of the Python program. */
 export const PYTHON_STORAGE_KEY = 'z1.python';
@@ -57,7 +63,31 @@ export const PYTHON_RUN_WORDS: RunWords = {
   finished: 'Program finished (it has no while True loop).',
   printHint: { text: 'print() output is in the Serial Monitor tab', action: 'Open the Serial Monitor' },
   newlineOnly: "Python's input() reads one line: the Serial Monitor sends Newline",
+  serial: {
+    hint: ['Nothing printed yet. Use ', { code: 'print("Hello")' }, ' in your program to see text here.'],
+    placeholder: 'Type text to send to your program and press Enter',
+    inputLabel: 'Text to send to your program',
+    sendLabel: 'Send text to your program',
+  },
 };
+
+/**
+ * Review mode (§7.13): the banner above the student's Python program when today's translation
+ * is not the sketch that was handed in, and after the teacher chose the handed-in one.
+ */
+export const PYTHON_REVIEW = {
+  updated: "The simulator was updated since this hand-in: the Code tab shows today's translation.",
+  useHandedIn: 'Use the handed-in sketch',
+  usingHandedIn: 'The Code tab shows the sketch as it was handed in.',
+};
+
+/**
+ * transpile()'s warning for analogWrite() on a pin without PWM (src/transpiler/codegen.ts). A
+ * PWM() on such a pin already has its W-pwm-pin / W-pwm-buzzer / W-pwm-servo warning (on the
+ * PWM() line; the analogWrite() comes from each duty_u16() line), so its W-sketch is left out.
+ */
+const ANALOG_WRITE_NO_PWM = /^analogWrite\(\) only dims on PWM pins\b/;
+const PWM_WARNINGS: ReadonlySet<string> = new Set(['W-pwm-pin', 'W-pwm-buzzer', 'W-pwm-servo']);
 
 /** Share ▾ → Download .py (§7.11). */
 export const PYTHON_FILE: ProgramFile = {
@@ -103,8 +133,16 @@ export class PythonMode implements ModeController {
   };
   readonly runWords = PYTHON_RUN_WORDS;
   readonly programFile = PYTHON_FILE;
+  /** A Python hand-in that cannot be shown here is its sketch, read-only, in Code mode (§7.13). */
+  readonly reviewReadOnly = true;
+  /** A #python= link that opens the page asks before it replaces a program that is not untouched (§7.6). */
+  readonly confirmsStartLink = true;
 
   private chunk: PythonChunk | null = null;
+  /** The Python examples (§9), from their own chunk; null until it is loaded. */
+  private exampleList: readonly PythonExample[] | null = null;
+  /** The last download of the chunks failed (the Examples menu then says there are none). */
+  private chunkFailed = false;
   private loading: Promise<Editor | null> | null = null;
   private editor: Editor | null = null;
   /** The last loaded text (example, link, New); null = unknown origin. */
@@ -116,11 +154,20 @@ export class PythonMode implements ModeController {
   private lastChecked: { text: string; checked: Checked } | null = null;
   /** "What works" (§7.3), made on first use. */
   private helpDialog: PythonHelpDialog | null = null;
+  /** Review mode (§7.13): the handed-in sketch, once the teacher chose it over today's translation. */
+  private handedIn: string | null = null;
+  /** Review mode: the banner above the Python program when today's translation differs from the hand-in. */
+  private reviewBanner: HTMLElement | null = null;
 
   constructor(private readonly host: ModeHost) {}
 
   examples(): readonly MenuExample[] {
-    return this.chunk?.PYTHON_EXAMPLES ?? [];
+    return this.exampleList ?? [];
+  }
+
+  /** The chunks are on the way (or about to be: the mode is entered right after it shows): the Examples menu says "Loading…" (§7.7). */
+  examplesLoading(): boolean {
+    return this.exampleList === null && !this.chunkFailed;
   }
 
   async enter(link: ModeLink | null): Promise<void> {
@@ -150,13 +197,20 @@ export class PythonMode implements ModeController {
       const count = `${errors.length} error${errors.length === 1 ? '' : 's'}`;
       return { ok: false, reason: 'errors', message: `${count} — fix and run again`, diagnostics };
     }
+    const pythonize = (msg: ConsoleMessage, serialTail: string) => chunk.pythonizeRuntimeMessage(msg, serialTail);
+    if (this.handedIn !== null) {
+      // Review mode, "Use the handed-in sketch" (§7.13): today's source map does not fit it, so
+      // its messages stay on sketch lines (a runtime stop still names its Python line).
+      const { endsAfterSetup, usesInput } = translation;
+      return { ok: true, sketch: this.handedIn, endsAfterSetup, usesInput, pythonize };
+    }
     return {
       ok: true,
       sketch: translation.sketch,
       composeLineMap: (jsLineMap) => translation.map.composeJsLineMap(jsLineMap),
       endsAfterSetup: translation.endsAfterSetup,
       usesInput: translation.usesInput,
-      pythonize: (msg, serialTail) => chunk.pythonizeRuntimeMessage(msg, serialTail),
+      pythonize,
       diagnostics,
     };
   }
@@ -205,7 +259,7 @@ export class PythonMode implements ModeController {
     if (!chunk || !this.editor) return null;
     const text = this.editor.getCode();
     if (text.trim() === '' || text === chunk.BLANK_PYTHON) return { kind: 'blank' };
-    const example = chunk.PYTHON_EXAMPLES.find((e) => e.python === text);
+    const example = this.exampleList?.find((e) => e.python === text);
     return example ? { kind: 'example', title: example.title } : null;
   }
 
@@ -220,9 +274,28 @@ export class PythonMode implements ModeController {
     this.editor.goToLine(line, column);
   }
 
-  /** Python review mode is not there yet (§7.13): the app shows the handed-in sketch in Code mode. */
-  async review(_message: ReviewMessage): Promise<boolean> {
-    return false;
+  /**
+   * Review mode (§7.13): the student's Python program, read-only, and today's translation of it
+   * in the Code tab; when that is not the handed-in sketch, a banner offers the handed-in one
+   * ("Use the handed-in sketch": the mirror and Run then use it). Nothing runs, nothing is saved.
+   * False — the app shows the handed-in sketch in Code mode — when the payload has no Python
+   * (an older review page), the chunk cannot be loaded or the program has errors today.
+   */
+  async review(message: ReviewMessage): Promise<boolean> {
+    if (message.python.trim() === '') return false;
+    const editor = await this.ensureEditor();
+    if (!editor) return false;
+    // Also on the way to the fallback: a switch to Python mode then shows the program and its errors.
+    editor.setCode(message.python); // never saved: the review frame's editors do not persist
+    editor.setReadOnly(true);
+    this.baseline = message.python;
+    this.handedIn = null;
+    const { translation, ok } = this.check(message.python);
+    this.showReviewBanner(ok && translation.sketch !== message.code ? message.code : null);
+    if (!ok) return false;
+    this.host.setMode(this.id);
+    this.lint();
+    return true;
   }
 
   flush(): void {
@@ -231,6 +304,8 @@ export class PythonMode implements ModeController {
 
   destroy(): void {
     this.cancelLint();
+    this.reviewBanner?.remove();
+    this.reviewBanner = null;
     this.helpDialog?.close();
     this.helpDialog?.element.remove();
     this.helpDialog = null;
@@ -263,21 +338,32 @@ export class PythonMode implements ModeController {
     note.className = 'z1-python-loading';
     note.textContent = 'Loading Python…';
     panel.replaceChildren(note);
+    this.chunkFailed = false;
     let chunk: PythonChunk;
+    let examples: PythonExamplesChunk;
     try {
-      chunk = await import('../python-chunk');
+      // The examples come in a chunk of their own (§7.16), fetched at the same time: when the
+      // editor exists, every list that asks "is this an example?" is complete.
+      const [main, more] = await Promise.all([import('../python-chunk'), import('../python-examples-chunk')]);
+      // After a redeploy Vite's preload error is swallowed (App.onPreloadError): import() then gives undefined.
+      if (!main || !more) throw new Error('Failed to fetch dynamically imported module: python-chunk');
+      chunk = main;
+      examples = more;
     } catch (err) {
       note.textContent = 'The Python editor could not be loaded. Check your internet connection and reload the page.';
       this.loading = null; // the next attempt (Run, mode switch) tries again
+      this.chunkFailed = true;
+      this.host.examplesChanged(this);
       this.host.loadFailed('Python editor', err);
       return null;
     }
     this.chunk = chunk;
+    this.exampleList = examples.PYTHON_EXAMPLES;
 
     // First visit: example 01, untouched. The review frame reads no storage.
     const saved = this.host.review ? null : loadText(PYTHON_STORAGE_KEY);
     const hasSaved = saved !== null && saved.trim() !== '';
-    const initial = hasSaved ? saved : (chunk.PYTHON_EXAMPLES[0]?.python ?? chunk.BLANK_PYTHON);
+    const initial = hasSaved ? saved : chunk.PYTHON_FIRST_EXAMPLE.python;
     this.baseline = hasSaved ? (this.host.review ? null : loadText(PYTHON_BASELINE_STORAGE_KEY)) : initial;
 
     const editorHost = document.createElement('div');
@@ -313,6 +399,39 @@ export class PythonMode implements ModeController {
     return note;
   }
 
+  /**
+   * Review mode: the banner above the Python program while today's translation is not the
+   * handed-in sketch (`handedIn`; null removes the banner). Its button puts the handed-in
+   * sketch into the Code tab and Run.
+   */
+  private showReviewBanner(handedIn: string | null): void {
+    this.reviewBanner?.remove();
+    this.reviewBanner = null;
+    if (handedIn === null) return;
+    const banner = document.createElement('div');
+    banner.className = 'z1-banner z1-python-review';
+    banner.dataset.slot = 'python-review';
+    banner.setAttribute('role', 'note');
+    const text = document.createElement('span');
+    text.textContent = PYTHON_REVIEW.updated;
+    const use = document.createElement('button');
+    use.type = 'button';
+    use.className = 'z1-btn z1-btn-small z1-banner-action';
+    use.dataset.slot = 'use-handed-in';
+    use.textContent = PYTHON_REVIEW.useHandedIn;
+    use.addEventListener('click', () => {
+      this.handedIn = handedIn;
+      text.textContent = PYTHON_REVIEW.usingHandedIn;
+      use.remove();
+      banner.tabIndex = -1; // the focus stays on the banner, which now says what the Code tab shows
+      banner.focus();
+      if (this.editor && this.chunk) this.lint();
+    });
+    banner.append(text, use);
+    this.host.panel('python').prepend(banner);
+    this.reviewBanner = banner;
+  }
+
   // --- translation ------------------------------------------------------------
 
   private translate(text: string): PythonTranslation {
@@ -341,10 +460,12 @@ export class PythonMode implements ModeController {
             message: chunk.message('X-sketch-error', { message: d.message }),
           }));
       const seen = new Set<string>(); // one Python line can make several sketch lines with the same warning
+      const pwmWarned = translation.diagnostics.some((d) => PWM_WARNINGS.has(d.code));
       const warnings: Diagnostic[] = result.warnings.flatMap((d) => {
         const line = translation.map.pythonLineOf(d.line);
         const message = chunk.message('W-sketch', { warning: d.message });
         if (!line || seen.has(`${line}:${message}`)) return [];
+        if (pwmWarned && ANALOG_WRITE_NO_PWM.test(d.message)) return []; // said already, in Python words
         seen.add(`${line}:${message}`);
         return [{ line, column: 1, severity: 'warning' as const, message }];
       });
@@ -361,7 +482,8 @@ export class PythonMode implements ModeController {
     this.cancelLint();
     const checked = this.check(this.editor!.getCode());
     this.editor!.setDiagnostics(checked.diagnostics);
-    this.host.showMirror(this, checked.translation.sketch, checked.translation.ok ? null : PYTHON_FIX_FIRST_TITLE);
+    const sketch = this.handedIn ?? checked.translation.sketch;
+    this.host.showMirror(this, sketch, checked.translation.ok ? null : PYTHON_FIX_FIRST_TITLE);
     return checked;
   }
 
@@ -396,7 +518,8 @@ export class PythonMode implements ModeController {
     return (
       text.trim() === '' ||
       text === this.baseline ||
-      (chunk !== null && (text === chunk.BLANK_PYTHON || chunk.PYTHON_EXAMPLES.some((e) => e.python === text)))
+      (chunk !== null && text === chunk.BLANK_PYTHON) ||
+      (this.exampleList?.some((e) => e.python === text) ?? false)
     );
   }
 

@@ -41,7 +41,7 @@ void loop() {
   np.fill(np.Color(level, 0, 0));
   np.setPixelColor(1L - 1L, 0, level, 0);
   np.show();
-  analogWrite(fade, 127);
+  analogWrite(fade, 128);
   digitalWrite(motor, d < 20);
   digitalWrite(led, true);
   Serial.print(pyFloat(d));
@@ -79,7 +79,7 @@ float pyPow10(int n) {
 String pyFloat(float x) {
   if (isnan(x)) return "nan";
   if (isinf(x)) return x > 0 ? "inf" : "-inf";
-  if (x == 0) return "0.0";
+  if (x == 0) return 1 / x < 0 ? "-0.0" : "0.0";
   float size = fabs(x);
   int exponent = floor(log10(size));
   if (size < pyPow10(exponent)) exponent--;

@@ -418,6 +418,10 @@ and Esc do not run or stop the sketch (the App's keyboard guard).
   - **Download all shown (.zip)**.
 - Live insertions are announced by one polite summary ("2 new hand-ins"). The new-row
   highlight respects `prefers-reduced-motion` and always carries the "New" text.
+- **On a phone** (≤ 760 px, where the six columns no longer fit) each row is a card: the
+  name and the status, then the last hand-in, "Versions 2" and the computers, then **Open**
+  and **.ino**. The column headers stay for screen readers. Wider, a long name or date
+  wraps in its cell, and the table scrolls sideways inside its card only as a last resort.
 - Empty: "Nothing handed in yet. Students press Hand in, type the class code and their
   name."
 - A large review payload (`#rid=`) gets **one** `z1.review.<rid>` handoff per hand-in,
@@ -520,11 +524,14 @@ The teacher lands here from **Open**. The page has two parts.
   (`pythonFileName(who, at)`) comes before **Download .ino**; **Copy code** copies the
   program; while it was handed in with errors (`placeholderErrorCount(code)` is a number) the
   banner adds "Handed in with {N} Python errors" and **Download .ino** is disabled with that
-  reason. Inside the frame a Python hand-in shows the handed-in sketch in Code mode until the
-  simulator's Python review mode lands (docs/PYTHON.md §7.13).
+  reason. Inside the frame the simulator opens in Python mode with the program read-only
+  (docs/PYTHON.md §7.13; Code mode with the handed-in sketch when the program does not
+  translate).
 - `document.title` = "ali.k – ZERO1 review".
 
-**Sandbox**: the rest of the window is:
+**Sandbox**: the rest of the window is (the page is the window's height at every width, so
+on a phone the frame fills the screen under a compact banner and the simulator scrolls inside
+it):
 
 ```html
 <iframe sandbox="allow-scripts" src="./index.html#review" title="Simulator running ali.k's hand-in">
@@ -1018,7 +1025,10 @@ checks that the suite catches each one.
      `caller`, `callee`, `arguments`, `call`, `apply`, `bind`, and any name starting
      with `__`. It refuses them in `MemberExpr`, in method calls (`genMethodCall`) and
      in index expressions with a constant string key. The compile error is "'{name}' is
-     not available in the simulator".
+     not available in the simulator". A computed index on a runtime object or a
+     function is made a number (`Serial[+(k)]`), so a String variable `k` holding
+     "constructor" names the property "NaN" (added 2026-09-30; before, `Serial[k][k]`
+     reached `Function`).
    - The runtime `__m` / `__mut` (`src/runtime/libs/strings.ts`) refuse the same names,
      and refuse to invoke a function found on `Function.prototype` or
      `Object.prototype`.
@@ -1501,7 +1511,10 @@ export function handinHash(content: { kind: HandinKind; code: string; workspaceJ
 `editor.ts` and `blocks-panel.ts` re-export the moved names (B), so existing imports and
 tests keep working.
 
-### 4.10 Hand in dialog (`src/ui/handin-dialog.ts`, B)
+### 4.10 Hand in dialog (`src/ui/handin-dialog.ts`, C)
+
+Owner C since the Python work (docs/PYTHON.md §11.1, §8.3); B wrote it for the class platform
+(§0.5).
 
 ```ts
 export interface HandinWork {
@@ -1690,8 +1703,10 @@ export const HANDIN_TEXT: {
 - **Python** (docs/PYTHON.md §8.5): "· Python" in the banner, **Download .py**
   (`pythonFileName`) next to **Download .ino**, **Copy code** copies the program; a program
   handed in with errors adds "Handed in with {N} Python errors" and disables
-  **Download .ino** (§1.4). The frame's Python review mode is the simulator's
-  (docs/PYTHON.md §7.13); until then it shows the handed-in sketch in Code mode.
+  **Download .ino** (§1.4). Inside the frame the simulator opens the hand-in in Python mode,
+  the program read-only, with today's translation in the Code tab (docs/PYTHON.md §7.13); it
+  shows the handed-in sketch in Code mode when the payload has no Python (an older review page),
+  the Python chunk cannot load, or the program has errors today.
 
 ### 4.15 Vite multi-page build and GitHub Pages (C)
 

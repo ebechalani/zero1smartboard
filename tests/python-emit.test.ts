@@ -17,6 +17,8 @@ import { buildSketch, loadBundle } from '../src/upload/toolchain/arduino-build';
 import { WasmToolchain } from '../src/upload/toolchain/wasm-toolchain';
 import { pythonPlaceholder } from '../src/sketch/placeholder';
 import { toolchainPaths } from './fakes/upload/toolchain-paths';
+import { nativeToolchain } from '../tests-hardware-sim/native-toolchain';
+import { COMPILE_CASES, PARAM_KIND_CASES } from './fixtures/python/sketch-cases';
 
 const FIXTURES = new URL('./fixtures/python/', import.meta.url);
 const CASES = readdirSync(FIXTURES)
@@ -274,6 +276,62 @@ describe('what the goldens show', () => {
   });
 });
 
+describe('what avr-g++ -Wall -Wextra would warn about or refuse (§4.7 E3, §2.9)', () => {
+  const sketchOf = (source: string) => {
+    const t = pythonToArduino(source);
+    expect(t.diagnostics.filter((d) => d.severity === 'error')).toEqual([]);
+    const js = transpile(t.sketch);
+    expect(js.ok && js.warnings).toEqual([]);
+    return t.sketch;
+  };
+
+  it.each(COMPILE_CASES)('$name: translates and transpiles cleanly', ({ source }) => {
+    sketchOf(source);
+  });
+
+  it('a local or parameter never read gets (void)name; after its declaration', () => {
+    const quiet = (name: string) => `(void)${name};`;
+    expect(sketchOf('x = 5\n')).toContain(`  long x = 5;\n  ${quiet('x')}`);
+    expect(sketchOf('for v in [1, 2]:\n    print("y")\n')).toContain(`    long v = vItems[vIndex];\n    ${quiet('v')}`);
+    expect(sketchOf('def f(a, b):\n    return a\n\nprint(f(1, 2))\n')).toContain(`long f(long a, long b) {\n  ${quiet('b')}`);
+    expect(sketchOf('lst = [1, 2]\nprint(len(lst))\n')).toContain(quiet('lst'));
+    expect(sketchOf('items = [1, 2]\nk = 1\nitems[k] = 0\n')).toContain(quiet('items'));
+    expect(sketchOf('def g(lst):\n    print("g")\n\nitems = [1, 2]\ng(items)\n')).toContain(`  ${quiet('lst')}`);
+    // read somewhere (also by += or a subscript): nothing added (the goldens have none)
+    expect(sketchOf('x = 5\nprint(x)\nfor v in [1, 2]:\n    print(v)\n')).not.toContain('(void)');
+    expect(sketchOf('x = 5\nx += 1\nitems = [1, 2]\nprint(items[x - 6])\n')).not.toContain('(void)');
+  });
+
+  it('arithmetic of literals that leaves 32 bits is written as the board’s result (no -Woverflow)', () => {
+    const sketch = sketchOf('print(50000 * 50000)\nprint(2147483647 + 1)\nprint(2 * 3 + 1)\na = 50000\nprint(a * a)\n');
+    expect(sketch).toContain('Serial.println(-1794967296);');
+    expect(sketch).toContain('Serial.println(-2147483647L - 1);');
+    expect(sketch).toContain('Serial.println(2L * 3L + 1L);');
+    expect(sketch).toContain('Serial.println(a * a);');
+  });
+
+  it('an LCD bitmap given to a function stays a long list; createChar() gets a byte copy (n08)', () => {
+    const sketch = sketchOf(COMPILE_CASES.find((c) => c.name.startsWith('n08'))!.source);
+    expect(sketch).toContain('long heart[8] = {0, 10, 31, 31, 14, 4, 0, 0};');
+    expect(sketch).toContain('long count_on(long bits[], long bitsCount) {');
+    expect(sketch).toContain('byte bitmap[8];\n  for (int row = 0; row < 8; row++) bitmap[row] = heart[row];\n  lcd.createChar(0, bitmap);');
+    // a bitmap used only by createChar() stays byte
+    expect(sketchOf('from zero1 import LCD\nlcd = LCD()\nheart = [0, 10, 31, 31, 14, 4, 0, 0]\nlcd.custom_char(0, heart)\n')).toContain('byte heart[8] = {0, 10, 31, 31, 14, 4, 0, 0};');
+  });
+
+  it.each(PARAM_KIND_CASES)('$name is refused with E-param-kinds', ({ source, line }) => {
+    const t = pythonToArduino(source);
+    expect(t.diagnostics.map((d) => `${d.code}@${d.line}`)).toEqual([`E-param-kinds@${line}`]);
+  });
+
+  it('a docstring’s \\r, \\v and \\f never reach a // line (GCC ends the comment there, the simulator does not)', () => {
+    const sketch = sketchOf('def f():\n    """A.\\rlong hidden() { return 7; }\\vB\\fC"""\n    return 1\n\n\nprint(f())\n');
+    expect(sketch).not.toMatch(/[\r\v\f]/);
+    expect(sketch).toContain('// long hidden() { return 7; } B C');
+    for (const line of sketch.split('\n').filter((l) => l.includes('hidden()'))) expect(line.trimStart().startsWith('//'), line).toBe(true);
+  });
+});
+
 describe('limits (§4.11)', () => {
   it('a sketch over 50,000 bytes is X-sketch-too-long, with the placeholder', () => {
     const work = (k: number) => `\ndef work${k}(value, scale=2):\n    result = value * scale // 3\n    if result > 100:\n        print(f"work${k}: {result:5d} {value / 3:.2f}")\n    return result\n`;
@@ -308,15 +366,21 @@ describe('C++ text helpers', () => {
 // ---------------------------------------------------------------------------
 
 const paths = toolchainPaths();
+/** Without the WebAssembly tools: the installed avr-g++ (tests-hardware-sim/native-toolchain.ts, §10.6). */
+const native = paths ? null : nativeToolchain();
 
-describe.skipIf(!paths)('the goldens compile with avr-g++ -Wall -Wextra', () => {
+describe.skipIf(!paths && !native)('the goldens compile with avr-g++ -Wall -Wextra', () => {
   it('without warnings, and fit the UNO', async () => {
     const fetchBytes = async (u: string) => new Uint8Array(readFileSync(u.startsWith('file:') ? new URL(u) : u));
-    const tc = new WasmToolchain({ toolsBase: pathToFileURL(paths!.toolsDir + '/').href, fetchBytes, importGlue: async (url) => (await import(url)).default });
-    const bundle = await loadBundle(paths!.bundleDir + '/', fetchBytes);
+    const tc = native ? native.tc : new WasmToolchain({ toolsBase: pathToFileURL(paths!.toolsDir + '/').href, fetchBytes, importGlue: async (url) => (await import(url)).default });
+    const bundle = await loadBundle((native ? native.bundleDir : paths!.bundleDir) + '/', fetchBytes);
     const problems: string[] = [];
-    for (const name of CASES.filter((n) => !n.startsWith('t9'))) {
-      const r = await buildSketch(tc, bundle, { source: golden(name), fileName: `${name}.ino`, warnings: 'all' });
+    const sketches = [
+      ...CASES.filter((n) => !n.startsWith('t9')).map((name) => ({ name, sketch: golden(name) })),
+      ...COMPILE_CASES.map((c) => ({ name: c.name, sketch: pythonToArduino(c.source).sketch })),
+    ];
+    for (const { name, sketch } of sketches) {
+      const r = await buildSketch(tc, bundle, { source: sketch, fileName: 'sketch.ino', warnings: 'all' });
       if (!r.ok) problems.push(`${name}: ${r.stage}: ${r.stderr.join(' ')}`);
       else if (r.warnings.length > 0 || !r.fits) problems.push(`${name}: ${r.warnings.map((w) => `${w.line}: ${w.message}`).join('; ')}${r.fits ? '' : ' (too big)'}`);
     }

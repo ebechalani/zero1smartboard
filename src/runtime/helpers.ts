@@ -118,6 +118,34 @@ export function __imul(a: unknown, b: unknown): number {
 }
 
 /**
+ * The steps of an AVR shift whose count is known only while running: avr-gcc loops on the count's
+ * low byte with `dec` + `brpl`, so a count of 1..128 shifts that many times and any other one
+ * (0, 129..255: a negative count, 256, …) not at all.
+ */
+function shiftSteps(n: unknown): number {
+  const c = toNumber(n) & 255;
+  return c >= 1 && c <= 128 ? c : 0;
+}
+
+/** `a << n` on the board in a `bits`-wide type (16 or 32), for a count known only while running: 32 or more steps give 0. The caller wraps the result to the type. */
+export function __shl(a: unknown, n: unknown, bits: unknown): number {
+  const k = shiftSteps(n);
+  return k >= toNumber(bits) ? 0 : toNumber(a) * 2 ** k;
+}
+
+/**
+ * `a >> n` on the board in a `bits`-wide type, for a count known only while running: arithmetic
+ * for a signed type (`a` negative ends at -1), logical for an unsigned one (`a` is then its
+ * unsigned value).
+ */
+export function __shr(a: unknown, n: unknown, bits: unknown, signed: unknown): number {
+  const k = shiftSteps(n);
+  const v = toNumber(a);
+  if (k >= toNumber(bits)) return signed && v < 0 ? -1 : 0;
+  return Math.floor(v / 2 ** k);
+}
+
+/**
  * Build a (possibly nested) array: `__array([5], 0)` is `int a[5]`,
  * `__array([2, 3], "")` is `String s[2][3]`. Every element holds `fill`.
  */
@@ -162,6 +190,8 @@ export const HELPERS = {
   __idiv,
   __imod,
   __imul,
+  __shl,
+  __shr,
   __ftoi,
   __ftou,
   __array,

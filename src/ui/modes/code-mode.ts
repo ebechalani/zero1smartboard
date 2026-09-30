@@ -153,9 +153,13 @@ export class CodeMode implements ModeController {
     return false;
   }
 
-  /** Review mode: the handed-in sketch (never saved: the editor does not persist in the review frame). */
-  showHandedIn(code: string): void {
+  /**
+   * Review mode: the handed-in sketch (never saved: the editor does not persist in the review
+   * frame); read-only when it was made from a Python program (§7.13).
+   */
+  showHandedIn(code: string, readOnly = false): void {
     this.setText(code);
+    this.editor.setReadOnly(readOnly);
   }
 
   flush(): void {

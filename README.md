@@ -14,8 +14,13 @@ No installation is needed for students: the simulator is a static web page.
 - **Real Arduino C++** — the sketch you test in the simulator is the sketch you
   upload to the real board (same pins, same libraries: `Servo`,
   `LiquidCrystal_I2C`, `DHT`, `Adafruit_NeoPixel`, `NewPing`, `Wire`).
-- **Faithful integer maths** — `int` is 16-bit, `byte` wraps at 255, `7 / 2`
-  is `3`, `map()` truncates, `Serial.print(3.0)` prints `3.00`.
+- **Faithful maths** — the simulator computes like the board's ATmega328P, in
+  every mode: `int` is 16-bit and overflows like on the board (`int a = 60 *
+  1000;` gives `-5536`, `long b = 50000; b * b` gives `-1794967296`), `byte`
+  wraps at 255, `float` and `double` are 32-bit (`0.1 + 0.2 == 0.3` is true),
+  `7 / 2` is `3`, `map()` truncates, `Serial.print(3.0)` prints `3.00`, and
+  `abort()` stops the program. A sketch that overflows now shows the board's
+  surprising result instead of the mathematically right one.
 - **Interactive board** — click the buttons, turn the potentiometer, flip the
   POT/LDR switch, set the light level, temperature, humidity and distance,
   unplug the servo / ultrasonic / DHT22 modules.
@@ -56,6 +61,19 @@ No installation is needed for students: the simulator is a static web page.
   Arduino sketch, shown next to them and run on the same virtual board. When
   students are ready, one click switches to *Code* mode with that sketch in
   the editor to continue by hand.
+- **Python mode.** A third mode (*Code | Blocks | Python*) where students write
+  and run Python in MicroPython style (`Pin(LED_RED, Pin.OUT)`, `led.on()`,
+  `time.sleep(0.5)`, `print()`, `input()`) on the same virtual board. The
+  Python program is translated in the browser into an Arduino sketch, shown
+  read-only in the Code tab: that sketch is what runs, what is handed in with
+  the Python, and what goes to the Arduino IDE or the board (the UNO cannot
+  run Python itself). Errors appear on the Python lines while typing, in
+  Python's own words, with a hint; a *What works* dialog lists the part of
+  Python that ZERO1 Python has (no classes or dictionaries yet), and the
+  Examples menu has 33 Python twins of the example sketches (13 lessons and
+  the 20 part-by-part worksheets), with the same behaviour. Numbers behave like on the board: whole numbers are 32-bit and
+  decimal numbers print with 7 digits, like MicroPython. See
+  [docs/PYTHON.md](docs/PYTHON.md).
 
 ## Pin map
 
@@ -121,6 +139,10 @@ every push to `main`. One-time setup in the GitHub repository:
 5. In Blocks mode, `src/blocks` defines the ZERO1 blocks and an Arduino code
    generator; the generated sketch enters the same pipeline at step 1. See
    [docs/BLOCKS.md](docs/BLOCKS.md).
+6. In Python mode, `src/python` translates the Python program (tokenizer,
+   parser, data-flow analysis, checks, emitter) into an Arduino sketch and a
+   line map; the sketch enters the same pipeline at step 1, and run-time
+   messages are shown on the Python lines. See [docs/PYTHON.md](docs/PYTHON.md).
 
 ## Hardware assumptions you can change in Settings
 

@@ -10,8 +10,8 @@
  * Hand in dialog with the work (docs/CLASSROOM.md §7.3), `#class=` links open
  * it with the code prefilled, the run status stays short, the global keys
  * leave a sketch alone while a dialog or a menu is open, and the style rules
- * that keep the header on one row at 1366×768 and put the actions on their own
- * row at 1280×800 (docs/PYTHON.md §7.14).
+ * that keep the header on one row at 1366×768 (also with Upload to board shown)
+ * and put the actions on their own row at 1280×800 (docs/PYTHON.md §7.14).
  *
  * Blockly is never loaded: in Blocks mode `createBlocksPanel` returns a small
  * fake panel whose "blocks" are a list of block types and whose sketch lists
@@ -349,11 +349,23 @@ function rulesAt(width: number, height: number): CSSStyleRule[] {
   return rules;
 }
 
+/** The toolbar while "Upload to board" is shown; happy-dom's `matches()` does not take :not() inside :has(). */
+const UPLOAD_SHOWN = ".z1-toolbar:has([data-slot='upload']:not([hidden]))";
+
+/** `el.matches(selector)`, with UPLOAD_SHOWN worked out here (Chromium: see the measurements in style.css). */
+function matchesRule(el: Element, selector: string): boolean {
+  if (selector.includes(UPLOAD_SHOWN)) {
+    const shown = el.ownerDocument.querySelector("[data-slot='upload']:not([hidden])") !== null;
+    selector = selector.split(UPLOAD_SHOWN).join(shown ? '.z1-toolbar' : '.z1-toolbar.z1-never');
+  }
+  return el.matches(selector);
+}
+
 /** The last value of `property` among the rules at that size that match `el` ('' = none). */
 function cssValue(rules: CSSStyleRule[], el: Element, property: string): string {
   let value = '';
   for (const rule of rules) {
-    if (el.matches(rule.selectorText) && rule.style.getPropertyValue(property)) value = rule.style.getPropertyValue(property);
+    if (matchesRule(el, rule.selectorText) && rule.style.getPropertyValue(property)) value = rule.style.getPropertyValue(property);
   }
   return value;
 }
@@ -397,6 +409,41 @@ describe('header at 1366×768 and 1280×800 (docs/PYTHON.md §7.14)', () => {
     const rules = rulesAt(1440, 900);
     expect(cssValue(rules, button(root, 'ide').querySelector('.z1-btn-label')!, 'display')).toBe('');
     expect(cssValue(rules, root.querySelector('.z1-toolbar')!, 'flex-basis')).toBe('');
+  });
+
+  it('with Upload to board shown, Upload and Arduino IDE show their icons only from 1366 to 1759 px (one row, measured in Chromium)', () => {
+    const root = start();
+    const upload = button(root, 'upload');
+    const ide = button(root, 'ide');
+    const label = (b: HTMLElement) => b.querySelector('.z1-btn-label')!;
+    expect(label(upload).textContent).toBe('Upload to board');
+    upload.hidden = false; // shown where uploading works (Web Serial and a deployed toolchain)
+    for (const [width, height] of [
+      [1366, 768],
+      [1440, 900],
+      [1536, 864],
+      [1759, 900],
+    ]) {
+      const rules = rulesAt(width, height);
+      expect(cssValue(rules, label(upload), 'display'), `${width}`).toBe('none');
+      expect(cssValue(rules, label(ide), 'display'), `${width}`).toBe('none');
+      expect(cssValue(rules, menuButton(root, 'share').querySelector('.z1-btn-label')!, 'display'), `${width}`).toBe('');
+    }
+    // The label is only hidden: the name and the tooltip stay.
+    expect(upload.getAttribute('aria-label')).toBe('Upload this sketch to the ZERO1 board');
+    expect(upload.title).toBe('Compile in the browser and upload to the board over USB');
+    for (const [width, height] of [
+      [1760, 990],
+      [1280, 800],
+    ]) {
+      const rules = rulesAt(width, height);
+      expect(cssValue(rules, label(upload), 'display'), `${width}`).toBe('');
+      expect(cssValue(rules, label(ide), 'display'), `${width}`).toBe('');
+    }
+    // Hidden again (no Web Serial): "Arduino IDE" keeps its label from 1440 px.
+    upload.hidden = true;
+    expect(cssValue(rulesAt(1440, 900), label(ide), 'display')).toBe('');
+    expect(cssValue(rulesAt(1536, 864), label(ide), 'display')).toBe('');
   });
 });
 

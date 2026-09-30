@@ -227,6 +227,8 @@ const OTHER_STAGES: Partial<Record<MessageCode, string>> = {
   'R-dht': 'the DHT check at run time',
   'R-sonar': 'pyDistanceCm at run time',
   'R-neg-power': 'pyPow at run time',
+  'R-shift': 'pyShift at run time',
+  'R-math-domain': 'pySqrt, pyLog, pyLog10, pyAsin, pyAcos at run time',
   'R-assert': 'assert at run time',
   'R-raise': 'raise at run time',
 };
@@ -278,6 +280,16 @@ describe('the other forms of a message (MESSAGE_VARIANTS)', () => {
     ['E-index-float', 'items = [1, 2]\nprint(items["a"])\n', 'TypeError: list indices must be integers or slices, not str'],
     ['E-index-float', 'x = 5\nprint(x[0])\n', "TypeError: 'int' object is not subscriptable"],
     ['E-index-float', 'x = 5\nx[0] = 1\n', "TypeError: 'int' object does not support item assignment"],
+    // a list literal given whole, a colour printed: hints that name no variable of the student's
+    ['NA-list-value', 'print([1, 2])\n', 'ZERO1 Python does not have whole lists made on the spot here yet: give the list a name first, for example values = [1, 2]'],
+    ['NA-list-value', 'print(sum([1, 2, 3]))\n', 'ZERO1 Python does not have whole lists made on the spot here yet: give the list a name first, for example values = [1, 2, 3]'],
+    ['NA-list-value', 'def show(v):\n    print(v)\nshow([1, 2, 3])\n', 'ZERO1 Python does not have whole lists made on the spot here yet: give the list a name first, for example values = [1, 2, 3]'],
+    ['NA-tuple', 'from machine import Pin\nfrom neopixel import NeoPixel\nnp = NeoPixel(Pin(9), 1)\nRED = (255, 0, 0)\nprint(RED)\n', 'ZERO1 Python does not have printing colours yet: print the parts: print(r, g, b)'],
+    // a function, module, built-in or class indexed (the sketch would index a C++ function or object)
+    ['E-index-float', 'def f():\n    return 1\nprint(f[0])\n', "TypeError: 'function' object is not subscriptable"],
+    ['E-index-float', 'import time\ntime[0] = 1\n', "TypeError: 'module' object does not support item assignment"],
+    ['E-index-float', 'print(len[0])\n', "TypeError: 'builtin_function_or_method' object is not subscriptable"],
+    ['E-index-float', 'from machine import Pin\nPin[0] = 3\n', "TypeError: 'type' object does not support item assignment"],
     ['E-kwarg', 'def f(a):\n    pass\nf(1, a=2)\n', "TypeError: f() got multiple values for argument 'a'"],
     ['NA-none-value', 'import dht\nfrom machine import Pin\nsensor = dht.DHT22(Pin(5))\nok = sensor.measure()\n',
       'ZERO1 Python does not have None as a value yet: measure() gives no value, so there is nothing to store. For the sensor: call sensor.measure() on its own line, then read sensor.temperature().'],
@@ -290,7 +302,12 @@ describe('the other forms of a message (MESSAGE_VARIANTS)', () => {
     ['E-part-pin', 'from zero1 import HCSR04\nsonar = HCSR04(trigger_pin=5)\n', 'The ZERO1 ultrasonic sensor is wired to D3 (TRIG_PIN) and D2 (ECHO_PIN): write HCSR04() without a pin.'],
     ['W-shadow', 'from machine import Pin\nPin = 5\nprint(Pin)\n', "'Pin' was imported from machine: from here on, Pin() cannot be used in this program."],
     ['E-param-kinds', 'def show(x):\n    print(x)\nitems = [1, 2]\nshow(5)\nshow(items)\n',
-      'ZERO1 Python does not have functions that take a number and a list in the same place yet: show() gets a number on line 4 and a list on line 5.'],
+      'ZERO1 Python does not have functions that take a number and a list of whole numbers in the same place yet: show() gets a number on line 4 and a list of whole numbers on line 5.'],
+    // Two lists of other items (finding: 'a list and a list' said nothing): the items are named.
+    ['E-param-kinds', 'def f(l):\n    print(len(l))\na = ["a"]\nb = [1]\nf(a)\nf(b)\n',
+      'ZERO1 Python does not have functions that take a list of text and a list of whole numbers in the same place yet: f() gets a list of text on line 5 and a list of whole numbers on line 6.'],
+    ['E-param-kinds', 'def avg(values):\n    return sum(values) / len(values)\nt = [20, 21, 22]\nprint(avg(t))\nt2 = [1.5, 2.5]\nprint(avg(t2))\n',
+      'ZERO1 Python does not have functions that take a list of whole numbers and a list of decimal numbers in the same place yet: avg() gets a list of whole numbers on line 4 and a list of decimal numbers on line 6.'],
     ['E-return-kinds', 'def pick(t):\n    if t:\n        return 5\n    return (255, 0, 0)\nprint(pick(1) == 1)\n',
       "ZERO1 Python does not have functions that give a number and a colour yet: 'pick' gives a number on line 3 and a colour on line 4."],
     ['E-list-kinds', 'items = [1, (255, 0, 0)]\n', "ZERO1 Python does not have lists that mix a number and a colour yet: 'items' gets a number on line 1 and a colour on line 1."],
@@ -374,6 +391,19 @@ describe('the list of diagnostics', () => {
   });
   it('reports an undefined name once, where it is first used', () => {
     expect(pythonToArduino('led = Pin(13)\nled2 = Pin(12)\n').diagnostics.map((d) => [d.code, d.line])).toEqual([['E-missing-import', 1]]);
+  });
+  it('a part made without its import is still that part: the NameError is the only error (like CPython)', () => {
+    const codes = (source: string) => pythonToArduino(source).diagnostics.map((d) => `${d.code}@${d.line}`);
+    expect(codes('import time\nled = Pin(13, Pin.OUT)\nwhile True:\n    led.on()\n    time.sleep(1)\n    led.off()\n')).toEqual(['E-missing-import@2']);
+    expect(codes('from machine import Pin\nsensor = dht.DHT22(Pin(5))\nsensor.measure()\nprint(sensor.temperature())\n')).toEqual(['E-missing-import@2']);
+    expect(codes('from machine import Pin\nnp = NeoPixel(Pin(9), 1)\nnp[0] = (255, 0, 0)\nnp.write()\n')).toEqual(['E-missing-import@2']);
+    expect(codes('from machine import Pin\nadc = ADC(Pin(26 - 12))\nprint(adc.read())\nlcd = LCD()\nlcd.putstr("hi")\nb = Buzzer()\nb.tone(440)\n')).toEqual([
+      'E-missing-import@2',
+      'E-missing-import@4',
+      'E-missing-import@6',
+    ]);
+    // Any other value that comes only from an error: its kind is a guess, so nothing more is said about it.
+    expect(codes('led = foo(13)\nled.on()\nx = bar()\nprint(x[0])\nx[1] = 2\ny = 5\ny.on()\n')).toEqual(['E-name@1', 'E-name@3', 'E-attr-object@7']);
   });
   it('analyze() gives the checked, typed program with its diagnostics', () => {
     const text = 'x = 5\nprint(x)\n';

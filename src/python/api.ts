@@ -17,6 +17,9 @@ export type ModuleName = 'machine' | 'time' | 'utime' | 'neopixel' | 'dht' | 'hc
 /** The modules E-module lists, in its order (`utime` is not listed: it is `time`). */
 export const MODULE_NAMES: readonly ModuleName[] = ['machine', 'time', 'neopixel', 'dht', 'hcsr04', 'math', 'random', 'micropython', 'zero1'];
 
+/** The modules a name used without its import is looked up in (E-missing-import; ZERO1 names from zero1 first). */
+export const IMPORT_ORDER: readonly ModuleName[] = ['machine', 'time', 'neopixel', 'dht', 'zero1', 'math', 'random', 'micropython', 'hcsr04'];
+
 /** The kinds of board object (§2.9 "board objects", §3.8). */
 export type PartName = 'Pin' | 'PWM' | 'ADC' | 'I2C' | 'NeoPixel' | 'DHT' | 'HCSR04' | 'Servo' | 'LCD' | 'Buzzer' | 'SevenSegment';
 

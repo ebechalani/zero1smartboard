@@ -484,6 +484,57 @@ describe('rule 4: String(float, n), String + float and dtostrf() format like avr
   });
 });
 
+describe('shifts by a count known only while running, and a[i] op= v with an index that has effects', () => {
+  it('shift like avr-gcc: a loop on the count\'s low byte, 1..128 steps (32 or more give 0 or -1; 0, 129..255 and -1 do not shift)', async () => {
+    const lines = await printed(
+      `  for (int k = 0; k < 16; k++) {
+    long n = counts[k];
+    long a = 1;
+    long b = -1024;
+    unsigned long u = 0x80000000UL;
+    int i = 1;
+    int j = -1024;
+    unsigned int w = 0x8000;
+    Serial.print(n); Serial.print(' ');
+    Serial.print(a << n); Serial.print(' ');
+    Serial.print(b >> n); Serial.print(' ');
+    Serial.print(u >> n); Serial.print(' ');
+    Serial.print(i << n); Serial.print(' ');
+    Serial.print(j >> n); Serial.print(' ');
+    Serial.println(w >> n);
+  }`,
+      'long counts[] = {0, 1, 15, 16, 17, 31, 32, 33, 40, 128, 129, 255, 256, 257, 300, -1};',
+    );
+    // n, long 1 << n, long -1024 >> n, unsigned long 0x80000000 >> n, int 1 << n, int -1024 >> n, unsigned int 0x8000 >> n
+    expect(lines).toEqual([
+      '0 1 -1024 2147483648 1 -1024 32768',
+      '1 2 -512 1073741824 2 -512 16384',
+      '15 32768 -1 65536 -32768 -1 1',
+      '16 65536 -1 32768 0 -1 0',
+      '17 131072 -1 16384 0 -1 0',
+      '31 -2147483648 -1 1 0 -1 0',
+      '32 0 -1 0 0 -1 0',
+      '33 0 -1 0 0 -1 0',
+      '40 0 -1 0 0 -1 0',
+      '128 0 -1 0 0 -1 0',
+      '129 1 -1024 2147483648 1 -1024 32768',
+      '255 1 -1024 2147483648 1 -1024 32768',
+      '256 1 -1024 2147483648 1 -1024 32768',
+      '257 2 -512 1073741824 2 -512 16384',
+      '300 0 -1 0 0 -1 0',
+      '-1 1 -1024 2147483648 1 -1024 32768',
+    ]);
+  });
+
+  it('a[next()] += 5 and a[next()]++ call next() once each; a[true] is a[1]', async () => {
+    const lines = await printed(
+      '  int v[3] = {0, 0, 0};\n  v[nextIndex()] += 5;\n  v[nextIndex()]++;\n  bool t = true;\n  Serial.print(v[1]); Serial.print(\' \'); Serial.print(calls); Serial.print(\' \'); Serial.println(v[t]);',
+      'int calls = 0;\nint nextIndex() { calls++; return 1; }',
+    );
+    expect(lines).toEqual(['6 2 6']);
+  });
+});
+
 describe('rule 5: float literals with an exponent', () => {
   it('3.4e38 and 1e21 transpile and run', async () => {
     expect(
@@ -494,5 +545,52 @@ describe('rule 5: float literals with an exponent', () => {
   Serial.println(1e21 > 1e20);
   Serial.println(1e39 > 3.4e38);`),
     ).toEqual(['1', '340000000.0', '1', '1']);
+  });
+});
+
+describe('text with an embedded NUL ends at the NUL, like a C string on the board', () => {
+  it('print, String(...), + and strlen read a literal up to its NUL; String((char)0) is empty', async () => {
+    expect(
+      await printed(`
+  Serial.println("ab\\0cd");
+  Serial.print("x\\0y");
+  Serial.println();
+  Serial.println("\\0" "1");
+  String s = "ab\\0cd";
+  Serial.println(s);
+  Serial.println(s.length());
+  Serial.println(String("x") + "a\\0b");
+  Serial.println(strlen("ab\\0cd"));
+  Serial.println(String((char)0).length());
+  Serial.println(String("ab") + String((char)0) + "c");
+  Serial.write("ab\\0cd");
+  Serial.println();`),
+    ).toEqual(['ab', 'x', '', 'ab', '2', 'xa', '2', '0', 'abc', 'ab']);
+  });
+
+  it('a String keeps a NUL added as a char; write(literal, n) and char s[] = "…" keep the bytes after it', async () => {
+    expect(
+      await printed(`
+  String t = "a";
+  t += '\\0';
+  t += "b";
+  Serial.println(t);
+  Serial.println(t.length());
+  Serial.write("ab\\0cd", 5);
+  Serial.println();
+  Serial.print('\\0');
+  Serial.println();
+  char buf[] = "ab\\0cd";
+  Serial.println(sizeof(buf));
+  Serial.println(buf);`),
+    ).toEqual(['a\0b', '3', 'ab\0cd', '\0', '6', 'ab']);
+  });
+
+  it('the LCD prints a literal up to its NUL too', async () => {
+    const r = await runSketch(
+      '#include <Wire.h>\n#include <LiquidCrystal_I2C.h>\nLiquidCrystal_I2C lcd(0x27, 16, 2);\nvoid setup() {\n  lcd.init();\n  lcd.backlight();\n  lcd.print("ab\\0cd");\n  lcd.setCursor(0, 1);\n  lcd.print(String("x") + "y\\0z");\n}\nvoid loop() {}\n',
+      { stopAfterMs: 200, maxLoops: 1 },
+    );
+    expect(r.board.lcd.state.chars.map((row) => String.fromCharCode(...row).trimEnd())).toEqual(['ab', 'xy']);
   });
 });

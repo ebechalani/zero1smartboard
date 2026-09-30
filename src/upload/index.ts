@@ -64,6 +64,8 @@ export function installUploadButton(options: InstallUploadButtonOptions): Instal
   const { button } = options;
   let dialog: UploadDialog | null = null;
   let service: UploadServiceLike | null = options.service ?? null;
+  /** dispose() came first (the review frame disposes at once): detection shows nothing then. */
+  let disposed = false;
   button.hidden = true;
 
   const onClick = (): void => {
@@ -78,7 +80,7 @@ export function installUploadButton(options: InstallUploadButtonOptions): Instal
 
   const ready = (options.detect ?? (() => detectUploadSupport()))().then(
     (support) => {
-      if (!support.ok) return support;
+      if (!support.ok || disposed) return support;
       service ??= new UploadService({ manifest: support.manifest });
       dialog = createUploadDialog(options.parent, { service, onConsole: options.onConsole });
       button.hidden = false;
@@ -93,6 +95,8 @@ export function installUploadButton(options: InstallUploadButtonOptions): Instal
     dialog: () => dialog,
     isOpen: () => dialog?.isOpen() ?? false,
     dispose() {
+      disposed = true;
+      button.hidden = true;
       button.removeEventListener('click', onClick);
       dialog?.close();
       dialog?.element.remove();

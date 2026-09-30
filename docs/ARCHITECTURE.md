@@ -897,10 +897,13 @@ export function createBoardView(container: HTMLElement, board: Zero1Board): Boar
   untouched).
 - Python tab (`modes/python-mode.ts`; docs/PYTHON.md §7.3–7.4): exists in
   Python mode only, just before Generated JS, selected on entering the mode,
-  after Run with errors, New, an example or a link. The translator, the
-  examples, the "What works" content and the editor extras come in the lazy
-  Python chunk (`python-chunk.ts`, reached only with `import()`; "Loading
-  Python…" meanwhile, the chunk-failure path on error). A one-line note
+  after Run with errors, New, an example or a link. The translator, example
+  01, the "What works" content and the editor extras come in the lazy
+  Python chunk (`python-chunk.ts`, reached only with `import()`), the other
+  examples in `python-examples-chunk.ts`, fetched together with it
+  ("Loading Python…" meanwhile and "Loading…" in Examples ▾, the
+  chunk-failure path on error, also when a swallowed preload error makes
+  `import()` give undefined). A one-line note
   above the editor ("… **What works** · Esc then Tab: leave the editor ·
   Ctrl+M: Tab moves focus") opens the What works dialog
   (`python-help-dialog.ts`, `WHAT_WORKS` of src/python/help.ts laid out with
@@ -914,7 +917,8 @@ export function createBoardView(container: HTMLElement, board: Zero1Board): Boar
   lint (700 ms) translates, puts the sketch (or the placeholder) into the
   mirror, and checks the sketch with `transpile()`: its errors become
   X-sketch-error and its warnings W-sketch on the Python lines they were
-  made from.
+  made from (the analogWrite() warning on a pin without PWM is left out when
+  the program already has its W-pwm-pin / W-pwm-buzzer / W-pwm-servo).
 - Header menus (`menu.ts`: a "Label ▾" trigger with `aria-haspopup="menu"`
   and an absolutely positioned `role="menu"` list, optionally in titled
   groups; opens on click or ArrowDown, arrows / Home / End move between the
@@ -1006,7 +1010,10 @@ export function createBoardView(container: HTMLElement, board: Zero1Board): Boar
   Newline; in Python mode forced to Newline and disabled, `forceNewline()`,
   the student's choice comes back in the other modes), baud label ("9600 baud" from `Serial.begin`, display only).
   Output arrives via `board.serial.onTx`. Show a hint when the sketch printed
-  nothing yet. Output while the tab is hidden puts a dot on the tab (its
+  nothing yet. The hint and the send box name what prints and reads
+  (`setWords()`, the mode's `runWords.serial`): the sketch and
+  `Serial.println("Hello");` in Code and Blocks mode, "your program" and
+  `print("Hello")` in Python mode. Output while the tab is hidden puts a dot on the tab (its
   `aria-label` then reads "Serial Monitor, new output"); in Python mode the
   first such output of a run also puts "print() output is in the Serial
   Monitor tab" with the link "Open the Serial Monitor" into the console.
@@ -1036,8 +1043,11 @@ export function createBoardView(container: HTMLElement, board: Zero1Board): Boar
   dialog), and Esc is ignored while a header menu is open (it closes the menu).
 - Header (docs/PYTHON.md §7.14): at 1366–1439 px the Settings and Arduino IDE
   buttons show their icons only (`aria-label` and tooltip unchanged), so
-  brand, mode switch, the seven actions and the run status stay on one row
-  (with the Upload button shown as well, the actions wrap); below 1366 px the
+  brand, mode switch, the seven actions and the run status stay on one row.
+  While Upload to board is shown, Upload and Arduino IDE show their icons only
+  from 1366 to 1759 px (`.z1-toolbar:has(…upload:not([hidden]))`), which keeps
+  one row with "Share · <name>" and "Error at 12345 ms" (measured in Chromium
+  at 1366, 1440, 1536 and 1600 px); below 1366 px the
   actions get a row of their own. Entering a mode toasts its name ("Python
   mode").
 - Upload to board (`src/upload`): `getSketch()` gives an `UploadPayload`
@@ -1056,9 +1066,18 @@ export function createBoardView(container: HTMLElement, board: Zero1Board): Boar
   `hashchange` listener, posts
   `{ type: 'z1-review-ready' }` to the parent and accepts `{ type: 'z1-review',
   payload }` only from `window.parent` on the site's own origin; the payload
-  decides the mode (blocks from `workspaceJson`, else the handed-in sketch in
-  Code mode with the banner "Made from the student's blocks." / "… Python
-  program."; Python review mode proper is docs/PYTHON.md §7.13) and nothing runs until Run. A `#review=` /
+  decides the mode (`ModeController.review()`): Blocks from `workspaceJson`;
+  Python (docs/PYTHON.md §7.13) shows the payload's `python` read-only in the
+  Python tab and today's translation in the Code tab; when that is not the
+  handed-in `code`, a banner above the program ("The simulator was updated
+  since this hand-in: the Code tab shows today's translation.") offers **Use
+  the handed-in sketch** (the mirror and Run then use `code`, on sketch
+  lines). Otherwise (no workspace / no Python, the chunk cannot load, the
+  program has errors today) the handed-in sketch in Code mode — read-only for
+  Python — with the banner "Made from the student's blocks." / "… Python
+  program." (the Code tab's banner uses the same words over the mirror in the
+  frame). The Upload button stays hidden (disposed before detection ends).
+  Nothing runs until Run. A `#review=` /
   `#rid=` hash on the site origin is sent to `./review.html` with
   `location.replace` (docs/CLASSROOM.md §3.4).
 - X1 hardening: `codegen.ts` refuses the member names `constructor`,
@@ -1322,6 +1341,13 @@ normalize → tokenize (tokens.ts) → parse (parser.ts, ast.ts)   syntax errors
   readings), `//` `%` `**` and guarded divisions go through the helpers (N3–N5). The board API is
   lowered by the member ids of `api.ts` (`Pin.on`, `time.sleep_ms`, …). Statements that can never
   run (after an endless loop, a `return`, `break` or `continue`) are left out with a comment.
+  Python's order of evaluation (E4): where C++ leaves it open (operands, arguments), the parts
+  with effects — calls of own functions that have effects, `input()`, `pop()` — that could run
+  out of order are worked out first into `value1`, `value2`, … (`order()` / `hoist()` through
+  `ctx.pre`), and print() / putstr() work out their values before printing when a value with
+  effects comes after printed text. E3 without warnings: a local or parameter the C++ never reads
+  gets `(void)name;` (`quietUnused()`), overflowing literal arithmetic is written as its 32-bit
+  result.
 - **Helpers** (`helpers.ts`, §4.8): the fixed texts verbatim, the list helpers generated per
   element type from one template (`…L` long, `…F` float, `…S` String, `…B` bool, `…C` colour,
   `…P` Pin, `…Y` byte); `helperTexts(names)` adds what each needs, in `helperOrder`, each once.
@@ -1331,12 +1357,44 @@ normalize → tokenize (tokens.ts) → parse (parser.ts, ast.ts)   syntax errors
   statement it was made from (0 for scaffolding and helper bodies); `composeJsLineMap()` gives the
   Executor Python lines; `pythonizeRuntimeMessage()` turns an `abort()` report into the last
   `Line N: …` line of the Serial Monitor, so a runtime stop has its Python line on every browser.
+- **Runtime texts in Python words** (`messages.ts` `RUNTIME_WORDINGS`, §5.9): the simulator's own
+  console texts that a translated program can still trigger (a `Pin` switched without
+  `Pin.OUT`, a pin or ADC number worked out while running, PWM
+  on pins 9/10 next to a `Servo()`, `servo.angle()` after `detach()`, an LCD at another address,
+  the LCD or RGB LED used by a function before the line that makes it) are reworded by
+  `pythonizeRuntimeMessage()`; everything else passes through. A new console text in
+  `src/runtime` that Python can reach needs an entry (and a case in `tests/python-runtime.test.ts`).
+- **PWM.** `duty_u16(v)` is `analogWrite(p, v / 256)`: 65535 → 255 and 32768 → 128, the first
+  value that switches a pin without PWM on, as W-pwm-pin says (it was `/ 257` before 2026-09-30).
+- **Examples** (`src/examples/python`, §9): 33 `NN_name.py` files imported with `?raw`; `index.ts`
+  lists the 13 lessons (`PYTHON_LESSON_EXAMPLES`), `parts.ts` the 20 part-by-part examples 40–59
+  (`PYTHON_PART_EXAMPLES`); `PYTHON_EXAMPLES` is both, in the order of `EXAMPLES`. Example 01,
+  the first-visit program, is also exported alone (`first.ts`, `PYTHON_FIRST_EXAMPLE`): the Python
+  chunk carries it, the other 32 are a lazy chunk of their own (`src/ui/python-examples-chunk.ts`). Each has the id, title and group of its `.ino` twin, a
+  module docstring with the twin's four header sections in Python words, the twin's behaviour,
+  and translates with no warning. The sensor examples 52–58 catch `OSError` (no echo, DHT22
+  unplugged) where their twins print a value; those branches have Python-only tests.
 - **Tests.** `python-tokens`, `python-parser`, `python-resolve`, `python-flow`, `python-kinds`,
   `python-errors` (the §5 table and its meta-tests), `python-api`, `python-reserved`,
   `python-emit` (goldens `tests/fixtures/python/<case>.py` → `<case>.ino`, `UPDATE_GOLDEN=1`
   regenerates; T1–T9 compared with docs/PYTHON.md §4.10; every golden transpiles without
   warnings and, with the WebAssembly toolchain built, compiles with avr-g++ `-Wall -Wextra`
   without warnings), `python-helpers` (§4.8 verbatim; each helper's value in the simulator against
-  Python's; every runtime stop), `python-sourcemap`, `python-contract`.
-  `npm run test:hardware-sim` adds `tests-hardware-sim/python-board.test.ts`: the helpers and the
-  deterministic goldens print the same Serial output on avr8js as in the simulator.
+  Python's; every runtime stop), `python-sourcemap`, `python-contract`,
+  `python-runtime` (every row of §2.13 on the simulator, the runtime stops of §5.6 with their
+  console error and `Line N:` text, `input()`, the finish of a program without `while True:`,
+  every `RUNTIME_WORDINGS` entry against the real text) and `python-cpython` (the print-only
+  programs of `tests/fixtures/python/cpython/` against CPython 3.12's output, recorded by
+  `node scripts/record-cpython.mjs`; lines that differ are listed in `<name>.deviations` with
+  their §2.13 row and the board's line).
+  **Twin behaviour** (§10.4): `tests/example-behaviour.ts` holds `EXAMPLE_BEHAVIOUR`, the
+  behaviour checks of every example keyed by example id, and `describeExampleBehaviour(label,
+  sourceOf)`, which registers the checks of the examples `sourceOf(id)` gives a sketch for.
+  `examples.test.ts` runs it on the `.ino` sources, `python-examples.test.ts` on the sketches made
+  from the Python examples (plus their list, headers, translation without warnings, a clean
+  4-second run and the Python-only checks), so both twins pass the same assertions.
+  `npm run test:hardware-sim` adds `tests-hardware-sim/python-board.test.ts`: every golden and
+  every Python example compiles without warnings and fits the UNO; the helpers, the deterministic
+  goldens and examples print the same Serial output on avr8js as in the simulator (distances, and
+  the numbers made from them, within 1 cm: the chip times the echo a little differently); `duty_u16()`
+  and `len()` of accented text behave on the chip as the warnings say.

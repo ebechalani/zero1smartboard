@@ -135,7 +135,9 @@ export function createStrings(lib: LibContext): Record<string, unknown> {
  * The `String(x)` / `String(x, base|decimals)` constructor: an integer with a
  * base (`String(255, HEX)` → "FF"), a float with a number of decimals
  * (`String(3.14159, 2)` → "3.14", default 2), a char stays a character,
- * a bool becomes "1"/"0", a string is copied.
+ * a bool becomes "1"/"0", a string is copied. `String((char)0)` is empty, as on
+ * the board: WString.cpp builds a `char` into a C string and copies it up to its
+ * NUL (the transpiler already cuts string literals at their first NUL).
  */
 export function arduinoString(x: unknown, arg?: unknown): string {
   if (x instanceof FloatBox) return floatToString(x.value, arg);
@@ -143,7 +145,7 @@ export function arduinoString(x: unknown, arg?: unknown): string {
     if (!Number.isInteger(x)) return floatToString(x, arg);
     return formatPrintArg(x, arg === undefined ? undefined : intArg(arg));
   }
-  if (typeof x === 'string') return x;
+  if (typeof x === 'string') return x === '\0' ? '' : x;
   if (typeof x === 'boolean') return x ? '1' : '0';
   if (x === null || x === undefined) return '';
   return formatPrintArg(x);

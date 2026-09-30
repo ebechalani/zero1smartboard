@@ -11,8 +11,10 @@
  * (§7.11), the Arduino IDE and Upload payloads (§7.12), the Python hand-in, and Esc then Tab
  * leaving both editors (§7.4).
  *
- * While the translator is being built, programs it cannot translate yet get a fake translation
- * (`fake.translations`, keyed by the Python text; everything else goes to the real translator).
+ * Every program goes through the real translator, except for two things no real program makes
+ * on purpose: a sketch that transpile() refuses (a translator bug, X-sketch-error) and a
+ * transpile() warning that the translator's own checks do not foresee (W-sketch). Those come
+ * from fake translations (`fake.translations`, keyed by the Python text).
  * Blockly is never loaded: `createBlocksPanel` returns a small fake panel (as in app-header.test.ts).
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -26,8 +28,7 @@ import { CODE_STORAGE_KEY, encodeShareCode } from '../src/ui/editor';
 import { BLOCKS_STORAGE_KEY, MODE_STORAGE_KEY, type BlocksPanel, type BlocksPanelOptions } from '../src/ui/blocks-panel';
 import { PYTHON_BASELINE_STORAGE_KEY, PYTHON_FIX_FIRST, PYTHON_STORAGE_KEY } from '../src/ui/modes/python-mode';
 import { CODE_PREVIOUS_STORAGE_KEY } from '../src/ui/modes/code-mode';
-import { BLANK_PYTHON, PYTHON_EXAMPLES, SourceMap, pythonToArduino, type PythonTranslation } from '../src/python';
-import { message } from '../src/python/messages';
+import { BLANK_PYTHON, PYTHON_EXAMPLES, SourceMap, message, pythonToArduino, type PythonTranslation } from '../src/python';
 import { PythonMode } from '../src/ui/modes/python-mode';
 import type { ModeHost } from '../src/ui/modes/types';
 import { transpile } from '../src/transpiler';
@@ -75,7 +76,7 @@ class FakePanel implements BlocksPanel {
 const fake = vi.hoisted(() => ({
   panel: null as unknown,
   handinOpens: [] as HandinWork[],
-  /** Fake translations by Python text (programs the translator cannot translate yet). */
+  /** Fake translations by Python text (what no real program makes: see the top of the file). */
   translations: new Map<string, unknown>(),
   /** The options the app gave installUploadButton (its getSketch() is the Upload payload). */
   upload: null as unknown,
@@ -523,6 +524,44 @@ describe('share links', () => {
     expect(selectedTab(root)).toBe('tab-python');
     expect(pythonText(root)).toBe(first);
   });
+
+  it('the mode of a link that opens the page is remembered: a reload stays in it (z1.mode)', async () => {
+    location.hash = `#python=${encodeSharePython('print("Hi")\n')}`;
+    const root = start({ mode: 'code' });
+    await pythonReady(root);
+    expect(localStorage.getItem(MODE_STORAGE_KEY)).toBe('python');
+    app!.destroy();
+    app = null;
+    document.body.innerHTML = '';
+    const again = start(); // the reload: no link any more
+    await pythonReady(again);
+    expect(document.body.dataset.mode).toBe('python');
+    expect(pythonText(again)).toBe('print("Hi")\n');
+  });
+
+  it('a #python= link that opens the page asks before replacing a hand-written program; declined, the saved program stays', async () => {
+    const mine = 'print("my homework")\n';
+    const link = 'print("demo")\n';
+    const confirm = stubConfirm(false);
+    location.hash = `#python=${encodeSharePython(link)}`;
+    const root = start({ python: mine });
+    await pythonReady(root);
+    await vi.waitFor(() => expect(confirm).toHaveBeenCalledWith('Load the Python program from this link?\nYour current Python program will be lost.'));
+    await settle();
+    expect(pythonText(root)).toBe(mine);
+    expect(localStorage.getItem(PYTHON_STORAGE_KEY)).toBe(mine);
+
+    // Agreed (and an untouched program asks nothing): the link's program.
+    app!.destroy();
+    app = null;
+    document.body.innerHTML = '';
+    const yes = stubConfirm(true);
+    location.hash = `#python=${encodeSharePython(link)}`;
+    const second = start();
+    await pythonReady(second);
+    await vi.waitFor(() => expect(pythonText(second)).toBe(link));
+    expect(yes).toHaveBeenCalledTimes(1);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -550,6 +589,14 @@ describe('New and Examples in Python mode (§7.7)', () => {
     expect(confirm).toHaveBeenCalledWith('Start a new blank program?\nYour current Python program will be lost.');
     expect(pythonText(root)).toBe(`x = 1\n${BLANK_PYTHON}`);
     expect(codeText(root)).toBe(EXAMPLES[0].source); // New never touches another mode's program
+  });
+
+  it('the Examples menu says "Loading…" while the Python chunks are on the way, not "No examples available"', async () => {
+    const root = start({ mode: 'python' });
+    root.querySelector<HTMLButtonElement>('[data-slot="examples"] > button')!.click();
+    expect(root.querySelector('[data-slot="examples"] .z1-menu-empty')?.textContent).toBe('Loading…');
+    await pythonReady(root);
+    expect(menuItems(root, 'examples')).toEqual(PYTHON_EXAMPLES.map((e) => e.title));
   });
 
   it('lists the Python examples and loads them into the Python editor, never the C++ one', async () => {
@@ -607,6 +654,22 @@ describe('Run in Python mode (§7.8)', () => {
     expect(python.state.doc.lineAt(python.state.selection.main.head).number).toBe(errors[0].line);
   });
 
+  it('a Run pressed while the Python chunk loads does nothing once the student has switched back to Code mode', async () => {
+    const root = start({ code: MY_SKETCH }, true);
+    button(root, 'mode-python').click(); // the chunk starts loading
+    const running = app!.run();
+    button(root, 'mode-code').click(); // before it arrives
+    await Promise.race([running, new Promise((resolve) => setTimeout(resolve, 1000))]); // a run that started would not end
+    await settle();
+    const status = root.querySelector<HTMLElement>('[data-slot="status"]')!.dataset.status;
+    const texts = consoleEntries(root).map((e) => e.textContent ?? '');
+    await app!.stop();
+    expect(document.body.dataset.mode).toBe('code');
+    expect(status).not.toBe('running');
+    expect(texts.filter((t) => t.includes('Program started.'))).toEqual([]);
+    expect(selectedTab(root)).toBe('tab-code');
+  });
+
   it('example 01 runs the sketch made from it, with the line map composed through the source map', async () => {
     const compose = vi.spyOn(SourceMap.prototype, 'composeJsLineMap');
     const root = await startPython({}, true);
@@ -643,6 +706,11 @@ describe('exports in Python mode', () => {
     expect(root.querySelector<HTMLDialogElement>('dialog.z1-ide')!.open).toBe(false);
     expect(await downloads.files()).toEqual([]);
     Reflect.deleteProperty(navigator, 'clipboard');
+    // The toast says "see the console": the errors are there, as Run shows them.
+    await vi.waitFor(() => expect(consoleEntries(root).length).toBeGreaterThan(0));
+    const errors = pythonToArduino(BROKEN).diagnostics.filter((d) => d.severity === 'error');
+    expect(consoleEntries(root)[0].querySelector('.z1-console-text')!.textContent).toBe(errors[0].message);
+    expect(root.querySelector('.z1-console-status')!.textContent).toBe(`${errors.length} error${errors.length === 1 ? '' : 's'} — fix and run again`);
   });
 
   it('Download .ino and the Arduino IDE get the sketch made from a program without errors', async () => {
@@ -709,7 +777,7 @@ describe('Esc then Tab leaves the editor (§7.4, WCAG 2.1.2)', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Fake translations (programs the translator cannot translate yet)
+// Fake translations (a translator bug, a sketch warning the translator does not foresee)
 // ---------------------------------------------------------------------------
 
 /** A translation of `python` into the sketch `lines` ([C++ line, Python line it was made from]). */
@@ -821,14 +889,75 @@ describe('live lint and Run with the sketch check (§7.8)', () => {
     expect(selectedTab(root)).toBe('tab-python');
   });
 
-  it('the program’s warnings and the sketch’s (W-sketch) are on Python lines, in the editor and in the console on Run', async () => {
+  it('the program’s warnings are on Python lines, in the editor and in the console on Run', async () => {
+    const python = [
+      'from machine import Pin, PWM',
+      'from zero1 import LED_RED, LED_GREEN',
+      'import time',
+      '',
+      'max = 1',
+      'red = PWM(Pin(LED_RED))',
+      'red.duty_u16(30000)',
+      'green = PWM(Pin(LED_GREEN), duty_u16=1000)',
+      '',
+      'while True:',
+      '    time.sleep(600)',
+      '',
+    ].join('\n');
+    const translation = pythonToArduino(python);
+    expect(translation.ok).toBe(true);
+    const expected = translation.diagnostics.map((d): [number, string] => [d.line, d.message]);
+    expect(translation.diagnostics.map((d) => [d.code, d.line])).toEqual([
+      ['W-shadow', 5],
+      ['W-pwm-pin', 6],
+      ['W-pwm-pin', 8],
+      ['W-sleep-long', 11],
+    ]);
+    const root = await startPython({ python }, true);
+    expect(pythonDiagnostics(root)).toEqual(expected);
+
+    const running = app!.run();
+    await vi.waitFor(() => expect(consoleTexts(root)).toContain('Program started.'));
+    expect(consoleTexts(root)).toEqual([...expected.map(([, text]) => text), 'Program started.']);
+    const lines = consoleEntries(root).slice(0, 4).map((e) => e.querySelector('.z1-console-line')!.getAttribute('aria-label'));
+    expect(lines).toEqual([5, 6, 8, 11].map((n) => `Go to line ${n} in the Python program`));
+    await app!.stop();
+    await running;
+  });
+
+  it('says a PWM on a pin without PWM once: W-pwm-pin, not also the sketch’s analogWrite() warning (W-sketch)', async () => {
+    const python = [
+      'from machine import Pin, PWM',
+      'from zero1 import LED_RED, BUZZER',
+      '',
+      'red = PWM(Pin(LED_RED))',
+      'red.duty_u16(30000)',
+      'beep = PWM(Pin(BUZZER), duty_u16=1000)',
+      '',
+    ].join('\n');
+    const translation = pythonToArduino(python);
+    // The sketch has the analogWrite() warning on both lines made from a duty (5 and 6)…
+    const sketchWarnings = transpile(translation.sketch).warnings.map((w) => translation.map.pythonLineOf(w.line));
+    expect(sketchWarnings).toEqual([5, 6]);
+    // …which the translator already gave in Python words, on the PWM() lines.
+    expect(translation.diagnostics.map((d) => [d.code, d.line])).toEqual([
+      ['W-pwm-pin', 4],
+      ['W-pwm-buzzer', 6],
+    ]);
+    const root = await startPython({ python }, true);
+    expect(pythonDiagnostics(root)).toEqual(translation.diagnostics.map((d) => [d.line, d.message]));
+    await app!.run();
+    expect(consoleTexts(root).filter((t) => t!.startsWith('In the Arduino sketch made from this line'))).toEqual([]);
+  });
+
+  it('a sketch warning that the translator does not foresee is W-sketch on its Python line; one on scaffolding is left out', async () => {
     const shadow = "'max' is a Python built-in function: from here on, max() cannot be used in this program.";
     const python = fakeTranslation(
-      'max = 1\ntime.sleep_ms(1.5)\n',
+      'max = 1\nled.duty_u16(30000)\n',
       [
         ['long max_2 = 1;', 1],
         ['void setup() {', 0],
-        ['  delay(1.5);', 2],
+        ['  analogWrite(A1, 116);', 2], // no W-pwm-… for it: this W-sketch stays
         ['}', 0],
         ['void loop() {', 0],
         ['  delay(2.5);', 0], // a warning on scaffolding is left out
@@ -837,7 +966,9 @@ describe('live lint and Run with the sketch check (§7.8)', () => {
       { diagnostics: [{ code: 'W-shadow', line: 1, column: 1, endLine: 1, endColumn: 4, severity: 'warning', message: shadow }] },
     );
     const root = await startPython({ python }, true);
-    const sketchWarning = message('W-sketch', { warning: 'delay() takes whole milliseconds; the decimal part is ignored' });
+    const analogWrite = transpile((fake.translations.get(python) as PythonTranslation).sketch).warnings[0].message;
+    expect(analogWrite).toMatch(/^analogWrite\(\) only dims on PWM pins/);
+    const sketchWarning = message('W-sketch', { warning: analogWrite });
     expect(pythonDiagnostics(root)).toEqual([
       [1, shadow],
       [2, sketchWarning],
@@ -865,20 +996,8 @@ describe('live lint and Run with the sketch check (§7.8)', () => {
   });
 
   it('a program without while True: finishes once no tone sounds (§7.8)', async () => {
-    const python = fakeTranslation(
-      'print("Hi")\nBuzzer().tone(440, 300)\n',
-      [
-        ['void setup() {', 0],
-        ['  Serial.begin(9600);', 0],
-        ['  Serial.println("Hi");', 1],
-        ['  tone(8, 440, 300);', 2],
-        ['}', 0],
-        ['void loop() {', 0],
-        ['  // The Python program has no "while True:": it has ended.', 0],
-        ['}', 0],
-      ],
-      { endsAfterSetup: true },
-    );
+    const python = 'from zero1 import Buzzer\n\nprint("Hi")\nBuzzer().tone(440, 300)\n';
+    expect(pythonToArduino(python).endsAfterSetup).toBe(true);
     const root = await startPython({ python }, true);
     await app!.run();
     expect(consoleTexts(root).at(-1)).toBe('Program finished (it has no while True loop).');
@@ -890,13 +1009,8 @@ describe('live lint and Run with the sketch check (§7.8)', () => {
   });
 
   it('a program without while True: whose tone never stops finishes 2 s after its end', async () => {
-    const python = fakeTranslation('Buzzer().tone(440)\n', [
-      ['void setup() {', 0],
-      ['  tone(8, 440);', 1],
-      ['}', 0],
-      ['void loop() {', 0],
-      ['}', 0],
-    ], { endsAfterSetup: true });
+    const python = 'from zero1 import Buzzer\n\nBuzzer().tone(440)\n';
+    expect(pythonToArduino(python).endsAfterSetup).toBe(true);
     const root = await startPython({ python }, true);
     await app!.run();
     expect(consoleTexts(root).at(-1)).toBe('Program finished (it has no while True loop).');
@@ -912,20 +1026,42 @@ describe('live lint and Run with the sketch check (§7.8)', () => {
 
 describe('where print() and input() happen (§7.9)', () => {
   it('a program with input() shows the Serial Monitor with the cursor in its send box', async () => {
-    const python = fakeTranslation('name = input("Name? ")\n', [
-      ['void setup() {', 0],
-      ['  Serial.begin(9600);', 0],
-      ['}', 0],
-      ['void loop() {', 0],
-      ['}', 0],
-    ], { usesInput: true });
+    const python = 'name = input("Name? ")\nprint("Hello", name)\n';
+    expect(pythonToArduino(python).usesInput).toBe(true);
     const root = await startPython({ python }, true);
     expect(selectedTab(root)).toBe('tab-python');
     const running = app!.run();
     await vi.waitFor(() => expect(selectedTab(root)).toBe('tab-serial'));
-    expect(document.activeElement).toBe(root.querySelector('.z1-serial [data-role="input"]'));
-    await app!.stop();
-    await running;
+    const input = root.querySelector<HTMLInputElement>('.z1-serial [data-role="input"]')!;
+    expect(document.activeElement).toBe(input);
+    // The program waits for the line typed there (Newline is forced in Python mode, §7.9).
+    await vi.waitFor(() => expect(root.querySelector('.z1-serial')!.textContent).toContain('Name? '));
+    input.value = 'Ali';
+    input.form!.requestSubmit();
+    await running; // no while True: the run finishes once the program has printed its answer
+    expect(root.querySelector('.z1-serial')!.textContent).toContain('Hello Ali');
+    expect(consoleTexts(root).at(-1)).toBe('Program finished (it has no while True loop).');
+  });
+
+  it('the Serial Monitor’s hint and send box speak of the program in Python mode and of the sketch in Code mode', async () => {
+    const root = start();
+    const hint = root.querySelector<HTMLElement>('.z1-serial-hint')!;
+    const input = root.querySelector<HTMLInputElement>('.z1-serial [data-role="input"]')!;
+    const send = root.querySelector<HTMLButtonElement>('.z1-serial [data-role="send"]')!;
+    const sketchHint = 'Nothing printed yet. Put Serial.begin(9600); in setup() and use Serial.println("Hello"); to see text here.';
+    expect(hint.textContent).toBe(sketchHint);
+    expect(input.placeholder).toBe('Type text to send to the sketch and press Enter');
+    await switchTo(root, 'python');
+    expect(hint.textContent).toBe('Nothing printed yet. Use print("Hello") in your program to see text here.');
+    expect(Array.from(hint.querySelectorAll('code'), (c) => c.textContent)).toEqual(['print("Hello")']);
+    expect(input.placeholder).toBe('Type text to send to your program and press Enter');
+    expect(input.getAttribute('aria-label')).toBe('Text to send to your program');
+    expect(send.getAttribute('aria-label')).toBe('Send text to your program');
+    await switchTo(root, 'blocks');
+    expect(hint.textContent).toBe(sketchHint);
+    expect(input.placeholder).toBe('Type text to send to the sketch and press Enter');
+    expect(input.getAttribute('aria-label')).toBe('Text to send to the sketch');
+    expect(send.getAttribute('aria-label')).toBe('Send text to the sketch');
   });
 
   it('the first print while the Serial Monitor is hidden brings one console hint, with a link to the tab; the tab says it has new output', async () => {
@@ -1001,6 +1137,15 @@ describe('the console jumps by source (§7.10)', () => {
     const sketchLink = consoleEntries(root)[0].querySelector<HTMLButtonElement>('.z1-console-line')!;
     expect(sketchLink.getAttribute('aria-label')).toBe('Go to line 2 in the sketch');
     sketchLink.click();
+    expect(document.body.dataset.mode).toBe('code');
+    expect(selectedTab(root)).toBe('tab-code');
+
+    // After a switch to Python mode the same link goes back to the Code-mode sketch, not to line 2 of the Python-made one.
+    const code = view(root, 'editor');
+    code.dispatch({ selection: { anchor: code.state.doc.length } });
+    await switchTo(root, 'python');
+    sketchLink.click();
+    await vi.waitFor(() => expect(code.state.doc.lineAt(code.state.selection.main.head).number).toBe(2));
     expect(document.body.dataset.mode).toBe('code');
     expect(selectedTab(root)).toBe('tab-code');
   });
