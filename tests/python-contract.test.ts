@@ -1,8 +1,7 @@
 /**
  * The Day-1 contract of Python mode (docs/PYTHON.md §4.2, §11.2): the public surface of
  * src/python, example 01 and its T1 sketch, the T9 placeholder (src/sketch/placeholder.ts), the
- * source map and the message helpers. The "stub" block describes the stub translator and goes
- * when stream A's real pipeline lands; everything else stays true.
+ * source map and the message helpers. (The emitter's goldens: tests/python-emit.test.ts.)
  */
 import { describe, expect, it } from 'vitest';
 import { BLANK_PYTHON, PYTHON_EXAMPLES, SourceMap, pythonToArduino, pythonizeRuntimeMessage } from '../src/python';
@@ -139,22 +138,6 @@ describe('pythonToArduino: T1 (example 01)', () => {
     expect(map.sketchLinesOf(11)).toEqual([sketchLineOf(sketch, 'const int led = LED_RED;'), sketchLineOf(sketch, '  pinMode(led, OUTPUT);        // the red LED is an output')]);
     expect(map.sketchLinesOf(13)).toEqual([]); // `while True:` itself makes no line
   });
-});
-
-describe('pythonToArduino: Day-1 stub (until the real pipeline lands)', () => {
-  it('gives every other program that parses the placeholder with one X-internal error on line 1 (syntax errors: tests/python-parser.test.ts)', () => {
-    for (const source of [BLANK_PYTHON, '', 'print("Hi")\n', T1_PYTHON.replace('0.5', '0.25'), `"""\n\\N{DEGREE SIGN}\n"""\n${T1_PYTHON.slice(T1_PYTHON.indexOf('from'))}`]) {
-      const result = pythonToArduino(source);
-      expect(result.ok, source).toBe(false);
-      expect(result.sketch).toBe(pythonPlaceholder(1));
-      expect(placeholderErrorCount(result.sketch)).toBe(1);
-      expect(result.diagnostics).toHaveLength(1);
-      expect(result.diagnostics[0]).toMatchObject({ code: 'X-internal', severity: 'error', line: 1, column: 1 });
-      expect(result.diagnostics[0].message).toMatch(/^The simulator could not read this program: .+\. Please tell your teacher\.$/);
-      expect(result.map.sketchToPython).toEqual([0, 0]);
-      expect(result).toMatchObject({ endsAfterSetup: false, usesInput: false });
-    }
-  });
   it('accepts T1 without a docstring (line numbers start at the imports)', () => {
     const result = pythonToArduino(T1_PYTHON.slice(T1_PYTHON.indexOf('from')));
     expect(result.ok).toBe(true);
@@ -214,10 +197,12 @@ describe('messages', () => {
     for (const code of codes.filter((c) => MESSAGES[c] === undefined)) expect(message(code)).toBe(code);
     for (const [code, text] of Object.entries(MESSAGES)) expect(text!.length, code).toBeLessThanOrEqual(240);
   });
-  it('PY_FAIL_LINE reads a pyFail() line; pythonizeRuntimeMessage leaves messages alone for now', () => {
+  it('PY_FAIL_LINE reads a pyFail() line; pythonizeRuntimeMessage turns the abort() report into it (§5.9)', () => {
     expect(PY_FAIL_LINE.exec('Line 12: IndexError: list index out of range')?.slice(1)).toEqual(['12', 'IndexError: list index out of range']);
     expect(PY_FAIL_LINE.test('IndexError: list index out of range')).toBe(false);
     const msg = { level: 'error' as const, text: 'The sketch stopped: abort() was called.', line: 3 };
-    expect(pythonizeRuntimeMessage(msg, 'Line 12: IndexError: list index out of range\r\n')).toEqual(msg);
+    expect(pythonizeRuntimeMessage(msg, 'Line 12: IndexError: list index out of range\r\n')).toEqual({ level: 'error', text: 'IndexError: list index out of range', line: 12, source: 'python' });
+    const other = { level: 'error' as const, text: 'runtime error: x', line: 3 };
+    expect(pythonizeRuntimeMessage(other, 'Line 12: IndexError: list index out of range\r\n')).toEqual(other);
   });
 });

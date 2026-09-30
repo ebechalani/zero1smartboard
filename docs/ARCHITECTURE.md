@@ -859,15 +859,60 @@ export function createBoardView(container: HTMLElement, board: Zero1Board): Boar
 ### 8.3 App (`app.ts`, others) — owner: ui-app
 
 - `main.ts`: creates `RealClock`, `createZero1Board`, mounts `App`.
-- Editor (`editor.ts`): CodeMirror 6 with `@codemirror/lang-cpp`, a light
-  theme and syntax colours matching the app palette, line numbers, tab = 2 spaces, `Ctrl/Cmd+Enter` = Run. Diagnostics
-  from `transpile()` shown with `@codemirror/lint` `setDiagnostics`. Code is
+- Modes (`src/ui/modes/`, docs/PYTHON.md §7.1): the header switch **Code |
+  Blocks | Python** (`aria-pressed`, `z1.mode`; an unknown value opens Code
+  mode). Everything that differs between the modes lives behind one
+  `ModeController` (`code-mode.ts`, `blocks-mode.ts`, `python-mode.ts`,
+  interface in `types.ts`): the first tab, the header words (`words`), the
+  console words of a run (`runWords`), the texts around the read-only sketch
+  (`mirror`: banner, typing toast, Arduino IDE / Upload notes), Share ▾'s own
+  file (`programFile`: Download .py), `sketch()` (what Run, live lint and
+  every export use; Python translates afresh), `exportWork()`, examples, New,
+  links, review. `app.ts` never compares the mode with a literal
+  (`tests/app-mode-registry.test.ts`). Each mode keeps its own program
+  (`z1.code`, `z1.blocks`, `z1.python`): switching copies nothing and asks
+  nothing. In Blocks and Python mode the Code tab shows a second, read-only
+  editor (the mirror: focusable, never saved, padlock on the tab, "Code (read
+  only)"), with the banner "Made from your … — read only." and **Edit a copy
+  in Code mode** (off while a Python program has errors; asks before
+  replacing hand-written code, keeps it in `z1.code.previous`, toast with
+  Undo for 8 s).
+- Editor (`editor.ts`): CodeMirror 6 with `@codemirror/lang-cpp` by default
+  (`EditorOptions`: `language`, `storageKey`, `indent`, `ariaLabel`,
+  `readOnlyMirror`, `extraExtensions`), a light
+  theme and syntax colours matching the app palette, line numbers, tab = 2 spaces, `Ctrl/Cmd+Enter` = Run,
+  Esc = Stop, then Tab leaves the editor for 2 s (WCAG 2.1.2). Diagnostics
+  from `transpile()` shown with `@codemirror/lint` `setDiagnostics`
+  (underlined up to `endLine`/`endColumn` when given). Code is
   persisted to `localStorage` (`z1.code`) and restored on load; an
   `Examples` menu replaces the code (confirm if the current code differs
   from the last loaded example). **New** puts the Arduino IDE's blank sketch
   (`BLANK_SKETCH`, File > New) in the editor, with the same confirmation; in
-  Blocks mode it resets the workspace to `DEFAULT_WORKSPACE`. Neither stops a
-  running sketch. URL hash `#code=<base64url>` loads shared code.
+  Blocks mode it resets the workspace to `DEFAULT_WORKSPACE`, in Python mode it
+  puts `BLANK_PYTHON`. Neither stops a
+  running sketch. URL hash `#code=<base64url>` loads shared code, `#python=`
+  a Python program (Python mode; asks only when the Python program is not
+  untouched).
+- Python tab (`modes/python-mode.ts`; docs/PYTHON.md §7.3–7.4): exists in
+  Python mode only, just before Generated JS, selected on entering the mode,
+  after Run with errors, New, an example or a link. The translator, the
+  examples, the "What works" content and the editor extras come in the lazy
+  Python chunk (`python-chunk.ts`, reached only with `import()`; "Loading
+  Python…" meanwhile, the chunk-failure path on error). A one-line note
+  above the editor ("… **What works** · Esc then Tab: leave the editor ·
+  Ctrl+M: Tab moves focus") opens the What works dialog
+  (`python-help-dialog.ts`, `WHAT_WORKS` of src/python/help.ts laid out with
+  `textContent`). The Python editor (`z1.python`, 4-space indent,
+  `aria-label` "Python program") has ZERO1 Python's completions
+  (`python-language.ts`: `zero1Completions` over `API_COMPLETIONS` plus the
+  program's own names, never CPython's list), shows non-breaking spaces, and
+  cleans up pastes (`python-paste.ts`: curly quotes, invisible spaces,
+  leading tabs; inserted as pasted, then fixed as a separate undo step, toast
+  "Fixed 3 curly quotes and 12 invisible spaces (Ctrl+Z undoes it)"). Live
+  lint (700 ms) translates, puts the sketch (or the placeholder) into the
+  mirror, and checks the sketch with `transpile()`: its errors become
+  X-sketch-error and its warnings W-sketch on the Python lines they were
+  made from.
 - Header menus (`menu.ts`: a "Label ▾" trigger with `aria-haspopup="menu"`
   and an absolutely positioned `role="menu"` list, optionally in titled
   groups; opens on click or ArrowDown, arrows / Home / End move between the
@@ -876,22 +921,28 @@ export function createBoardView(container: HTMLElement, board: Zero1Board): Boar
   header menus are built on it: Examples (`examples-menu.ts`), **Settings ▾**
   (Reset the board = `App.reset()`; Board settings… = the settings dialog)
   and **Share ▾**. The Share menu acts at once, without a dialog: **Copy
-  link** puts the `#code=` / `#blocks=` link on the clipboard and toasts
+  link** puts the `#code=` / `#blocks=` / `#python=` link on the clipboard and toasts
   "Link copied" (when the clipboard refuses or is missing: a toast and a
   `window.prompt` with the link selected, "Press Ctrl+C to copy the link");
   **Download .ino** saves `sketchFileName()` (`sketch-file.ts`) named after
   the student's remembered name (`currentStudentName()`,
-  `src/classroom/session-store.ts`) and toasts the file name; **Hand in to my
+  `src/classroom/session-store.ts`) and toasts the file name; in Python mode
+  **Download .py** (before it; `menu.setItems()` on every mode change) saves
+  the program as `pythonFileName()` (`zero1_ali_khoury_0928_143210.py`), also
+  while it has errors, whereas Download .ino, Arduino IDE and Upload refuse a
+  Python program with errors with the toast "Fix the errors in your Python
+  program first — see the console."; **Hand in to my
   teacher** (only when the class platform is configured) opens the Hand in
   dialog. The former Share dialog and the email sending (a Google Apps Script
   relay) are gone; `main.ts` removes the relay's two legacy `localStorage`
   keys once.
 - Hand in dialog (`handin-dialog.ts`, opened by Share ▾ → Hand in to my teacher, spec
   docs/CLASSROOM.md §1.2 and §4.10). The App builds a `HandinWork` from the
-  same `exportSketch()` as Share (the sketch, in Blocks mode also the
-  workspace JSON), plus `unchanged` (the blank sketch / empty program, or an
+  same `exportWork()` as Share (the sketch, in Blocks mode also the
+  workspace JSON, in Python mode also the Python program), plus `unchanged` (the blank sketch / empty program, or an
   untouched example with its title) and `errorCount` from a synchronous
-  `transpile()`. The dialog loads `src/classroom/student.ts` with `import()`
+  `transpile()` (a Python program with errors: the count its placeholder
+  sketch carries). The dialog loads `src/classroom/student.ts` with `import()`
   on first open and calls `restore()`; nothing is downloaded while no session
   is saved. One short flow (simplified by teacher decision, 2026-09-27):
   Loading → Code (class code, checked locally with `normalizeClassCode` /
@@ -910,8 +961,10 @@ export function createBoardView(container: HTMLElement, board: Zero1Board): Boar
   prefilled, or shows the "Classes are not set up on this site." toast when
   not configured. All class strings are rendered with `textContent`.
 - Arduino IDE dialog (`arduino-ide-dialog.ts`, opened by the "Arduino IDE"
-  button with the editor text, or in Blocks mode the sketch generated from
-  the blocks — the same `exportSketch()` as Share). A web page cannot start
+  button with the editor text, or in Blocks and Python mode the sketch made
+  from the program — the same `exportWork()` as Share — with the mode's note:
+  "This is the Arduino sketch made from your Python program (the code in the
+  Code tab). The board runs this sketch: it cannot run Python itself."). A web page cannot start
   the desktop IDE (it has no URL protocol), so the dialog offers three ways:
   **Download sketch (.ino)** saves `sketchFileName()` (`sketch-file.ts`:
   `zero1[_<name>]_MMDD_HHMMSS.ino`) and lights up three numbered steps that
@@ -929,23 +982,42 @@ export function createBoardView(container: HTMLElement, board: Zero1Board): Boar
   version). A note sends Chromebook users to the Arduino Cloud Editor
   (app.arduino.cc → Create → Import). Status line (`aria-live`) and Close;
   Esc closes; every `open()` starts with no status and the steps reset.
-- Run: `transpile()` → on error show diagnostics in the editor and console,
-  else `board.reset()`, `executor.run(js)`; buttons reflect status; the
-  header shows a running indicator and elapsed `millis()`.
+- Run: `mode.sketch()` (a Python program with errors: its errors in the
+  console on Python lines, "N errors" in the header, the Python tab and the
+  cursor on the first one) → `transpile()` → on error show diagnostics in the editor and console,
+  else `board.reset()`, `executor.run(js)` (Python: the line map composed
+  through the source map, runtime messages through `pythonize()`, the
+  program's warnings in the console on Python lines); buttons reflect status; the
+  header shows a running indicator and elapsed `millis()`. The console says
+  "Sketch started." / "Sketch stopped after N loop() calls." (Python:
+  "Program started." / "Program stopped after N rounds of the while True
+  loop."). A Python program without `while True:` (`endsAfterSetup`) is
+  ended by the frame loop once `setup()` returned and no tone sounds (2 s of
+  board time at most): "Program finished (it has no while True loop).",
+  "Finished at N ms". A program that calls `input()` (`usesInput`) shows the
+  Serial Monitor with the cursor in its send box.
   Stop: `executor.stop()`. Reset (Settings ▾ → Reset the board): stop +
   `board.reset()` + clear serial.
 - Serial monitor (`serial-monitor.ts`): output area (monospace, autoscroll
   toggle, clear, max 5000 lines), input line + Send (Enter), line-ending
   select (No line ending / Newline / Carriage return / Both; default
-  Newline), baud label ("9600 baud" from `Serial.begin`, display only).
+  Newline; in Python mode forced to Newline and disabled, `forceNewline()`,
+  the student's choice comes back in the other modes), baud label ("9600 baud" from `Serial.begin`, display only).
   Output arrives via `board.serial.onTx`. Show a hint when the sketch printed
-  nothing yet.
+  nothing yet. Output while the tab is hidden puts a dot on the tab (its
+  `aria-label` then reads "Serial Monitor, new output"); in Python mode the
+  first such output of a run also puts "print() output is in the Serial
+  Monitor tab" with the link "Open the Serial Monitor" into the console.
 - Pin map (`pinmap.ts`): the lesson table (Sr.No, Part, Description, Pin)
   plus live `Mode` and `Value` columns (`value` = level, PWM duty, tone Hz,
   servo angle, analog value as appropriate) refreshed 10×/s.
 - Generated JS tab: read-only view of the transpiled code (for teachers).
 - Console panel (`console-panel.ts`): messages from `onConsole` with level
-  colours; clicking a message with a line jumps the editor to it.
+  colours; clicking a message with a line jumps to it by the message's
+  `source`: `'python'` opens the Python tab (switching to Python mode when
+  needed) and moves the Python editor there, `'sketch'` the Code tab of the
+  current mode ("Go to line N in the Python program" / "… in the sketch").
+  A message may end with an action button (the print() hint).
 - Inputs panel (`controls.ts`): POT slider (0..1023, two-way with the knob),
   LDR light slider (0..100 %) with sun/moon icons, DHT temperature (-40..80)
   and humidity (0..100) sliders, ultrasonic distance slider (2..400 cm),
@@ -958,9 +1030,20 @@ export function createBoardView(container: HTMLElement, board: Zero1Board): Boar
   `buzzer.state.freq` (start on first user gesture; gain 0.05; mute toggle).
 - Examples menu (`examples-menu.ts`, on `menu.ts`): grouped list from `src/examples/index.ts`.
 - Keyboard: `Ctrl/Cmd+Enter` run, `Esc` stop — both ignored while the
-  Settings, Hand in, Arduino IDE or Upload dialog is open (Esc then closes the
+  Settings, Hand in, Arduino IDE, Upload or What works dialog is open (Esc then closes the
   dialog), and Esc is ignored while a header menu is open (it closes the menu).
-- Mode from links: a `#code=` / `#blocks=` link decides the mode at start-up
+- Header (docs/PYTHON.md §7.14): at 1366–1439 px the Settings and Arduino IDE
+  buttons show their icons only (`aria-label` and tooltip unchanged), so
+  brand, mode switch, the seven actions and the run status stay on one row
+  (with the Upload button shown as well, the actions wrap); below 1366 px the
+  actions get a row of their own. Entering a mode toasts its name ("Python
+  mode").
+- Upload to board (`src/upload`): `getSketch()` gives an `UploadPayload`
+  (in Blocks and Python mode with the mode's note; Python adds `successNote`,
+  `mapLine`, `source: 'python'` and `sketchError`, so compile errors point at
+  Python lines with the X-sketch-error text, except "too big", shown as is)
+  or `{ error }`, toasted as is.
+- Mode from links: a `#code=` / `#blocks=` / `#python=` link decides the mode at start-up
   (`this.mode = fromLink.kind`), so a saved Blocks mode never hides a shared
   sketch; only without a link is `loadMode()` used.
 - Review mode (`isReviewFrame()`: `location.hash === '#review'` inside an
@@ -971,8 +1054,9 @@ export function createBoardView(container: HTMLElement, board: Zero1Board): Boar
   `hashchange` listener, posts
   `{ type: 'z1-review-ready' }` to the parent and accepts `{ type: 'z1-review',
   payload }` only from `window.parent` on the site's own origin; the payload
-  decides the mode (blocks from `workspaceJson`, else the sketch with the
-  "generated from blocks" banner) and nothing runs until Run. A `#review=` /
+  decides the mode (blocks from `workspaceJson`, else the handed-in sketch in
+  Code mode with the banner "Made from the student's blocks." / "… Python
+  program."; Python review mode proper is docs/PYTHON.md §7.13) and nothing runs until Run. A `#review=` /
   `#rid=` hash on the site origin is sent to `./review.html` with
   `location.replace` (docs/CLASSROOM.md §3.4).
 - X1 hardening: `codegen.ts` refuses the member names `constructor`,
@@ -981,8 +1065,8 @@ export function createBoardView(container: HTMLElement, board: Zero1Board): Boar
   ("'name' is not available in the simulator"); `__m` / `__mut` in
   `src/runtime/libs/strings.ts` refuse the same names and any function
   inherited from `Object.prototype` / `Function.prototype`.
-- Update prompt: `vite:preloadError` (and a Blockly chunk that cannot be
-  fetched while online) flushes the editor and blocks autosave and shows the
+- Update prompt: `vite:preloadError` (and a Blockly or Python chunk that cannot be
+  fetched while online) flushes every mode's autosave and shows the
   banner "The simulator was updated. Reload the page to continue (your work is
   saved)." with a Reload button (`data-slot="update"`); the Hand in dialog
   reports `app_updated` errors to it through `onAppUpdated`.

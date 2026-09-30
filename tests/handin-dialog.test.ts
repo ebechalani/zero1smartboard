@@ -10,6 +10,7 @@ import { ClassroomError, STUDENT_ERROR_TEXT, errorText, type ClassroomErrorCode 
 import { LIMITS, formatClassCode, type HandinRecord } from '../src/classroom/model';
 import { CLASSROOM_STORAGE_KEY, LAST_CODE_STORAGE_KEY, saveSession, type SavedSession } from '../src/classroom/session-store';
 import type { FoundClass, PublicClass, RestoreResult, StudentApi, StudentName, StudentSession } from '../src/classroom/student';
+import { pythonPlaceholder } from '../src/sketch/placeholder';
 import { HANDIN_TEXT, createHandinDialog, type HandinDialogOptions, type HandinView, type HandinWork } from '../src/ui/handin-dialog';
 import { settle } from './helpers';
 
@@ -30,7 +31,7 @@ function session(over: Partial<StudentSession> = {}): StudentSession {
 }
 
 function work(over: Partial<HandinWork> = {}): HandinWork {
-  return { kind: 'code', code: 'void setup() {}\nvoid loop() {}\n', workspaceJson: '', unchanged: null, errorCount: 0, ...over };
+  return { kind: 'code', code: 'void setup() {}\nvoid loop() {}\n', workspaceJson: '', python: '', unchanged: null, errorCount: 0, ...over };
 }
 
 function record(over: Partial<HandinRecord> = {}): HandinRecord {
@@ -425,10 +426,111 @@ describe('Ready view', () => {
 
   it('hands in a Python program with the sketch made from it (docs/PYTHON.md §8.3)', async () => {
     const m = await ready({}, work({ kind: 'python', workspaceJson: '{"blocks":{}}', python: 'print("Hi")\n' }));
+    expect(m.role('work').textContent).toBe('Your Python program and the Arduino sketch made from it');
+    expect(m.role('work').textContent).toBe(HANDIN_TEXT.pythonWork);
+    expect(m.role('warning').hidden).toBe(true);
+    expect(m.role('errors-note').hidden).toBe(true);
     m.click('handin');
     await settle();
     const [, draft] = (m.api.handIn as ReturnType<typeof vi.fn>).mock.calls[0];
     expect(draft).toEqual({ kind: 'python', code: work().code, workspaceJson: '', python: 'print("Hi")\n' });
+    expect(m.view()).toBe('success');
+    // Code and Blocks hand-ins never carry a program.
+    const code = await ready({}, work({ python: 'print("Hi")\n' }));
+    code.click('handin');
+    await settle();
+    expect((code.api.handIn as ReturnType<typeof vi.fn>).mock.calls[0][1].python).toBe('');
+  });
+
+  it('counts the Python errors from the placeholder sketch it hands in, in the name view too', async () => {
+    const py = (over: Partial<HandinWork>) => work({ kind: 'python', python: 'x = (\n', ...over });
+    // The App passes 0 for the placeholder: the dialog reads the count from the sketch.
+    const m = await ready({}, py({ code: pythonPlaceholder(2), errorCount: 0 }));
+    expect(m.role('errors-note').hidden).toBe(false);
+    expect(m.role('errors-note').textContent).toBe('Your Python program has 2 errors. Your teacher will see them.');
+    m.click('handin');
+    await settle();
+    expect(m.api.handIn).toHaveBeenCalledTimes(1); // errors never stop a hand-in
+    expect((m.api.handIn as ReturnType<typeof vi.fn>).mock.calls[0][1]).toEqual({ kind: 'python', code: pythonPlaceholder(2), workspaceJson: '', python: 'x = (\n' });
+
+    const one = await ready({}, py({ code: pythonPlaceholder(1), errorCount: 1 }));
+    expect(one.role('errors-note').textContent).toBe(HANDIN_TEXT.pythonErrors(1));
+    expect(HANDIN_TEXT.pythonErrors(1)).toBe('Your Python program has 1 error. Your teacher will see them.');
+
+    // A real sketch that transpile() refused (X-sketch-error): the App's count.
+    const sketchError = await ready({}, py({ errorCount: 1 }));
+    expect(sketchError.role('errors-note').textContent).toBe(HANDIN_TEXT.pythonErrors(1));
+    const clean = await ready({}, py({}));
+    expect(clean.role('errors-note').hidden).toBe(true);
+
+    const named = mount();
+    await named.open(py({ code: pythonPlaceholder(3) }));
+    await named.toName();
+    expect(named.view()).toBe('name');
+    expect(named.role('work').textContent).toBe(HANDIN_TEXT.pythonWork);
+    expect(named.role('errors-note').textContent).toBe(HANDIN_TEXT.pythonErrors(3));
+  });
+
+  it('asks about an untouched Python example or BLANK_PYTHON in Python words', async () => {
+    const example = await ready({}, work({ kind: 'python', python: 'print(1)\n', unchanged: { kind: 'example', title: 'Blink the red LED' } }));
+    expect(example.role('warning').textContent).toBe("This is still the example 'Blink the red LED'. Hand it in anyway?");
+    example.click('handin');
+    await settle();
+    expect(example.spies.confirm).toHaveBeenLastCalledWith("This is still the example 'Blink the red LED'. Hand it in anyway?");
+
+    const blank = await ready({}, work({ kind: 'python', python: '# Code here runs once\n', unchanged: { kind: 'blank' } }));
+    expect(blank.role('warning').textContent).toBe('Your Python program is still the empty starting program. Hand it in anyway?');
+    expect(blank.role('warning').textContent).toBe(HANDIN_TEXT.pythonBlank);
+    blank.spies.confirm.mockReturnValueOnce(false);
+    blank.click('handin');
+    await settle();
+    expect(blank.spies.confirm).toHaveBeenLastCalledWith(HANDIN_TEXT.pythonBlank);
+    expect(blank.api.handIn).not.toHaveBeenCalled();
+  });
+
+  it('refuses an empty or too large Python program without a request', async () => {
+    const empty = await ready({}, work({ kind: 'python', python: '  \n', unchanged: { kind: 'blank' } }));
+    empty.click('handin');
+    await settle();
+    expect(empty.status()).toBe('Your Python program is empty. There is nothing to hand in yet.');
+    expect(empty.status()).toBe(HANDIN_TEXT.pythonEmpty);
+    expect(empty.spies.confirm).not.toHaveBeenCalled();
+
+    const big = await ready({}, work({ kind: 'python', python: 'x'.repeat(LIMITS.pythonMaxBytes + 1) }));
+    big.click('handin');
+    await settle();
+    expect(big.status()).toBe(STUDENT_ERROR_TEXT.too_large);
+    for (const x of [empty, big]) expect(x.api.handIn, 'no request').not.toHaveBeenCalled();
+  });
+
+  it('says the class is not ready for Python hand-ins when the rules refuse one (permission-denied)', async () => {
+    const refuse = { handIn: vi.fn(async () => Promise.reject(fail('permission', STUDENT_ERROR_TEXT.permission))) };
+    const m = await ready(refuse, work({ kind: 'python', python: 'print("Hi")\n' }));
+    m.click('handin');
+    await settle();
+    expect(m.view()).toBe('ready');
+    expect(m.status()).toBe('Your class is not ready for Python hand-ins yet: ask your teacher to update the class rules.');
+    expect(m.status()).toBe(HANDIN_TEXT.pythonNotReady);
+    expect(m.q('[data-role="status"]').dataset.tone).toBe('error');
+    expect(m.button('retry').hidden).toBe(true);
+    expect(m.button('handin').disabled).toBe(false);
+
+    // From the name view (join, then send) too; a bare code from a fake gets the same text.
+    const named = mount({ handIn: vi.fn(async () => Promise.reject(fail('permission'))) });
+    await named.open(work({ kind: 'python', python: 'print("Hi")\n' }));
+    await named.toName();
+    named.typeName('Ali', 'Khoury');
+    named.click('handin-name');
+    await settle();
+    expect(named.status()).toBe(HANDIN_TEXT.pythonNotReady);
+
+    // Code and Blocks keep the §1.5 permission text.
+    for (const kind of ['code', 'blocks'] as const) {
+      const other = await ready(refuse, work({ kind, workspaceJson: kind === 'blocks' ? '{"blocks":{}}' : '' }));
+      other.click('handin');
+      await settle();
+      expect(other.status(), kind).toBe(STUDENT_ERROR_TEXT.permission);
+    }
   });
 
   it('hands in, shows the success view, sends once on a double click, and uses a new id next time', async () => {

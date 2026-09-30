@@ -18,6 +18,7 @@ import {
   type BlocksPanel,
 } from '../blocks-panel';
 import type { MenuExample } from '../examples-menu';
+import { SKETCH_RUN_WORDS } from './code-mode';
 import type { HandinWork } from '../handin-dialog';
 import type { ExportedWork, ModeController, ModeHost, ModeLink, ReviewMessage, SketchResult } from './types';
 
@@ -41,6 +42,8 @@ export class BlocksMode implements ModeController {
     typing: 'This sketch is made from your blocks — change the blocks',
     review: "Made from the student's blocks.",
     errorPrefix: 'Block code error: ',
+    ideNote: 'This is the Arduino sketch made from your blocks (the code shown in the Code tab).',
+    uploadNote: 'This uploads the Arduino sketch made from your blocks (the code shown in the Code tab).',
   };
   readonly lineSource = 'sketch';
   readonly words = {
@@ -51,6 +54,7 @@ export class BlocksMode implements ModeController {
     newAria: 'Start a new blank sketch',
     newTitle: 'New blank sketch',
   };
+  readonly runWords = SKETCH_RUN_WORDS;
 
   private panel: BlocksPanel | null = null;
   private loading: Promise<BlocksPanel | null> | null = null;

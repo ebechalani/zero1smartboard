@@ -17,6 +17,7 @@ import { LAST_CLASS_KEY, keysWithPrefix, periodKey, prunedKey, seenKey } from '.
 import { DECODE_PROBLEM_TEXT } from '../src/teacher/handins';
 import { NO_HANDINS_TEXT } from '../src/teacher/overview';
 import { PARK_MS } from '../src/teacher/session';
+import { pythonPlaceholder } from '../src/sketch/placeholder';
 import { memoryStorage } from './classroom-fakes';
 import { TEACHER, createFakeTeacherApi, fakeError, makeClass, makeHandin, makeMember, type FakeTeacherApi } from './fakes/fake-teacher-api';
 
@@ -92,7 +93,7 @@ const text = () => root.textContent ?? '';
 const tab = (name: string) => buttonWithText(name, q('.z1t-tabs')).click();
 const row = (name: string) => qa('.z1t-rows tbody tr').find((r) => r.querySelector('.z1t-name')!.textContent === name)!;
 /** The distinct file names inside a store-only zip (each name appears in the local header and the central directory). */
-const zipNames = async (blob: Blob) => [...new Set([...new TextDecoder().decode(await blob.arrayBuffer()).matchAll(/[A-Za-z0-9_.-]+\.(?:ino|json)/g)].map((m) => m[0]))];
+const zipNames = async (blob: Blob) => [...new Set([...new TextDecoder().decode(await blob.arrayBuffer()).matchAll(/[A-Za-z0-9_.-]+\.(?:ino|json|py)/g)].map((m) => m[0]))];
 
 beforeEach(() => {
   clock = NOW.getTime();
@@ -552,6 +553,114 @@ describe('detail (T6)', () => {
     expect(buttonWithText('Copy code', q('.z1t-detail')).disabled).toBe(true);
     rows[1].querySelector<HTMLButtonElement>('.z1t-name button')!.click();
     expect(q('.z1t-detail').textContent).toContain(DECODE_PROBLEM_TEXT.too_large);
+  });
+});
+
+// ---------------------------------------------------------------------------
+describe('Python hand-ins (docs/PYTHON.md §8.5)', () => {
+  const PY = 'from machine import Pin\nimport time\n\nled = Pin(13, Pin.OUT)\nwhile True:\n    led.toggle()\n    time.sleep(0.5)\n';
+  const SKETCH = '// Made from your Python program.\nvoid setup() {\n  pinMode(13, OUTPUT);\n}\n\nvoid loop() {\n}\n';
+  const python = (over: Parameters<typeof makeHandin>[0] = {}) => makeHandin({ kind: 'python', workspaceJson: PY, code: SKETCH, createdAt: at(10, 42), ...over });
+  const card = () => q<HTMLElement>('.z1t-detail .z1t-version');
+  const actionTexts = (within: ParentNode) => [...within.querySelectorAll<HTMLElement>('.z1t-version-actions .z1-btn')].map((b) => b.textContent);
+
+  async function openDetail(): Promise<HTMLElement> {
+    await openClass();
+    row('Khoury, Ali').querySelector<HTMLButtonElement>('.z1t-name button')!.click();
+    await flush();
+    return q<HTMLElement>('.z1t-detail');
+  }
+
+  it('labels the kind "Python" (z1t-kind-python) in the Overview, the detail and the feed', async () => {
+    await signedIn([makeClass()]);
+    api.handins.set('BKT4M9', [python({ id: 'h1' }), makeHandin({ id: 'h2', ...sara, createdAt: at(10, 50), kind: 'blocks', workspaceJson: '{"blocks":{}}' })]);
+    const detail = await openDetail();
+    expect(row('Khoury, Ali').querySelector('.z1t-last')!.textContent).toBe('10:42 · Python');
+    expect(row('Mansour, Sara').querySelector('.z1t-last')!.textContent).toBe('10:50 · Blocks');
+    const chip = detail.querySelector('.z1t-version-head .z1t-kind')!;
+    expect(chip.className).toBe('z1t-kind z1t-kind-python');
+    expect(chip.textContent).toBe('Python');
+    tab('All hand-ins');
+    const items = qa('.z1t-feed-item');
+    expect(items.map((i) => i.querySelector('.z1t-kind')!.textContent)).toEqual(['Blocks', 'Python']);
+    expect(items[1].querySelector('.z1t-kind')!.classList.contains('z1t-kind-python')).toBe(true);
+  });
+
+  it('shows the Python first, the sketch in a collapsed <details>, and Download .py, Download .ino, Copy (the Python)', async () => {
+    await signedIn([makeClass()]);
+    api.handins.set('BKT4M9', [python({ id: 'h1' })]);
+    await openDetail();
+    const version = card();
+    const blocks = [...version.children].map((c) => c.tagName.toLowerCase() + (c.className ? `.${c.className.split(' ').join('.')}` : ''));
+    expect(blocks).toEqual(['header.z1t-version-head', 'p.z1-muted.z1t-computer', 'pre.z1t-code.z1t-python', 'details.z1t-sketch', 'div.z1t-version-actions', 'div.z1t-version-tools']);
+    expect(version.querySelector('.z1t-python')!.textContent).toBe(PY);
+    const sketch = version.querySelector<HTMLDetailsElement>('details.z1t-sketch')!;
+    expect(sketch.open).toBe(false);
+    expect(sketch.querySelector('summary')!.textContent).toBe('The Arduino sketch made from it');
+    expect(sketch.querySelector('pre.z1t-code')!.textContent).toBe(SKETCH);
+    expect(version.querySelector('.z1t-python-errors')).toBeNull();
+    expect(actionTexts(version)).toEqual(['Open in the simulator', 'Download .py', 'Download .ino', 'Copy code']);
+    buttonWithText('Download .py', version).click();
+    buttonWithText('Download .ino', version).click();
+    expect(downloads).toEqual([
+      { name: 'zero1_ali_khoury_0926_104200.py', data: PY },
+      { name: 'zero1_Ali_Khoury_0926_104200.ino', data: SKETCH },
+    ]);
+    buttonWithText('Copy code', version).click();
+    await flush();
+    expect(copied).toEqual([PY]);
+    // The Open link carries the program (contentOf): the review page and the frame get it.
+    const href = version.querySelector<HTMLAnchorElement>('a.z1t-open')!.getAttribute('href')!;
+    expect(decodeReviewPayload(href.replace('./review.html#review=', ''))).toMatchObject({ kind: 'python', code: SKETCH, workspaceJson: '', python: PY, who: 'Ali Khoury' });
+  });
+
+  it('"Handed in with N Python errors" and Download .ino disabled with that reason, here and in the Overview', async () => {
+    await signedIn([makeClass()]);
+    api.handins.set('BKT4M9', [python({ id: 'h1', code: pythonPlaceholder(2) }), python({ id: 'h2', ...sara, code: pythonPlaceholder(1) })]);
+    const detail = await openDetail();
+    const version = card();
+    expect(version.querySelector('.z1t-python-errors')!.textContent).toBe('Handed in with 2 Python errors');
+    const ino = buttonWithText('Download .ino', version);
+    expect(ino.disabled).toBe(true);
+    expect(ino.title).toBe('Handed in with 2 Python errors: there is no sketch to download');
+    ino.click();
+    expect(downloads).toEqual([]);
+    expect(buttonWithText('Download .py', version).disabled).toBe(false);
+    expect(buttonWithText('Copy code', version).disabled).toBe(false);
+    expect(version.querySelector<HTMLDetailsElement>('details.z1t-sketch pre')!.textContent).toBe(pythonPlaceholder(2));
+    expect(detail.querySelector('a.z1t-open')!.hasAttribute('aria-disabled')).toBe(false); // the program can still be opened
+    const overviewIno = row('Khoury, Ali').querySelector<HTMLButtonElement>('.z1t-actions button')!;
+    expect(overviewIno.disabled).toBe(true);
+    expect(overviewIno.title).toBe('Handed in with 2 Python errors: there is no sketch to download');
+    row('Mansour, Sara').querySelector<HTMLButtonElement>('.z1t-name button')!.click();
+    await flush();
+    expect(card().querySelector('.z1t-python-errors')!.textContent).toBe('Handed in with 1 Python error');
+  });
+
+  it('the zips carry <First_Last>.py next to the .ino', async () => {
+    await signedIn([makeClass()]);
+    api.handins.set('BKT4M9', [
+      python({ id: 'h1', createdAt: at(10, 0), code: pythonPlaceholder(2) }),
+      python({ id: 'h2', createdAt: at(11, 0) }),
+      makeHandin({ id: 'h3', ...sara, createdAt: at(10, 30) }),
+    ]);
+    await openClass();
+    buttonWithText('Download latest of each student (.zip)').click();
+    buttonWithText('Download all shown (.zip)').click();
+    expect(await zipNames(downloads[0].data as Blob)).toEqual(['Ali_Khoury.ino', 'Ali_Khoury.py', 'Sara_Mansour.ino']);
+    expect(new Set(await zipNames(downloads[1].data as Blob))).toEqual(
+      new Set(['Ali_Khoury.ino', 'Ali_Khoury.py', 'Ali_Khoury-2026-09-26-1000.ino', 'Ali_Khoury-2026-09-26-1000.py', 'Sara_Mansour.ino']),
+    );
+  });
+
+  it.each(['<img src=x onerror=alert(1)>', '</script><b>x</b>'])('renders a Python program %s literally', async (evil) => {
+    await signedIn([makeClass()]);
+    api.handins.set('BKT4M9', [python({ id: 'h1', workspaceJson: evil, code: evil })]);
+    await openDetail();
+    expect(root.querySelector('img')).toBeNull();
+    expect(root.querySelector('b')).toBeNull();
+    expect(card().querySelector('.z1t-python')!.textContent).toBe(evil);
+    expect(card().querySelector('details.z1t-sketch pre')!.textContent).toBe(evil);
   });
 });
 

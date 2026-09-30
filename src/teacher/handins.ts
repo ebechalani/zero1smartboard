@@ -2,14 +2,16 @@
  * Hand-ins on the dashboard (docs/CLASSROOM.md §1.3 T5-T7, §4.13): the decode cache (every
  * record is inflated once, right after it arrives, so Open / .ino / Copy never await), the
  * per-student Overview rows (grouped by nameKey), the review-page payload and the zip downloads.
- * Pure apart from decodeContent (CompressionStream) and Blob.
+ * A Python hand-in keeps its program in the stored workspace (docs/PYTHON.md §8.1): readers go
+ * through contentOf(). Pure apart from decodeContent (CompressionStream) and Blob.
  */
 import { decodeContent, type DecodeResult } from '../classroom/codec';
-import { LIMITS, fullName, listName, type HandinRecord } from '../classroom/model';
+import { LIMITS, contentOf, fullName, listName, type HandinContent, type HandinRecord } from '../classroom/model';
 import { reviewLink, type ReviewPayload } from '../share-link';
-import { sketchFileName } from '../ui/sketch-file';
+import { placeholderErrorCount } from '../sketch/placeholder';
+import { pythonFileName, sketchFileName } from '../ui/sketch-file';
 import { fileStamp } from './format';
-import { makeZip, uniqueName, type ZipEntry } from './zip';
+import { makeZip, type ZipEntry } from './zip';
 
 export type Decoded = DecodeResult;
 
@@ -135,11 +137,13 @@ export function sortRows(rows: OverviewRow[], by: 'name' | 'last'): OverviewRow[
 // ---------------------------------------------------------------------------
 
 export function reviewPayloadFor(record: HandinRecord, decoded: { code: string; workspaceJson: string }, className: string): ReviewPayload {
+  const content = contentOf(record.kind, decoded);
   return {
     v: 1,
     kind: record.kind,
-    code: decoded.code,
-    workspaceJson: record.kind === 'blocks' ? decoded.workspaceJson : '',
+    code: content.code,
+    workspaceJson: content.workspaceJson,
+    python: content.python,
     who: fullName(record.firstName, record.lastName),
     className,
     task: '',
@@ -157,6 +161,24 @@ export function inoName(record: HandinRecord, now: Date): string {
   return sketchFileName(fullName(record.firstName, record.lastName), record.createdAt ?? now);
 }
 
+/** The .py name of a Python hand-in: pythonFileName("First Last", createdAt), as the student's Download .py. */
+export function pyName(record: HandinRecord, now: Date): string {
+  return pythonFileName(fullName(record.firstName, record.lastName), record.createdAt ?? now);
+}
+
+/**
+ * The number of errors of a Python hand-in that has no sketch (its `code` is the placeholder of
+ * docs/PYTHON.md §4.10 T9); null for a real sketch and for every other kind.
+ */
+export function pythonErrorCount(content: HandinContent): number | null {
+  return content.kind === 'python' ? placeholderErrorCount(content.code) : null;
+}
+
+/** "Handed in with 2 Python errors": the detail card's note and the reason Download .ino is disabled. */
+export function pythonErrorsText(n: number): string {
+  return `Handed in with ${n} Python error${n === 1 ? '' : 's'}`;
+}
+
 /** The file stem of a student: "Ali Khoury" → "Ali_Khoury"; 'student' when empty. */
 export function fileStem(record: HandinRecord): string {
   const stem = fullName(record.firstName, record.lastName)
@@ -166,9 +188,10 @@ export function fileStem(record: HandinRecord): string {
 }
 
 /**
- * The entries of a zip download: `<First_Last>.ino` (and `<First_Last>.blocks.json`) for the
- * newest hand-in of each student, `<First_Last>-<yyyy-mm-dd-hhmm>.ino` for older versions;
- * names made unique. Records that could not be decoded are left out.
+ * The entries of a zip download: `<First_Last>.ino` (and `<First_Last>.blocks.json` or
+ * `<First_Last>.py`) for the newest hand-in of each student, `<First_Last>-<yyyy-mm-dd-hhmm>.ino`
+ * (and `.blocks.json` / `.py`) for older versions; names made unique. Records that could not be
+ * decoded are left out. The files of one hand-in share one stem, made unique (`-2`, `-3`).
  */
 export function zipEntries(items: readonly HandinRecord[], cache: DecodeCache, now: Date): ZipEntry[] {
   const taken = new Set<string>();
@@ -182,9 +205,16 @@ export function zipEntries(items: readonly HandinRecord[], cache: DecodeCache, n
     const latest = !seenStudent.has(record.nameKey);
     seenStudent.add(record.nameKey);
     const stem = latest ? base : `${base}-${fileStamp(date)}`;
-    entries.push({ name: uniqueName(`${stem}.ino`, taken), data: decoded.code, date });
-    if (record.kind === 'blocks' && decoded.workspaceJson !== '') {
-      entries.push({ name: uniqueName(`${stem}.blocks.json`, taken), data: decoded.workspaceJson, date });
+    const content = contentOf(record.kind, decoded);
+    const files: [ext: string, data: string][] = [['.ino', content.code]];
+    if (content.workspaceJson !== '') files.push(['.blocks.json', content.workspaceJson]);
+    if (content.python !== '') files.push(['.py', content.python]);
+    // One unique stem per hand-in, so its .blocks.json or .py keeps the name of its .ino.
+    let unique = stem;
+    for (let n = 2; files.some(([ext]) => taken.has(unique + ext)); n++) unique = `${stem}-${n}`;
+    for (const [ext, data] of files) {
+      taken.add(unique + ext);
+      entries.push({ name: unique + ext, data, date });
     }
   }
   return entries;

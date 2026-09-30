@@ -1,7 +1,7 @@
 /**
  * The sketch as a file for the Arduino IDE: a sketch name the IDE accepts
  * and the download of `<name>.ino`. Used by the Share dialog and the
- * "Open in Arduino IDE" dialog.
+ * "Open in Arduino IDE" dialog; Python mode also downloads `<name>.py`.
  *
  * Names are unique per download on purpose. Opening a lone `name.ino`, the
  * Arduino IDE offers to create a `name/` folder next to it and move the file
@@ -40,6 +40,14 @@ export function sketchName(studentName: string, date: Date): string {
 /** `sketchName()` + `.ino`. */
 export function sketchFileName(studentName: string, date: Date): string {
   return `${sketchName(studentName, date)}.ino`;
+}
+
+/**
+ * Share ▾ → Download .py in Python mode (docs/PYTHON.md §7.11): the sketch name in lower case
+ * (Python file names are), e.g. `zero1_ali_khoury_0928_143210.py`.
+ */
+export function pythonFileName(studentName: string, date: Date): string {
+  return `${sketchName(studentName, date).toLowerCase()}.py`;
 }
 
 /**

@@ -25,7 +25,7 @@ import { createPinMap, type PinMap } from './pinmap';
 import { createConsolePanel, type ConsolePanel } from './console-panel';
 import { createControls, type Controls } from './controls';
 import { createSettingsDialog, type SettingsDialog } from './settings';
-import { createMenu, type Menu } from './menu';
+import { createMenu, type Menu, type MenuGroup } from './menu';
 import { downloadTextFile, sketchFileName } from './sketch-file';
 import { createArduinoIdeDialog, type ArduinoIdeDialog } from './arduino-ide-dialog';
 import { createHandinDialog, type HandinDialog, type HandinWork } from './handin-dialog';
@@ -46,7 +46,9 @@ import type {
   ModeController,
   ModeHost,
   ModeLink,
+  ProgramFile,
   ReviewMessage,
+  RunWords,
   SketchFailure,
   TabId,
 } from './modes/types';
@@ -71,6 +73,10 @@ const TOAST_MS = 2500;
 const UNDO_TOAST_MS = 8000;
 /** What pythonize() gets of the Serial Monitor: its last 2 KB (§7.8). */
 const SERIAL_TAIL_CHARS = 2048;
+/** A program without a main loop: how long a tone still sounding may go on after the end of the program (§7.8). */
+const FINISH_TONE_MS = 2000;
+/** The Serial Monitor tab's accessible name while its activity dot shows (§7.9). */
+const SERIAL_NEW_OUTPUT = 'Serial Monitor, new output';
 
 /**
  * Right-column tabs in display order (docs/PYTHON.md §7.2); the Blocks and
@@ -137,7 +143,7 @@ export class App {
   private readonly consolePanel: ConsolePanel;
   private readonly controls: Controls;
   private readonly settings: SettingsDialog;
-  /** Header "Share ▾": Hand in (when configured), Copy link, Download .ino. */
+  /** Header "Share ▾": Hand in (when configured), Copy link, Download .py (Python), Download .ino. */
   private readonly shareMenu: Menu;
   /** Header "Settings ▾": Reset the board, Board settings…. */
   private readonly settingsMenu: Menu;
@@ -175,6 +181,14 @@ export class App {
   private executor: Executor | null = null;
   /** Incremented by every run(); an older run that is still waiting to start gives up. */
   private runToken = 0;
+  /**
+   * The current run of a program without a main loop (§7.8): the frame loop ends it once setup()
+   * returned and no tone sounds (2 s at most). `since`: board time when setup() was seen done;
+   * `finishedAt`: board time when it was ended.
+   */
+  private finishing: { executor: Executor; since: number | null; finishedAt: number | null } | null = null;
+  /** The console hint of the current run, until the first print while the Serial Monitor is hidden (§7.9). */
+  private printHint: RunWords['printHint'] | null = null;
   private activeTab: TabId = 'code';
   private running = false;
   private lastMillisShown = -1;
@@ -230,6 +244,7 @@ export class App {
     this.host = {
       review,
       console: this.consolePanel,
+      dialogParent: root,
       isCurrent: (mode) => mode === this.mode,
       setMode: (id) => this.setMode(id),
       panel: (tab) => this.panels.get(tab)!,
@@ -273,7 +288,7 @@ export class App {
     });
     board.serial.onTx((text) => {
       this.serialMonitor.append(text);
-      if (this.activeTab !== 'serial') this.tabButtons.get('serial')!.classList.add('has-activity');
+      if (this.activeTab !== 'serial') this.showSerialActivity();
     });
 
     this.pinMap = createPinMap(this.panels.get('pinmap')!, board);
@@ -331,15 +346,7 @@ export class App {
     this.shareMenu = createMenu(
       this.slot('share'),
       { icon: '🔗', label: 'Share', ariaLabel: 'Open the share menu', title: this.handinDialog ? SHARE_TITLE_CLASS : SHARE_TITLE, listLabel: 'Share your work', compact: true },
-      [
-        {
-          items: [
-            ...(this.handinDialog ? [{ label: 'Hand in to my teacher', title: 'Send this work to your teacher', onSelect: () => this.handIn() }] : []),
-            { label: 'Copy link', title: 'Anyone who opens the link sees your work in the simulator', onSelect: () => this.copyLink() },
-            { label: 'Download .ino', title: 'Save the sketch for the Arduino IDE', onSelect: () => this.downloadSketch() },
-          ],
-        },
-      ],
+      this.shareItems(),
     );
 
     // --- header actions ---------------------------------------------------
@@ -461,7 +468,11 @@ export class App {
     const code = prepared.sketch;
     const result = safeTranspile(code);
     this.consolePanel.clear();
-    this.showDiagnostics(result, true);
+    // Python: the console shows the program's own warnings (on Python lines), not the sketch's.
+    this.showDiagnostics(result, !prepared.diagnostics || !result.ok);
+    for (const d of prepared.diagnostics ?? []) {
+      this.consolePanel.push({ level: d.severity === 'error' ? 'error' : 'warn', text: d.message, line: d.line, source: mode.lineSource });
+    }
 
     if (!result.ok) {
       const count = result.errors.length;
@@ -496,10 +507,15 @@ export class App {
       },
     });
     this.executor = executor;
+    const finishing = prepared.endsAfterSetup ? { executor, since: null, finishedAt: null } : null;
+    this.finishing = finishing;
+    this.printHint = mode.runWords.printHint ?? null;
     this.setRunning(true);
     this.setStatus('running', 'Running · 0 ms');
     this.consolePanel.setStatus('Running');
-    this.consolePanel.push({ level: 'info', text: 'Sketch started.' });
+    this.consolePanel.push({ level: 'info', text: mode.runWords.started });
+    // input() reads the Serial Monitor: show it, with the cursor in its send box (§7.9).
+    if (prepared.usesInput) this.selectTab('serial');
 
     try {
       await executor.run(result.js);
@@ -509,16 +525,37 @@ export class App {
     }
     if (this.executor !== executor) return; // a newer run took over
     this.executor = null;
+    if (this.finishing === finishing) this.finishing = null;
+    this.printHint = null;
     this.setRunning(false);
     const millis = Math.floor(this.clock.now());
     if (executor.status === 'error') {
       this.setStatus('error', `Error at ${millis} ms`);
       this.consolePanel.setStatus('Stopped by an error — click the message to jump to the line');
+    } else if (finishing?.finishedAt != null) {
+      this.setStatus('stopped', `Finished at ${finishing.finishedAt} ms`);
+      this.consolePanel.setStatus('Finished');
+      this.consolePanel.push({ level: 'info', text: mode.runWords.finished ?? mode.runWords.stopped(executor.loops, true) });
     } else {
       this.setStatus('stopped', `Stopped at ${millis} ms`);
       this.consolePanel.setStatus('Stopped');
-      this.consolePanel.push({ level: 'info', text: `Sketch stopped after ${executor.loops} loop() calls.` });
+      this.consolePanel.push({ level: 'info', text: mode.runWords.stopped(executor.loops, prepared.endsAfterSetup) });
     }
+  }
+
+  /**
+   * A program without a main loop (§7.8): once setup() returned (the first loop() call is
+   * done), the run ends as soon as no tone sounds, or 2 s of board time later. Checked in the
+   * frame loop.
+   */
+  private checkFinished(now: number): void {
+    const run = this.finishing;
+    if (!run || run.finishedAt !== null || this.executor !== run.executor || run.executor.loops < 1) return;
+    run.since ??= now;
+    const sounding = Boolean(this.board.buzzer.state.freq); // null (or 0) when silent
+    if (sounding && now - run.since < FINISH_TONE_MS) return;
+    run.finishedAt = Math.floor(now);
+    void run.executor.stop();
   }
 
   /** Stop the running sketch (no-op when idle). */
@@ -651,14 +688,23 @@ export class App {
     }
   }
 
-  /** Console "line N": the Python editor for a Python line, else the sketch in the Code tab (§7.10). */
+  /**
+   * Console "line N" (§7.10): a Python line opens the Python tab (switching to Python mode when
+   * needed, e.g. after a run in Python mode) and moves the Python editor there; a sketch line
+   * opens the Code tab of the current mode.
+   */
   private readonly jumpToLine: Record<'sketch' | 'python', (line: number) => void> = {
     sketch: (line) => {
       this.selectTab('code');
       this.sketchEditor().goToLine(line);
     },
-    python: (line) => this.modes.python.goToLine?.(line),
+    python: (line) => void this.goToProgramLine(this.modes.python, line),
   };
+
+  private async goToProgramLine(mode: ModeController, line: number): Promise<void> {
+    if (mode !== this.mode) await this.switchMode(mode.id);
+    if (mode === this.mode) mode.goToLine?.(line);
+  }
 
   // -------------------------------------------------------------------------
   // Modes (src/ui/modes, docs/PYTHON.md §7.1, §7.6)
@@ -734,6 +780,9 @@ export class App {
     this.uploadSlot.setAttribute('aria-label', mode.words.upload);
 
     this.examplesMenu.setExamples(mode.examples());
+    this.shareMenu.setItems(this.shareItems());
+    // Python's input() reads one line: the Serial Monitor sends Newline in Python mode (§7.9).
+    this.serialMonitor.forceNewline(mode.runWords.newlineOnly ?? null);
     this.selectTab(mode.firstTab);
   }
 
@@ -824,12 +873,39 @@ export class App {
     );
   }
 
+  /**
+   * Share ▾ in the current mode (§7.11): Hand in (when the class platform is configured), Copy
+   * link, the mode's own file (Python: Download .py), Download .ino.
+   */
+  private shareItems(): MenuGroup[] {
+    const file = this.mode.programFile;
+    return [
+      {
+        items: [
+          ...(this.handinDialog ? [{ label: 'Hand in to my teacher', title: 'Send this work to your teacher', onSelect: () => this.handIn() }] : []),
+          { label: 'Copy link', title: 'Anyone who opens the link sees your work in the simulator', onSelect: () => this.copyLink() },
+          ...(file ? [{ label: file.label, title: file.title, onSelect: () => this.downloadProgram(file) }] : []),
+          { label: 'Download .ino', title: 'Save the sketch for the Arduino IDE', onSelect: () => this.downloadSketch() },
+        ],
+      },
+    ];
+  }
+
   /** Share ▾ → Download .ino: `sketchFileName()` named after the remembered student (sketch-file.ts). */
   private downloadSketch(): void {
     const work = this.boardWork();
     if (!work) return;
     const fileName = sketchFileName(currentStudentName(), new Date());
     downloadTextFile(fileName, work.sketch);
+    this.toast(`Downloading ${fileName}`);
+  }
+
+  /** Share ▾ → Download .py: the mode's own program, also while it has errors. */
+  private downloadProgram(file: ProgramFile): void {
+    const work = this.exportWork();
+    if (!work) return;
+    const fileName = file.fileName(currentStudentName(), new Date());
+    downloadTextFile(fileName, file.contents(work));
     this.toast(`Downloading ${fileName}`);
   }
 
@@ -892,15 +968,27 @@ export class App {
   private openInIde(): void {
     const work = this.boardWork();
     if (!work) return;
-    this.ideDialog.open({ code: work.sketch, kind: work.kind });
+    this.ideDialog.open({ code: work.sketch, kind: work.kind, note: this.mode.mirror?.ideNote });
   }
 
-  /** What Upload to board sends: the sketch, or `{ error }` (toasted by the upload button) while there is none. */
+  /**
+   * What Upload to board sends: the sketch, or `{ error }` (toasted by the upload button) while
+   * there is none. In Python mode compile errors point at Python lines (§7.12).
+   */
   private uploadPayload(): UploadPayload | { error: string } | null {
-    const work = this.mode.exportWork();
+    const mode = this.mode;
+    const work = mode.exportWork();
     if (!work || 'error' in work) return work;
     if (work.sketchProblem) return { error: work.sketchProblem };
-    return { code: work.sketch, kind: work.kind };
+    return {
+      code: work.sketch,
+      kind: work.kind,
+      note: mode.mirror?.uploadNote,
+      successNote: mode.mirror?.uploadDone,
+      mapLine: work.mapLine,
+      source: work.mapLine ? mode.lineSource : undefined,
+      sketchError: work.sketchError,
+    };
   }
 
   /** Tabs that exist in the current mode (the Blocks and Python tabs only in their own mode). */
@@ -927,13 +1015,30 @@ export class App {
       this.mode.resize?.(); // Blocks: the workspace was hidden, let Blockly measure its container again
     }
     if (id === 'serial') {
-      this.tabButtons.get('serial')!.classList.remove('has-activity');
+      const serial = this.tabButtons.get('serial')!;
+      serial.classList.remove('has-activity');
+      serial.removeAttribute('aria-label');
       this.serialMonitor.focusInput();
     } else if (id === 'pinmap') {
       this.pinMap.refresh();
     } else if (id === 'js') {
       this.refreshGeneratedJs();
     }
+  }
+
+  /**
+   * The sketch printed while the Serial Monitor tab is hidden: the dot on the tab (with the
+   * accessible name "Serial Monitor, new output"), and in Python mode, once per run, the console
+   * hint with a link to the tab (§7.9).
+   */
+  private showSerialActivity(): void {
+    const tab = this.tabButtons.get('serial')!;
+    tab.classList.add('has-activity');
+    tab.setAttribute('aria-label', SERIAL_NEW_OUTPUT);
+    const hint = this.printHint;
+    if (!hint || !this.running) return;
+    this.printHint = null;
+    this.consolePanel.push({ level: 'info', text: hint.text }, { label: hint.action, onSelect: () => this.selectTab('serial') });
   }
 
   private onTabKeyDown(e: KeyboardEvent, id: TabId): void {
@@ -962,7 +1067,8 @@ export class App {
       this.settings.element.open ||
       this.ideDialog.isOpen() ||
       this.uploadButton.isOpen() ||
-      this.handinDialog?.isOpen()
+      this.handinDialog?.isOpen() ||
+      this.root.querySelector('dialog[open]') // a mode's dialog ("What works")
     ) {
       return;
     }
@@ -1023,6 +1129,7 @@ export class App {
     this.board.tick(now);
     this.boardView.update();
     this.audio.update(this.board.buzzer.state.freq);
+    this.checkFinished(now);
     if (this.running) {
       const millis = Math.floor(now);
       if (millis - this.lastMillisShown >= SLOW_REFRESH_MS) {

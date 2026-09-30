@@ -249,8 +249,9 @@ device already remembers that very class, it opens the Ready view instead.
 - Two inputs, *First name* and *Last name* (each 1-30 characters after `cleanName`;
   letters of any alphabet, spaces, `'`, `.` and `-`; accents kept). They are prefilled
   with the name this device gave before (its member doc, else the saved session).
-- The work line ("Your Arduino sketch, 42 lines" or "Your blocks program and the Arduino
-  sketch made from it") and the warnings of S3 are shown here too.
+- The work line ("Your Arduino sketch, 42 lines", "Your blocks program and the Arduino
+  sketch made from it" or "Your Python program and the Arduino sketch made from it") and
+  the warnings of S3 are shown here too.
 - **Hand in** (or Enter in a field) runs the local checks of S3, then `api.join(found,
   name)` (create or rename this device's member doc), then the Ready view and the send.
 - **Back** returns to the code.
@@ -264,12 +265,20 @@ device already remembers that very class, it opens the Ready view instead.
 - The work line and the warnings from `HandinWork`:
   - `unchanged: 'example'`: "This is still the example '{title}'. Hand it in anyway?"
     and `unchanged: 'blank'`: "Your sketch is still the empty starting sketch. Hand it
-    in anyway?" are shown as a warning line, and **Hand in** asks the same question
+    in anyway?" (Python: "Your Python program is still the empty starting program. Hand
+    it in anyway?") are shown as a warning line, and **Hand in** asks the same question
     once with a confirm dialog (`options.confirm`).
   - `errorCount > 0`: "Your sketch has {n} errors. Your teacher will see them." (a note).
-- Client checks before any request: `empty_sketch` (also a Python hand-in without a
-  program), `too_large` (sketch 50,000 / Blocks workspace 100,000 / Python program 50,000
-  UTF-8 bytes), `too_soon` (10 s since the last hand-in from this device), `offline`.
+    Python: "Your Python program has {n} errors. Your teacher will see them.", with {n}
+    read from the placeholder sketch a program with errors hands in (`placeholderErrorCount`,
+    docs/PYTHON.md §4.10 T9); such a hand-in is allowed, the teacher sees the program.
+- **Python hand-ins** (docs/PYTHON.md §8.3): the App passes `kind: 'python'`, `code` = the
+  sketch made from the program (or the placeholder), `python` = the program, `unchanged` for
+  `BLANK_PYTHON` or an untouched Python example.
+- Client checks before any request: `empty_sketch` (Python: "Your Python program is empty.
+  There is nothing to hand in yet."), `too_large` (sketch 50,000 / Blocks workspace 100,000 /
+  Python program 50,000 UTF-8 bytes), `too_soon` (10 s since the last hand-in from this
+  device), `offline`.
 - The dialog keeps one `handinId` (`newHandinId()`) per draft. Retries reuse it (§2.9).
 - The button shows "Handing in…" and is disabled: one request at a time. After the
   request timeout the status reads "Checking whether it arrived…" (the API reads the
@@ -286,6 +295,9 @@ The next opening shows the Ready view again with "Last handed in".
 - `timeout`, `offline` after sending, `unknown`: "It did not arrive. **Try again**"
   (the same id);
 - `too_soon`, `limit_reached`, `quota`, `permission`, `unknown`: inline in the status line;
+  a `permission` refusal of a **Python** hand-in reads "Your class is not ready for Python
+  hand-ins yet: ask your teacher to update the class rules." (rules published before Python
+  hand-ins refuse them, §3.1 and docs/PYTHON.md §11.4);
 - `device_removed`: button **Enter your name again** (= Change);
 - `class_deleted`: the session is cleared, button **Different class**;
 - `handins_closed`: button **Different class** (the code is forgotten too);
@@ -387,7 +399,7 @@ and Esc do not run or stop the sketch (the App's keyboard guard).
       `z1.teacher.seen.<code>` (nameKey → createdAt ms);
     - "✓ Seen".
   - **Last hand-in**: time ("10:42" today, "Mon 10:42" this week, else the date) ·
-    Code / Blocks.
+    Code / Blocks / Python.
   - **Versions**: the number in the view.
   - **Computers**:
     - normally neutral text ("1 computer", "2 computers");
@@ -398,7 +410,8 @@ and Esc do not run or stop the sketch (the App's keyboard guard).
     until the content is decoded; decoding happens right after the data arrives.
     Middle-click and Ctrl+click open many tabs.
   - **.ino**: a button, enabled once the content is decoded, with no `await` between the
-    click and the download.
+    click and the download. Disabled for a Python hand-in with errors (its title says
+    "Handed in with {N} Python errors: there is no sketch to download").
 - Opening the detail, **Open** or **.ino** marks the student as seen.
 - Buttons:
   - **Download latest of each student (.zip)**: from the loaded view, no reads;
@@ -417,15 +430,23 @@ and Esc do not run or stop the sketch (the App's keyboard guard).
 - Each version shows:
   - the time;
   - the computer: `shortDeviceId(uid)`, plus the device label when members are loaded;
-  - **Code** / **Blocks**;
+  - **Code** / **Blocks** / **Python** (`z1t-kind-python`);
   - a read-only `<pre>` code preview (`textContent`). For Blocks, the sketch generated
     from the blocks, labelled so.
+  - **Python** (docs/PYTHON.md §8.5): the program first (monospace `<pre>`,
+    `textContent`), then a collapsed `<details>` "The Arduino sketch made from it" with the
+    sketch. Readers take the program from the stored workspace with `contentOf(kind,
+    decoded)` (§2.8). When `placeholderErrorCount(code)` is a number (the program had errors,
+    so the stored sketch is the placeholder): the note "Handed in with {N} Python errors" above
+    the program, and **Download .ino** disabled with that reason.
 - Actions:
   - **Open in the simulator** (a link, as in T5);
   - **Download .ino**: `sketchFileName("First Last", createdAt)`. For Blocks, the zip
     download also adds `<First_Last>.blocks.json`.
-  - **Copy code**: enabled when decoded. Fallback: select the `<pre>` text and say
-    "Press Ctrl+C".
+  - **Download .py** (Python, before Download .ino): `pythonFileName("First Last",
+    createdAt)`, e.g. `zero1_ali_khoury_0926_104200.py`, as the student's own Download .py.
+  - **Copy code**: enabled when decoded; copies the program for Python, else the sketch.
+    Fallback: select that `<pre>` text and say "Press Ctrl+C".
   - **Remove the computer that sent this**: confirm, then `removeDevice(code, uid)`.
     (There is no "Move to…": hand-ins are immutable; a wrong name is deleted and the
     student hands in again.)
@@ -437,7 +458,7 @@ and Esc do not run or stop the sketch (the App's keyboard guard).
   - `corrupt`: "This hand-in is damaged."
 
 **T7 All hand-ins.** A feed of the same view, newest first:
-- time, "Last name, First name", a **Code** / **Blocks** badge;
+- time, "Last name, First name", a **Code** / **Blocks** / **Python** badge;
 - a filter by student (the names in the view);
 - the same detail panel.
 
@@ -495,6 +516,12 @@ The teacher lands here from **Open**. The page has two parts.
   light · Mon 10:42 · Blocks".
 - The line "The sketch runs in a safe sandbox. Changes here are not saved."
 - Buttons **Download .ino** and **Copy code**, both working from the payload.
+- A **Python** hand-in (docs/PYTHON.md §8.5): the banner ends "· Python"; **Download .py**
+  (`pythonFileName(who, at)`) comes before **Download .ino**; **Copy code** copies the
+  program; while it was handed in with errors (`placeholderErrorCount(code)` is a number) the
+  banner adds "Handed in with {N} Python errors" and **Download .ino** is disabled with that
+  reason. Inside the frame a Python hand-in shows the handed-in sketch in Code mode until the
+  simulator's Python review mode lands (docs/PYTHON.md §7.13).
 - `document.title` = "ali.k – ZERO1 review".
 
 **Sandbox**: the rest of the window is:
@@ -1478,9 +1505,10 @@ tests keep working.
 
 ```ts
 export interface HandinWork {
-  kind: 'code' | 'blocks'; code: string; workspaceJson: string;
-  unchanged: { kind: 'blank' } | { kind: 'example'; title: string } | null;   // set by the App
-  errorCount: number;                                                        // synchronous transpile()
+  kind: HandinKind; code: string; workspaceJson: string;
+  python: string;                                                            // the Python program; '' unless kind is 'python'
+  unchanged: { kind: 'blank' } | { kind: 'example'; title: string } | null;   // set by the App (blank sketch / BLANK_PYTHON, untouched example)
+  errorCount: number;                                                        // synchronous transpile(); Python: the Python errors
 }
 export interface HandinDialogOptions {
   loadApi?: () => Promise<StudentApi>;       // default: () => import('../classroom/student').then((m) => m.createStudentApi())
@@ -1496,7 +1524,10 @@ export interface HandinDialog {
   close(): void; isOpen(): boolean; readonly element: HTMLDialogElement;
 }
 export function createHandinDialog(parent: HTMLElement, options?: HandinDialogOptions): HandinDialog;
-export const HANDIN_TEXT: { title, loading, nameHelp, handingIn, checking, notArrived, blank, example(title), errors(n), success(time) };
+export const HANDIN_TEXT: {
+  title, loading, nameHelp, handingIn, checking, notArrived, blank, example(title), errors(n), success(time),
+  pythonWork, pythonBlank, pythonErrors(n), pythonEmpty, pythonNotReady,   // Python hand-ins (docs/PYTHON.md §8.3)
+};
 ```
 
 - A `<dialog class="z1-dialog z1-handin">`, built like Share and the Arduino IDE dialog.
@@ -1508,6 +1539,13 @@ export const HANDIN_TEXT: { title, loading, nameHelp, handingIn, checking, notAr
   Close; after an error → the control to fix.
 - The dialog never keeps the student's work after closing; `open(work)` replaces it.
 - All user strings go through `textContent`.
+- **Python** (docs/PYTHON.md §8.3): the draft is `{ kind: 'python', code, workspaceJson: '',
+  python }`. The work line is `pythonWork`; the untouched-blank question `pythonBlank`; the
+  errors note `pythonErrors(n)` with `n = placeholderErrorCount(code) ?? errorCount` (the
+  placeholder sketch carries the count, `src/sketch/placeholder.ts`); an empty program is
+  refused with `pythonEmpty`; a `permission` answer to the hand-in shows `pythonNotReady`
+  ("Your class is not ready for Python hand-ins yet: ask your teacher to update the class
+  rules.", for a site deployed before the rules, docs/PYTHON.md §11.4).
 
 ### 4.11 `src/ui/app.ts` changes (B)
 
@@ -1615,14 +1653,23 @@ export const HANDIN_TEXT: { title, loading, nameHelp, handingIn, checking, notAr
 - **Zip** (`src/teacher/zip.ts`):
   - `makeZip(files: { name: string; data: string | Uint8Array; date?: Date }[]): Blob`;
   - store-only (no compression), CRC-32, UTF-8 file names (flag bit 11);
-  - names `<First_Last>.ino`, `<First_Last>.blocks.json`, `<First_Last>-<yyyy-mm-dd-hhmm>.ino`
-    for older versions, made unique.
+  - names `<First_Last>.ino`, `<First_Last>.blocks.json` (Blocks), `<First_Last>.py`
+    (Python, docs/PYTHON.md §8.5), `<First_Last>-<yyyy-mm-dd-hhmm>.ino` (and `.blocks.json`
+    / `.py`) for older versions. The files of one hand-in share one stem, made unique
+    (`-2`, `-3`), so a `.py` keeps its `.ino`'s name. A Python hand-in with errors keeps
+    its placeholder `.ino` in the zip (two comment lines that say so).
+- **Python hand-ins** (docs/PYTHON.md §8.5): every reader turns the decoded content into
+  `contentOf(record.kind, decoded)` (the program is in the stored workspace, §2.8); the kind
+  label is "Python" (`z1t-kind-python`) in the Overview, the detail and the feed; the detail
+  card, the Overview **.ino** and the review payload (`reviewPayloadFor()` carries `python`)
+  follow T6 and §1.4.
 - **Complete downloads**: "Download everything first" (Settings) and "Download them"
   (the retention notice) page through every hand-in with `ClassSession.loadAll()` (no
   cap) and report the count; a failed page shows the error, never a silently short zip.
 - **Allowed imports**: `src/classroom/model.ts`, `codec.ts`, `errors.ts`,
   `teacher.ts` (type imports plus the lazy import), `src/share-link.ts`,
-  `src/ui/sketch-file.ts`. Anything that imports CodeMirror, Blockly, the transpiler or
+  `src/ui/sketch-file.ts`, `src/sketch/placeholder.ts` (`placeholderErrorCount`; it imports
+  nothing). Anything that imports CodeMirror, Blockly, the transpiler or
   the runtime is not allowed.
 
 ### 4.14 Review page (C)
@@ -1638,7 +1685,13 @@ export const HANDIN_TEXT: { title, loading, nameHelp, handingIn, checking, notAr
   3. Create `<iframe sandbox="allow-scripts" src="./index.html#review">`, sized to the
      rest of the window.
   4. Run the handshake of §1.4.
-- The page imports only `src/share-link.ts`, `src/ui/sketch-file.ts` and its own CSS.
+- The page imports only `src/share-link.ts`, `src/ui/sketch-file.ts`,
+  `src/sketch/placeholder.ts` and its own CSS.
+- **Python** (docs/PYTHON.md §8.5): "· Python" in the banner, **Download .py**
+  (`pythonFileName`) next to **Download .ino**, **Copy code** copies the program; a program
+  handed in with errors adds "Handed in with {N} Python errors" and disables
+  **Download .ino** (§1.4). The frame's Python review mode is the simulator's
+  (docs/PYTHON.md §7.13); until then it shows the handed-in sketch in Code mode.
 
 ### 4.15 Vite multi-page build and GitHub Pages (C)
 
@@ -2017,7 +2070,10 @@ and that the code alphabet and the name regex appear in it.
   an untouched example, double click → one `handIn`, a new id after success, "Checking
   whether it arrived…", Try again with the same id, every error text, the
   `device_removed` / `class_deleted` / `handins_closed` buttons, a name changed elsewhere,
-  a late answer ignored); the restore errors; the textContent matrix.
+  a late answer ignored); the restore errors; the textContent matrix; **Python hand-ins**
+  (docs/PYTHON.md §8.3, owner C): the draft with the program, the work line, the error
+  count read from the placeholder (name view too), the untouched example / blank questions,
+  an empty or too large program, the permission-denied text (Code and Blocks keep theirs).
 - `tests/app-header.test.ts`: the button exists only when configured; the label "Hand
   in · Ali Khoury" from a saved session; `#class=` opens the dialog with the code.
 - `tests/share-dialog.test.ts`, `tests/arduino-ide-dialog.test.ts`: download names from
@@ -2036,9 +2092,16 @@ and that the code alphabet and the name regex appear in it.
   complete paged download**, prune toast, once per tab); Settings (name, switch, weeks,
   **"Download everything first" pages through every hand-in**, delete with progress,
   Finish deleting); Delete my data; sign-out; the error banner; parked listeners; the
-  textContent matrix over names, class name, code and device.
-- `tests/review-page.test.ts`, `tests/zip.test.ts`: unchanged (the review banner shows
-  "Ali Khoury's hand-in · 8B Robotics · …"; `task` and `title` are empty strings).
+  textContent matrix over names, class name, code and device; **Python hand-ins**
+  (docs/PYTHON.md §8.5): the "Python" label in the Overview, the detail and the feed, the
+  program first and the sketch in a collapsed `<details>`, Download .py / .ino, Copy copies
+  the program, the Open payload with `python`, "Handed in with N Python errors" with .ino
+  disabled (detail and Overview), `.py` in the zips, the program rendered as text.
+- `tests/review-page.test.ts` (the review banner shows "Ali Khoury's hand-in · 8B Robotics
+  · …"; `task` and `title` are empty strings): for Python, "· Python", Download .py next to
+  Download .ino, Copy copies the program, the errors note with .ino disabled, an older link
+  without the program. `tests/zip.test.ts`: the writer, plus `zipEntries` (`.py` next to
+  `.ino`, older versions, one unique stem per hand-in, undecoded records left out).
 
 ### 7.4 Browser check of the sandbox (manual, plus an optional script)
 

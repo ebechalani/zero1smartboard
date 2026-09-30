@@ -83,6 +83,11 @@ export interface BuildOptions {
   debug?: boolean;
   /** Keep the intermediate .s / .o files in the result. */
   keep?: boolean;
+  /**
+   * Tests only (docs/PYTHON.md §10.6): 'all' compiles the sketch itself with -Wall -Wextra instead
+   * of -w, so `warnings` lists what GCC says about it. Libraries and the core stay at -w.
+   */
+  warnings?: 'none' | 'all';
 }
 
 export interface StepTiming {
@@ -189,7 +194,7 @@ export async function buildSketch(tc: WasmToolchain, bundle: Bundle, opts: Build
 
   type UnitResult = { ok: true; obj: Uint8Array } | { ok: false; stderr: string[] };
 
-  async function compileUnit(label: string, vpath: string, data: Uint8Array | string, kind: 'S' | 'c' | 'cpp'): Promise<UnitResult> {
+  async function compileUnit(label: string, vpath: string, data: Uint8Array | string, kind: 'S' | 'c' | 'cpp', warn = ['-w']): Promise<UnitResult> {
     const s0 = now();
     const out = '/build/out.s';
     let args: string[];
@@ -202,7 +207,7 @@ export async function buildSketch(tc: WasmToolchain, bundle: Bundle, opts: Build
       data = `extern "C" {\n#line 1 "${vpath}"\n` + (typeof data === 'string' ? data : td.decode(data)) + '\n}\n';
       args = ['-quiet', '-U__cplusplus', '-D_Bool=bool', ...baseArgs, vpath, ...A.target, '-quiet', '-dumpbase', vpath.split('/').pop()!, '-auxbase-strip', '/build/out.o', ...dbg, ...A.flags, '-w', '-o', out];
     } else {
-      args = ['-quiet', ...baseArgs, vpath, ...A.target, '-quiet', '-dumpbase', vpath.split('/').pop()!, '-auxbase-strip', '/build/out.o', ...dbg, ...A.flags, '-w', '-o', out];
+      args = ['-quiet', ...baseArgs, vpath, ...A.target, '-quiet', '-dumpbase', vpath.split('/').pop()!, '-auxbase-strip', '/build/out.o', ...dbg, ...A.flags, ...warn, '-o', out];
     }
     const c = await tc.run(
       'cc1plus',
@@ -243,7 +248,7 @@ export async function buildSketch(tc: WasmToolchain, bundle: Bundle, opts: Build
 
   // 3. compile the sketch
   t = now();
-  const sk = await compileUnit('sketch.ino.cpp', '/build/sketch.ino.cpp', cpp, 'cpp');
+  const sk = await compileUnit('sketch.ino.cpp', '/build/sketch.ino.cpp', cpp, 'cpp', opts.warnings === 'all' ? ['-Wall', '-Wextra'] : ['-w']);
   T.sketchMs = now() - t;
   if (!sk.ok) return fail('compile sketch', sk.stderr);
 

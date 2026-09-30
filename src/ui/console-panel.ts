@@ -1,7 +1,8 @@
 /**
  * Console panel under the tabs: transpiler errors/warnings, runtime messages
  * and status lines. Entries with a source line jump the editor to that line
- * (the sketch, or the Python program for `source: 'python'`, docs/PYTHON.md §7.10).
+ * (the sketch, or the Python program for `source: 'python'`, docs/PYTHON.md §7.10);
+ * an entry may end with an action ("Open the Serial Monitor", §7.9).
  */
 import type { ConsoleMessage } from '../types';
 
@@ -12,8 +13,20 @@ export interface ConsolePanelOptions {
   maxEntries?: number;
 }
 
+/** A link-styled button at the end of a console message ("Open the Serial Monitor"). */
+export interface ConsoleAction {
+  label: string;
+  onSelect(): void;
+}
+
+/** What a line link says: "Go to line 12 in the Python program" / "… in the sketch" (docs/PYTHON.md §7.10). */
+export function lineLinkText(line: number, source: ConsoleMessage['source']): string {
+  return `Go to line ${line} in the ${source === 'python' ? 'Python program' : 'sketch'}`;
+}
+
 export interface ConsolePanel {
-  push(message: ConsoleMessage): void;
+  /** Show a message; `action` adds a button after its text. */
+  push(message: ConsoleMessage, action?: ConsoleAction): void;
   clear(): void;
   /** One-line status shown in the panel header ("Running", "Stopped"…). */
   setStatus(text: string): void;
@@ -42,7 +55,7 @@ export function createConsolePanel(container: HTMLElement, options: ConsolePanel
   container.querySelector<HTMLButtonElement>('[data-role="clear"]')!.addEventListener('click', () => api.clear());
 
   const api: ConsolePanel = {
-    push(message) {
+    push(message, action) {
       const entry = document.createElement('div');
       entry.className = 'z1-console-entry';
       entry.dataset.level = message.level;
@@ -58,7 +71,8 @@ export function createConsolePanel(container: HTMLElement, options: ConsolePanel
         jump.type = 'button';
         jump.className = 'z1-console-line';
         jump.textContent = `line ${line}`;
-        jump.setAttribute('aria-label', `Go to line ${line} in the editor`);
+        jump.setAttribute('aria-label', lineLinkText(line, message.source));
+        jump.title = lineLinkText(line, message.source);
         jump.addEventListener('click', () => options.onJumpToLine(line, message.source));
         entry.appendChild(jump);
         entry.classList.add('is-clickable');
@@ -71,6 +85,18 @@ export function createConsolePanel(container: HTMLElement, options: ConsolePanel
       text.className = 'z1-console-text';
       text.textContent = message.text;
       entry.appendChild(text);
+
+      if (action) {
+        const link = document.createElement('button');
+        link.type = 'button';
+        link.className = 'z1-linkbtn z1-console-action';
+        link.textContent = action.label;
+        link.addEventListener('click', (e) => {
+          e.stopPropagation(); // not a jump to the message's line
+          action.onSelect();
+        });
+        entry.appendChild(link);
+      }
 
       list.appendChild(entry);
       while (list.childElementCount > maxEntries) list.firstElementChild?.remove();

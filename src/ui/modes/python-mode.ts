@@ -3,16 +3,24 @@
  * tab (saved as `z1.python`); the translator turns it into an Arduino sketch, which the Code
  * tab's read-only mirror shows and which Run, the exports and the hand-in use.
  *
+ * The Python tab: a one-line note with the "What works" dialog (§7.3) above the editor (§7.4:
+ * ZERO1 completions, paste clean-up, visible non-breaking spaces). Live lint (§7.8) translates
+ * the program 700 ms after an edit and also checks the sketch with transpile(): its errors
+ * become X-sketch-error and its warnings W-sketch, on the Python lines they were made from.
+ *
  * The translator, the examples and the editor's language support live in the lazy Python
  * chunk (src/ui/python-chunk.ts, §7.16): this file imports its types only and loads it with
  * `import()` on first use, so Code and Blocks users never download it.
  */
+import { transpile } from '../../transpiler';
+import type { Diagnostic } from '../../types';
 import { createEditor, loadText, saveText, type Editor } from '../editor';
 import type { MenuExample } from '../examples-menu';
 import type { HandinWork } from '../handin-dialog';
-import type { PythonExample, PythonTranslation } from '../python-chunk';
+import type { PythonExample, PythonHelpDialog, PythonTranslation } from '../python-chunk';
+import { pythonFileName } from '../sketch-file';
 import { encodeSharePython } from '../../share-link';
-import type { ExportedWork, ModeController, ModeHost, ModeLink, ReviewMessage, SketchResult } from './types';
+import type { ExportedWork, ModeController, ModeHost, ModeLink, ProgramFile, ReviewMessage, RunWords, SketchResult } from './types';
 
 type PythonChunk = typeof import('../python-chunk');
 
@@ -34,6 +42,40 @@ export const PYTHON_FIX_FIRST_TITLE = 'Fix the errors in your Python program fir
 /** Download .ino, Arduino IDE and Upload to board refuse a program with errors (§7.11, §7.12). */
 export const PYTHON_FIX_FIRST = 'Fix the errors in your Python program first — see the console.';
 
+/** The one-line note above the Python editor (§7.3); "What works" opens the dialog. */
+export const PYTHON_NOTE = {
+  before: 'MicroPython-style Python for the ZERO1. It becomes the Arduino sketch in the Code tab — that sketch is what runs and what goes to the board.',
+  help: 'What works',
+  after: 'Esc then Tab: leave the editor · Ctrl+M: Tab moves focus',
+};
+
+/** The console around a run in Python mode (§7.8, §7.9). */
+export const PYTHON_RUN_WORDS: RunWords = {
+  started: 'Program started.',
+  stopped: (loops, endsAfterSetup) =>
+    endsAfterSetup ? 'Program stopped.' : `Program stopped after ${loops} round${loops === 1 ? '' : 's'} of the while True loop.`,
+  finished: 'Program finished (it has no while True loop).',
+  printHint: { text: 'print() output is in the Serial Monitor tab', action: 'Open the Serial Monitor' },
+  newlineOnly: "Python's input() reads one line: the Serial Monitor sends Newline",
+};
+
+/** Share ▾ → Download .py (§7.11). */
+export const PYTHON_FILE: ProgramFile = {
+  label: 'Download .py',
+  title: 'Save the Python program (for the ZERO1 simulator)',
+  fileName: pythonFileName,
+  contents: (work) => work.python,
+};
+
+/** A translation, and what transpile() said about its sketch (on Python lines). */
+interface Checked {
+  translation: PythonTranslation;
+  /** Errors first (the translator's, else X-sketch-error), then warnings (the translator's, then W-sketch). */
+  diagnostics: Diagnostic[];
+  /** No error at all: the sketch can run. */
+  ok: boolean;
+}
+
 export class PythonMode implements ModeController {
   readonly id = 'python';
   readonly button = { label: 'Python', title: 'Write the program in Python (MicroPython style)' };
@@ -44,7 +86,11 @@ export class PythonMode implements ModeController {
     banner: 'Made from your Python program — read only.',
     typing: 'This sketch is made from your Python — edit it in the Python tab',
     review: "Made from the student's Python program.",
-    errorPrefix: '',
+    /** X-sketch-error (src/python/messages.ts) without its {message}; tests keep the two equal. */
+    errorPrefix: 'Python translation error (a bug in the simulator, please tell your teacher): ',
+    ideNote: 'This is the Arduino sketch made from your Python program (the code in the Code tab). The board runs this sketch: it cannot run Python itself.',
+    uploadNote: 'This uploads the Arduino sketch made from your Python program (the code in the Code tab). The board runs this sketch: it cannot run Python itself.',
+    uploadDone: 'Done — the program is running on the board. Its print() output: open the Arduino IDE Serial Monitor at 9600 baud.',
   };
   readonly lineSource = 'python';
   readonly words = {
@@ -55,6 +101,8 @@ export class PythonMode implements ModeController {
     newAria: 'Start a new blank Python program',
     newTitle: 'New blank Python program',
   };
+  readonly runWords = PYTHON_RUN_WORDS;
+  readonly programFile = PYTHON_FILE;
 
   private chunk: PythonChunk | null = null;
   private loading: Promise<Editor | null> | null = null;
@@ -64,6 +112,10 @@ export class PythonMode implements ModeController {
   private lintTimer: ReturnType<typeof setTimeout> | null = null;
   /** The translation of the text it was made from (translating the same text twice is wasted work). */
   private last: { text: string; translation: PythonTranslation } | null = null;
+  /** The last check (translation + transpile()) and the text it was made from. */
+  private lastChecked: { text: string; checked: Checked } | null = null;
+  /** "What works" (§7.3), made on first use. */
+  private helpDialog: PythonHelpDialog | null = null;
 
   constructor(private readonly host: ModeHost) {}
 
@@ -92,11 +144,11 @@ export class PythonMode implements ModeController {
     const editor = await this.ensureEditor();
     const chunk = this.chunk;
     if (!editor || !chunk) return { ok: false, reason: 'loading', message: 'The Python editor could not be loaded — nothing to run' };
-    const translation = this.lint();
-    if (!translation.ok) {
-      const errors = translation.diagnostics.filter((d) => d.severity === 'error');
+    const { translation, diagnostics, ok } = this.lint();
+    if (!ok) {
+      const errors = diagnostics.filter((d) => d.severity === 'error');
       const count = `${errors.length} error${errors.length === 1 ? '' : 's'}`;
-      return { ok: false, reason: 'errors', message: `${count} — fix and run again`, diagnostics: translation.diagnostics };
+      return { ok: false, reason: 'errors', message: `${count} — fix and run again`, diagnostics };
     }
     return {
       ok: true,
@@ -105,12 +157,14 @@ export class PythonMode implements ModeController {
       endsAfterSetup: translation.endsAfterSetup,
       usesInput: translation.usesInput,
       pythonize: (msg, serialTail) => chunk.pythonizeRuntimeMessage(msg, serialTail),
+      diagnostics,
     };
   }
 
   /** The Python program and the sketch made from it (the placeholder while it has errors). */
   exportWork(): ExportedWork | { error: string } {
-    if (!this.editor) return { error: PYTHON_LOADING };
+    const chunk = this.chunk;
+    if (!this.editor || !chunk) return { error: PYTHON_LOADING };
     const python = this.editor.getCode();
     const translation = this.translate(python);
     return {
@@ -120,6 +174,7 @@ export class PythonMode implements ModeController {
       workspaceJson: '',
       python,
       mapLine: (sketchLine) => translation.map.pythonLineOf(sketchLine),
+      sketchError: (message) => chunk.message('X-sketch-error', { message }),
       ...(translation.ok ? {} : { sketchProblem: PYTHON_FIX_FIRST }),
     };
   }
@@ -176,8 +231,20 @@ export class PythonMode implements ModeController {
 
   destroy(): void {
     this.cancelLint();
+    this.helpDialog?.close();
+    this.helpDialog?.element.remove();
+    this.helpDialog = null;
     this.editor?.destroy();
     this.editor = null;
+  }
+
+  /** The "What works" dialog (§7.3); null until the chunk is loaded. */
+  showHelp(): PythonHelpDialog | null {
+    const chunk = this.chunk;
+    if (!chunk) return null;
+    this.helpDialog ??= chunk.createPythonHelpDialog(this.host.dialogParent, chunk.WHAT_WORKS);
+    this.helpDialog.open();
+    return this.helpDialog;
   }
 
   // --- editor -----------------------------------------------------------------
@@ -215,20 +282,35 @@ export class PythonMode implements ModeController {
 
     const editorHost = document.createElement('div');
     editorHost.className = 'z1-editor-host';
-    panel.replaceChildren(editorHost);
+    panel.replaceChildren(this.createNote(), editorHost);
     this.editor = createEditor(editorHost, {
       initialCode: initial,
       persist: !this.host.review,
-      language: chunk.pythonLanguageSupport(),
+      language: chunk.pythonLanguageSupport(chunk.API_COMPLETIONS),
       storageKey: PYTHON_STORAGE_KEY,
       indent: 4,
       ariaLabel: 'Python program',
       onRun: () => this.host.run(),
       onStop: () => this.host.stop(),
       onChange: () => this.scheduleLint(),
+      extraExtensions: [chunk.showNonBreakingSpaces, chunk.pythonPasteCleanup((fixes) => this.host.toast(chunk.pasteToast(fixes)))],
     });
     this.host.examplesChanged(this);
     return this.editor;
+  }
+
+  /** "MicroPython-style Python for the ZERO1. … What works · Esc then Tab: leave the editor · …" (§7.3). */
+  private createNote(): HTMLElement {
+    const note = document.createElement('p');
+    note.className = 'z1-python-note';
+    const help = document.createElement('button');
+    help.type = 'button';
+    help.className = 'z1-linkbtn';
+    help.dataset.slot = 'python-help';
+    help.textContent = PYTHON_NOTE.help;
+    help.addEventListener('click', () => void this.showHelp());
+    note.append(`${PYTHON_NOTE.before} `, help, ` · ${PYTHON_NOTE.after}`);
+    return note;
   }
 
   // --- translation ------------------------------------------------------------
@@ -238,13 +320,49 @@ export class PythonMode implements ModeController {
     return this.last.translation;
   }
 
-  /** Translate the program now: squiggles in the Python editor, the sketch (or placeholder) in the mirror. */
-  private lint(): PythonTranslation {
+  /**
+   * The translation and, when it has no error, what transpile() says about its sketch, both on
+   * Python lines: an error in the sketch is the simulator's fault (X-sketch-error), a warning is
+   * W-sketch; a warning on a line made from no Python line (scaffolding, helpers) is left out.
+   */
+  private check(text: string): Checked {
+    if (this.lastChecked?.text === text) return this.lastChecked.checked;
+    const chunk = this.chunk!;
+    const translation = this.translate(text);
+    let checked: Checked = { translation, diagnostics: translation.diagnostics, ok: translation.ok };
+    if (translation.ok) {
+      const result = safeTranspile(translation.sketch);
+      const errors: Diagnostic[] = result.ok
+        ? []
+        : result.errors.map((d) => ({
+            line: translation.map.pythonLineOf(d.line) || 1,
+            column: 1,
+            severity: 'error',
+            message: chunk.message('X-sketch-error', { message: d.message }),
+          }));
+      const seen = new Set<string>(); // one Python line can make several sketch lines with the same warning
+      const warnings: Diagnostic[] = result.warnings.flatMap((d) => {
+        const line = translation.map.pythonLineOf(d.line);
+        const message = chunk.message('W-sketch', { warning: d.message });
+        if (!line || seen.has(`${line}:${message}`)) return [];
+        seen.add(`${line}:${message}`);
+        return [{ line, column: 1, severity: 'warning' as const, message }];
+      });
+      // The translation is ok: its diagnostics are warnings. By position; the translator's first on a line.
+      const all = [...translation.diagnostics, ...warnings].sort((a, b) => a.line - b.line || a.column - b.column);
+      checked = { translation, diagnostics: [...errors, ...all], ok: errors.length === 0 };
+    }
+    this.lastChecked = { text, checked };
+    return checked;
+  }
+
+  /** Check the program now: squiggles in the Python editor, the sketch (or placeholder) in the mirror. */
+  private lint(): Checked {
     this.cancelLint();
-    const translation = this.translate(this.editor!.getCode());
-    this.editor!.setDiagnostics(translation.diagnostics);
-    this.host.showMirror(this, translation.sketch, translation.ok ? null : PYTHON_FIX_FIRST_TITLE);
-    return translation;
+    const checked = this.check(this.editor!.getCode());
+    this.editor!.setDiagnostics(checked.diagnostics);
+    this.host.showMirror(this, checked.translation.sketch, checked.translation.ok ? null : PYTHON_FIX_FIRST_TITLE);
+    return checked;
   }
 
   private scheduleLint(): void {
@@ -286,5 +404,14 @@ export class PythonMode implements ModeController {
   private confirmReplace(question: string): boolean {
     const text = this.editor?.getCode() ?? '';
     return this.isUntouched(text) || window.confirm(`${question}\nYour current Python program will be lost.`);
+  }
+}
+
+/** transpile() never throws by contract; a bug in it still must not stop the Python editor. */
+function safeTranspile(sketch: string): ReturnType<typeof transpile> {
+  try {
+    return transpile(sketch);
+  } catch (err) {
+    return { ok: false, errors: [{ line: 1, column: 1, severity: 'error', message: err instanceof Error ? err.message : String(err) }], warnings: [] };
   }
 }

@@ -30,5 +30,7 @@ export interface PythonTranslation {
 export { pythonToArduino } from './translate';
 export { BLANK_PYTHON } from './blank';
 export { SourceMap } from './sourcemap';
+export { API_COMPLETIONS, type ApiCompletion, type ApiCompletionTable } from './api';
+export { WHAT_WORKS, type HelpBlock, type HelpPage, type HelpSection } from './help';
 export { pythonizeRuntimeMessage, type MessageCode } from './messages';
 export { PYTHON_EXAMPLES, type PythonExample } from '../examples/python';

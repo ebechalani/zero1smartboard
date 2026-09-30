@@ -1,7 +1,9 @@
 /**
  * Small pure helpers of the teacher dashboard (docs/CLASSROOM.md §1.3): time texts, file name
- * stamps, storage access that never throws, and the per-class localStorage keys (§2.13).
+ * stamps, storage access that never throws, the per-class localStorage keys (§2.13) and the
+ * Code / Blocks / Python label of a hand-in.
  */
+import type { HandinKind } from '../classroom/model';
 
 export const LAST_CLASS_KEY = 'z1.teacher.lastClass';
 export const periodKey = (code: string): string => `z1.teacher.period.${code}`;
@@ -118,6 +120,14 @@ export function el<K extends keyof HTMLElementTagNameMap>(
   if (props.attrs) for (const [k, v] of Object.entries(props.attrs)) node.setAttribute(k, v);
   for (const child of children) node.append(child);
   return node;
+}
+
+/** The label of a hand-in kind (docs/PYTHON.md §8.5). */
+export const KIND_LABEL: Readonly<Record<HandinKind, string>> = { code: 'Code', blocks: 'Blocks', python: 'Python' };
+
+/** The kind label as a chip: `<span class="z1t-kind z1t-kind-python">Python</span>`. */
+export function kindChip(kind: HandinKind): HTMLSpanElement {
+  return el('span', { className: `z1t-kind z1t-kind-${kind}`, text: KIND_LABEL[kind] });
 }
 
 export function button(text: string, onClick: (ev: MouseEvent) => void, className = 'z1-btn'): HTMLButtonElement {

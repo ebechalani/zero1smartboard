@@ -8,8 +8,10 @@
  * Settings menu resets the board or opens the settings dialog, "Hand in to my
  * teacher" exists only when the class platform is configured and opens the
  * Hand in dialog with the work (docs/CLASSROOM.md §7.3), `#class=` links open
- * it with the code prefilled, the run status stays short, and the global keys
- * leave a sketch alone while a dialog or a menu is open.
+ * it with the code prefilled, the run status stays short, the global keys
+ * leave a sketch alone while a dialog or a menu is open, and the style rules
+ * that keep the header on one row at 1366×768 and put the actions on their own
+ * row at 1280×800 (docs/PYTHON.md §7.14).
  *
  * Blockly is never loaded: in Blocks mode `createBlocksPanel` returns a small
  * fake panel whose "blocks" are a list of block types and whose sketch lists
@@ -17,6 +19,9 @@
  * read-only mirror and never touches the hand-written sketch (docs/PYTHON.md
  * §7.5-7.6); "Edit a copy in Code mode" is the only way across.
  */
+import { readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { EditorView } from '@codemirror/view';
 import { makeBoard, settle } from './helpers';
@@ -315,6 +320,86 @@ const SKETCH_FILE = /^zero1_\d{4}_\d{6}\.ino$/;
 // Code mode
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Header at school-laptop sizes (docs/PYTHON.md §7.14)
+// ---------------------------------------------------------------------------
+
+/**
+ * The style rules of src/ui/style.css that apply at a window size: the top-level rules and those
+ * of every @media block whose query matches (happy-dom evaluates media queries with matchMedia but
+ * does not lay out; the one-row layout itself is checked in a real browser, see §7.14).
+ */
+function rulesAt(width: number, height: number): CSSStyleRule[] {
+  let style = document.head.querySelector<HTMLStyleElement>('style[data-test="app-css"]');
+  if (!style) {
+    style = document.createElement('style');
+    style.dataset.test = 'app-css';
+    style.textContent = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), '../src/ui/style.css'), 'utf8');
+    document.head.appendChild(style);
+  }
+  (window as unknown as { happyDOM: { setViewport(v: { width: number; height: number }): void } }).happyDOM.setViewport({ width, height });
+  const rules: CSSStyleRule[] = [];
+  for (const rule of Array.from(style.sheet!.cssRules)) {
+    if (rule instanceof CSSMediaRule) {
+      if (window.matchMedia(rule.media.mediaText).matches) rules.push(...(Array.from(rule.cssRules) as CSSStyleRule[]));
+    } else if ('selectorText' in rule) {
+      rules.push(rule as CSSStyleRule);
+    }
+  }
+  return rules;
+}
+
+/** The last value of `property` among the rules at that size that match `el` ('' = none). */
+function cssValue(rules: CSSStyleRule[], el: Element, property: string): string {
+  let value = '';
+  for (const rule of rules) {
+    if (el.matches(rule.selectorText) && rule.style.getPropertyValue(property)) value = rule.style.getPropertyValue(property);
+  }
+  return value;
+}
+
+describe('header at 1366×768 and 1280×800 (docs/PYTHON.md §7.14)', () => {
+  afterEach(() => {
+    (window as unknown as { happyDOM: { setViewport(v: { width: number; height: number }): void } }).happyDOM.setViewport({ width: 1024, height: 768 });
+    document.head.querySelector('style[data-test="app-css"]')?.remove();
+  });
+
+  it('at 1366×768 the Arduino IDE and Settings buttons show their icons only and the actions stay on the brand row (Python mode)', async () => {
+    localStorage.setItem(MODE_STORAGE_KEY, 'python');
+    const root = start();
+    await vi.waitFor(() => expect(root.querySelector('[data-slot="panel-python"] .cm-editor')).not.toBeNull(), { timeout: 10_000 });
+    const rules = rulesAt(1366, 768);
+    const ide = button(root, 'ide');
+    expect(cssValue(rules, ide.querySelector('.z1-btn-label')!, 'display')).toBe('none');
+    expect(cssValue(rules, menuButton(root, 'settings').querySelector('.z1-btn-label')!, 'display')).toBe('none');
+    expect(cssValue(rules, menuButton(root, 'share').querySelector('.z1-btn-label')!, 'display')).toBe(''); // "Share" stays
+    // The label is only hidden: the name and the tooltip stay.
+    expect(ide.getAttribute('aria-label')).toBe('Open the sketch made from this program in the Arduino IDE');
+    expect(ide.title).toBe('Open in the Arduino IDE');
+    expect(cssValue(rules, root.querySelector('.z1-toolbar')!, 'flex-basis')).toBe(''); // no row of its own
+    expect(cssValue(rules, root.querySelector('.z1-title-short')!, 'display')).toBe('inline');
+    expect(Array.from(root.querySelectorAll('.z1-mode .z1-mode-btn'), (b) => b.textContent)).toEqual(['Code', 'Blocks', 'Python']);
+    expect(root.querySelector('.z1-header')!.children).toHaveLength(4); // brand, mode switch, actions, run status
+  });
+
+  it('at 1280×800 the actions get a row of their own under the brand, mode switch and run status, with all their labels', () => {
+    const root = start();
+    const rules = rulesAt(1280, 800);
+    const toolbar = root.querySelector('.z1-toolbar')!;
+    expect(cssValue(rules, toolbar, 'flex-basis')).toBe('100%');
+    expect(cssValue(rules, toolbar, 'order')).toBe('1');
+    expect(cssValue(rules, button(root, 'ide').querySelector('.z1-btn-label')!, 'display')).toBe('');
+    expect(cssValue(rules, menuButton(root, 'settings').querySelector('.z1-btn-label')!, 'display')).toBe('');
+  });
+
+  it('from 1440 px every label shows', () => {
+    const root = start();
+    const rules = rulesAt(1440, 900);
+    expect(cssValue(rules, button(root, 'ide').querySelector('.z1-btn-label')!, 'display')).toBe('');
+    expect(cssValue(rules, root.querySelector('.z1-toolbar')!, 'flex-basis')).toBe('');
+  });
+});
+
 describe('header toolbar', () => {
   it('starts with New, has no GitHub link and ends with the Settings and Share menus and Arduino IDE', () => {
     const root = start();
@@ -598,7 +683,7 @@ describe('Arduino IDE', () => {
     button(root, 'ide').click();
     const dialog = root.querySelector<HTMLDialogElement>('dialog.z1-ide')!;
     expect(dialog.open).toBe(true);
-    expect(dialog.querySelector<HTMLElement>('[data-role="blocks-note"]')!.hidden).toBe(true);
+    expect(dialog.querySelector<HTMLElement>('[data-role="note"]')!.hidden).toBe(true);
 
     dialog.querySelector<HTMLButtonElement>('[data-action="download"]')!.click();
     const [file] = await downloads.files();
@@ -789,7 +874,9 @@ describe('Blocks mode', () => {
     button(root, 'ide').click();
     const dialog = root.querySelector<HTMLDialogElement>('dialog.z1-ide')!;
     expect(dialog.open).toBe(true);
-    expect(dialog.querySelector<HTMLElement>('[data-role="blocks-note"]')!.hidden).toBe(false);
+    const note = dialog.querySelector<HTMLElement>('[data-role="note"]')!;
+    expect(note.hidden).toBe(false);
+    expect(note.textContent).toBe('This is the Arduino sketch made from your blocks (the code shown in the Code tab).');
     dialog.querySelector<HTMLButtonElement>('[data-action="download"]')!.click();
     const [file] = await downloads.files();
     expect(file.name).toMatch(SKETCH_FILE);

@@ -2,63 +2,90 @@
  * `pythonToArduino` (docs/PYTHON.md §4.1): a Python program → an Arduino sketch, its source map
  * and the diagnostics. Never throws (X-internal).
  *
- * The front end is real: normalize → tokenize → parse, so a syntax or indentation error (§5.1)
- * comes back as its diagnostic, with the T9 placeholder (§4.10), and a program over 50,000 bytes
- * is X-too-long (§4.11). The rest is still the Day-1 stub (§11.2) until the analysis and the
- * emitter land (resolve → flow → infer → check → emit): it recognises the Blink program of
- * example 01 / golden T1 (with any module docstring, or none) and returns the T1 sketch; every
- * other program that parses gets the placeholder with one X-internal error.
+ * normalize → tokenize → parse: a syntax or indentation error (§5.1) comes back as its
+ * diagnostic, with the T9 placeholder (§4.10), and a program over 50,000 bytes is X-too-long
+ * (§4.11). Then `analyze()`: resolve → flow → infer → check, with every name, kind, ZERO1-limit
+ * and board-limit diagnostic (§5.2–§5.5, §5.7); a program with errors gets the placeholder with
+ * its error count. A program without errors goes to the emitter (emit.ts, §4.7): its sketch, the
+ * source map and the warnings; a sketch over 50,000 bytes is X-sketch-too-long (§4.11).
  */
 import { pythonPlaceholder } from '../sketch/placeholder';
+import type { Module } from './ast';
+import { check } from './check';
+import { emit } from './emit';
+import { analyzeFlow, type Flow } from './flow';
 import type { PythonDiagnostic, PythonTranslation } from './index';
+import { infer, type Typing } from './kinds';
 import { message } from './messages';
 import { parse } from './parser';
+import { resolve, type Resolved } from './scope';
 import { SourceMap } from './sourcemap';
 import { PythonSyntaxError, normalize, tokenize } from './tokens';
 
 /** The largest program the translator reads (§4.11), in UTF-8 bytes. */
 export const MAX_PYTHON_BYTES = 50_000;
 
-/** The statements of T1 after its module docstring, line by line. */
-const T1_CODE = [
-  'from machine import Pin',
-  'from zero1 import LED_RED',
-  'import time',
-  '',
-  'BLINK_TIME = 0.5              # how long the LED stays on (and off), in seconds',
-  '',
-  'led = Pin(LED_RED, Pin.OUT)   # the red LED is an output',
-  '',
-  'while True:',
-  '    led.on()                  # 5 V on the pin: the LED lights up',
-  '    print("ON")',
-  '    time.sleep(BLINK_TIME)    # wait; the board does nothing else meanwhile',
-  '',
-  '    led.off()                 # 0 V on the pin: the LED goes off',
-  '    print("OFF")',
-  '    time.sleep(BLINK_TIME)',
-].join('\n');
+/** At most this many errors are listed (§4.2); X-too-many says how many more there are. */
+export const MAX_ERRORS = 20;
 
-/** A module docstring on lines of its own: `"""` newline … newline `"""` (no escapes, no quotes inside). */
-const DOCSTRING = /^"""\n((?:[^\n]*\n)*?)"""\n/;
+/** A checked, typed program: what the emitter works from (`emit(resolved, flow, typing)`, §4.2). */
+export interface Analysis {
+  resolved: Resolved;
+  flow: Flow;
+  typing: Typing;
+  /** Errors first, then warnings (only when there is no error, §4.6); each group by position; errors cut at 20 + X-too-many. */
+  diagnostics: PythonDiagnostic[];
+  /** Every error found (the placeholder's count; `diagnostics` lists at most 20 of them). */
+  errorCount: number;
+}
 
-/** One line of the generated sketch and the Python line it was made from (0 = scaffolding). */
-type SketchLine = readonly [text: string, pythonLine: number];
+/** resolve → flow → infer → check over a parsed program; `source` is its normalised text. */
+export function analyze(module: Module, source: string): Analysis {
+  const resolved = resolve(module, source);
+  const flow = analyzeFlow(resolved);
+  const typing = infer(resolved, flow);
+  const found = check(resolved, flow, typing);
+  const byPosition = (a: PythonDiagnostic, b: PythonDiagnostic) => a.line - b.line || a.column - b.column;
+  const errors = found.filter((d) => d.severity === 'error').sort(byPosition);
+  const warnings = errors.length > 0 ? [] : found.filter((d) => d.severity === 'warning').sort(byPosition);
+  const listed = errors.slice(0, MAX_ERRORS);
+  if (errors.length > MAX_ERRORS) {
+    const next = errors[MAX_ERRORS];
+    listed.push({ code: 'X-too-many', severity: 'error', line: next.line, column: next.column, endLine: next.endLine, endColumn: next.endColumn, message: message('X-too-many', { count: errors.length - MAX_ERRORS }) });
+  }
+  return { resolved, flow, typing, diagnostics: [...listed, ...warnings], errorCount: errors.length };
+}
+
+/** The largest sketch that can be handed in (§4.11, the hand-in's `codeMaxBytes`), in UTF-8 bytes. */
+export const MAX_SKETCH_BYTES = 50_000;
+
+/** 61234 → "61,234". */
+function withCommas(n: number): string {
+  return String(n).replace(/\B(?=(\d{3})+$)/g, ',');
+}
 
 export function pythonToArduino(source: string): PythonTranslation {
   try {
     const text = normalize(source);
     const bytes = new TextEncoder().encode(text).length;
     if (bytes > MAX_PYTHON_BYTES) {
-      return failed({ code: 'X-too-long', line: 1, column: 1, severity: 'error', message: message('X-too-long', { bytes: String(bytes).replace(/\B(?=(\d{3})+$)/g, ',') }) });
+      return failed({ code: 'X-too-long', line: 1, column: 1, severity: 'error', message: message('X-too-long', { bytes: withCommas(bytes) }) });
     }
+    let module: Module;
     try {
-      parse(tokenize(text));
+      module = parse(tokenize(text));
     } catch (err) {
       if (err instanceof PythonSyntaxError) return failed(syntaxDiagnostic(err));
       throw err;
     }
-    return translateStub(text);
+    const analysis = analyze(module, text);
+    if (analysis.errorCount > 0) return failed(analysis.diagnostics, analysis.errorCount);
+    const { sketch, map } = emit(analysis.resolved, analysis.flow, analysis.typing);
+    const sketchBytes = new TextEncoder().encode(sketch).length;
+    if (sketchBytes > MAX_SKETCH_BYTES) {
+      return failed({ code: 'X-sketch-too-long', line: 1, column: 1, severity: 'error', message: message('X-sketch-too-long', { bytes: withCommas(sketchBytes) }) });
+    }
+    return { ok: true, sketch, map, diagnostics: analysis.diagnostics, endsAfterSetup: analysis.resolved.endsAfterSetup, usesInput: analysis.resolved.usesInput };
   } catch (err) {
     return notTranslated(err instanceof Error ? err.message : String(err));
   }
@@ -77,73 +104,20 @@ export function syntaxDiagnostic(err: PythonSyntaxError): PythonDiagnostic {
   };
 }
 
-/** `text` is normalised (§2.2 source normalisation: CRLF and lone CR → LF, a leading BOM dropped). */
-function translateStub(text: string): PythonTranslation {
-  const doc = DOCSTRING.exec(text);
-  const docstring = doc && !/\\|"""/.test(doc[1]) ? doc[1] : null;
-  const code = doc && docstring !== null ? text.slice(doc[0].length) : text;
-  if (code.replace(/\s+$/, '') !== T1_CODE) {
-    return notTranslated('only the example "Blink the red LED" can be turned into a sketch until Python mode is finished');
-  }
-  return blinkSketch(docstring, docstring === null ? 0 : docstring.split('\n').length + 1);
-}
-
-/** T1 (§4.10): `docstring` is the text between the quotes, `offset` the Python lines before the code. */
-function blinkSketch(docstring: string | null, offset: number): PythonTranslation {
-  const at = (codeLine: number) => offset + codeLine; // Python line of T1_CODE's line `codeLine` (1-based)
-  // §4.7 C3: the module docstring becomes the /* … */ header, with every */ written * /.
-  const docLines = docstring === null || docstring === '' ? [] : docstring.replace(/\n$/, '').split('\n');
-  const header: SketchLine[] =
-    docstring === null ? [] : [['/*', 0], ...docLines.map((line): SketchLine => [line.replace(/\*\//g, '* /'), 0]), ['*/', 0]];
-  const lines: SketchLine[] = [
-    ['// Made from a Python program in the ZERO1 Simulator; edits here are not turned back into Python.', 0],
-    ...header,
-    ['', 0],
-    ['const int LED_RED = A1;        // red LED', 0],
-    ['', 0],
-    ['const float BLINK_TIME = 0.5;  // how long the LED stays on (and off), in seconds', at(5)],
-    ['const int led = LED_RED;', at(7)],
-    ['', 0],
-    ['// Runs once: the lines before "while True:"', 0],
-    ['void setup() {', 0],
-    ['  Serial.begin(9600);', 0],
-    ['  pinMode(led, OUTPUT);        // the red LED is an output', at(7)],
-    ['}', 0],
-    ['', 0],
-    [`// Runs forever: the body of "while True:" (line ${at(9)})`, 0],
-    ['void loop() {', 0],
-    ['  digitalWrite(led, HIGH);     // 5 V on the pin: the LED lights up', at(10)],
-    ['  Serial.println("ON");', at(11)],
-    ['  delay(round(BLINK_TIME * 1000));  // wait; the board does nothing else meanwhile', at(12)],
-    ['', 0],
-    ['  digitalWrite(led, LOW);      // 0 V on the pin: the LED goes off', at(14)],
-    ['  Serial.println("OFF");', at(15)],
-    ['  delay(round(BLINK_TIME * 1000));', at(16)],
-    ['}', 0],
-  ];
-  return {
-    ok: true,
-    sketch: lines.map(([line]) => line).join('\n') + '\n',
-    map: new SourceMap(lines.map(([, pythonLine]) => pythonLine)),
-    diagnostics: [],
-    endsAfterSetup: false,
-    usesInput: false,
-  };
-}
-
 /** The T9 placeholder with one X-internal error on line 1. */
 function notTranslated(reason: string): PythonTranslation {
   return failed({ code: 'X-internal', line: 1, column: 1, severity: 'error', message: message('X-internal', { error: reason }) });
 }
 
-/** The T9 placeholder for one error. */
-function failed(diagnostic: PythonDiagnostic): PythonTranslation {
-  const sketch = pythonPlaceholder(1);
+/** The T9 placeholder for `errorCount` errors (one when a single diagnostic is given). */
+function failed(diagnostics: PythonDiagnostic | PythonDiagnostic[], errorCount = 1): PythonTranslation {
+  const list = Array.isArray(diagnostics) ? diagnostics : [diagnostics];
+  const sketch = pythonPlaceholder(errorCount);
   return {
     ok: false,
     sketch,
     map: new SourceMap(sketch.replace(/\n$/, '').split('\n').map(() => 0)),
-    diagnostics: [diagnostic],
+    diagnostics: list,
     endsAfterSetup: false,
     usesInput: false,
   };

@@ -7,7 +7,7 @@ import { EXAMPLES, type Example } from '../../examples';
 import { createEditor, encodeShareCode, loadSavedCode, saveText, type Editor } from '../editor';
 import type { MenuExample } from '../examples-menu';
 import type { HandinWork } from '../handin-dialog';
-import type { ExportedWork, ModeController, ModeHost, ModeLink, ReviewMessage, SketchResult } from './types';
+import type { ExportedWork, ModeController, ModeHost, ModeLink, ReviewMessage, RunWords, SketchResult } from './types';
 
 /** What "New" puts in the editor: exactly the Arduino IDE's File > New. */
 export const BLANK_SKETCH = `void setup() {
@@ -23,6 +23,12 @@ void loop() {
 
 /** localStorage key of the sketch that "Edit a copy in Code mode" replaced (Undo brings it back). */
 export const CODE_PREVIOUS_STORAGE_KEY = 'z1.code.previous';
+
+/** The console around a run of an Arduino sketch (Code and Blocks mode). */
+export const SKETCH_RUN_WORDS: RunWords = {
+  started: 'Sketch started.',
+  stopped: (loops) => `Sketch stopped after ${loops} loop() calls.`,
+};
 
 /** Asked before "Edit a copy in Code mode" replaces hand-written code (§7.6). */
 export const CONFIRM_COPY =
@@ -43,6 +49,7 @@ export class CodeMode implements ModeController {
     newAria: 'Start a new blank sketch',
     newTitle: 'New blank sketch',
   };
+  readonly runWords = SKETCH_RUN_WORDS;
 
   /** The student's own sketch: the editable editor of the Code tab. */
   readonly editor: Editor;

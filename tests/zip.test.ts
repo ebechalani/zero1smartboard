@@ -1,10 +1,14 @@
 /**
  * The store-only zip writer (docs/CLASSROOM.md §7.3, C): CRC-32 of known strings, a two-file
  * archive parsed back by a minimal reader (local headers and the central directory), the UTF-8
- * name flag, and the unique-name helper.
+ * name flag, and the unique-name helper. Plus the dashboard's zip entries (src/teacher/handins.ts):
+ * `.ino` for every hand-in, `.blocks.json` for Blocks and `.py` for Python (docs/PYTHON.md §8.5).
  */
 import { describe, expect, it } from 'vitest';
+import { pythonPlaceholder } from '../src/sketch/placeholder';
+import { DecodeCache, zipEntries, zipOf } from '../src/teacher/handins';
 import { crc32, makeZip, uniqueName } from '../src/teacher/zip';
+import { makeHandin } from './fakes/fake-teacher-api';
 
 const bytesOf = (text: string) => new TextEncoder().encode(text);
 
@@ -111,5 +115,50 @@ describe('uniqueName', () => {
     expect(uniqueName('ali.k.ino', taken)).toBe('ali.k-3.ino');
     expect(uniqueName('README', taken)).toBe('README');
     expect(uniqueName('README', taken)).toBe('README-2');
+  });
+});
+
+describe('zipEntries (the dashboard downloads)', () => {
+  const NOW = new Date(2026, 8, 26, 14, 0);
+  const at = (h: number, m: number) => new Date(2026, 8, 26, h, m);
+  const PY = 'from machine import Pin\nled = Pin(13, Pin.OUT)\n';
+  const SKETCH = 'void setup() {\n  pinMode(13, OUTPUT);\n}\n\nvoid loop() {\n}\n';
+
+  it('puts <First_Last>.py next to the .ino of a Python hand-in, older versions stamped', async () => {
+    const items = [
+      makeHandin({ id: 'p1', kind: 'python', createdAt: at(10, 0), code: pythonPlaceholder(2), workspaceJson: 'x = (\n' }),
+      makeHandin({ id: 'p2', kind: 'python', createdAt: at(11, 0), code: SKETCH, workspaceJson: PY }),
+      makeHandin({ id: 'b1', firstName: 'Sara', lastName: 'Mansour', kind: 'blocks', createdAt: at(10, 30), workspaceJson: '{"blocks":{}}' }),
+      makeHandin({ id: 'c1', firstName: 'Omar', lastName: 'Haddad', createdAt: at(9, 0), code: 'int a;' }),
+    ];
+    const cache = new DecodeCache();
+    await cache.decodeAll(items);
+    const entries = zipEntries(items, cache, NOW);
+    expect(entries.map((e) => [e.name, e.data])).toEqual([
+      ['Ali_Khoury.ino', SKETCH],
+      ['Ali_Khoury.py', PY],
+      ['Sara_Mansour.ino', 'void setup() {}\nvoid loop() {}\n'],
+      ['Sara_Mansour.blocks.json', '{"blocks":{}}'],
+      ['Ali_Khoury-2026-09-26-1000.ino', pythonPlaceholder(2)],
+      ['Ali_Khoury-2026-09-26-1000.py', 'x = (\n'],
+      ['Omar_Haddad.ino', 'int a;'],
+    ]);
+    expect(entries.every((e) => e.date instanceof Date)).toBe(true);
+    const { entries: read } = await readZip(zipOf(items, cache, NOW));
+    expect(read.map((e) => e.name)).toEqual(entries.map((e) => e.name));
+    expect(read[1].data).toBe(PY);
+  });
+
+  it('never writes a .py for Code or Blocks, leaves out undecoded records and keeps names unique', async () => {
+    const items = [
+      makeHandin({ id: 'c1', createdAt: at(10, 0), code: 'int a;', workspaceJson: '' }),
+      makeHandin({ id: 'p1', firstName: 'Ali', lastName: 'Khoury!', kind: 'python', createdAt: at(9, 0), workspaceJson: PY }), // the same file stem, another student
+      makeHandin({ id: 'bad', firstName: 'Sara', lastName: 'Mansour', kind: 'python', createdAt: at(8, 0) }),
+    ];
+    items[2].content = { enc: 'gzip', code: 'not bytes', workspace: '' };
+    const cache = new DecodeCache();
+    await cache.decodeAll(items);
+    // The second student's .py keeps the name of its .ino.
+    expect(zipEntries(items, cache, NOW).map((e) => e.name)).toEqual(['Ali_Khoury.ino', 'Ali_Khoury-2.ino', 'Ali_Khoury-2.py']);
   });
 });

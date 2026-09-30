@@ -12,21 +12,32 @@
  *
  * Views (`data-view`): loading | code | name | ready | success | error.
  * Buttons carry `data-action`.
+ *
+ * A Python hand-in (docs/PYTHON.md §8.3) carries the program and the sketch made from it (the
+ * placeholder while the program has errors); the work line, the untouched and error notes and a
+ * `permission` refusal (rules published before Python) are worded for Python.
  */
 import { ClassroomError, STUDENT_ERROR_TEXT, errorText, toClassroomError, type ClassroomErrorCode } from '../classroom/errors';
 import { LIMITS, codeProblem, draftProblem, formatClassCode, fullName, newHandinId, normalizeClassCode, type HandinDraft, type HandinKind, type HandinRecord } from '../classroom/model';
 import { loadLastCode, loadSavedSession } from '../classroom/session-store';
 import type { FoundClass, PublicClass, RestoreResult, StudentApi, StudentName, StudentSession } from '../classroom/student';
+import { placeholderErrorCount } from '../sketch/placeholder';
 
 export interface HandinWork {
   kind: HandinKind;
+  /** The Arduino sketch (Blocks: made from the blocks; Python: made from the program, or the placeholder while it has errors). */
   code: string;
+  /** The Blockly workspace; ignored unless kind is 'blocks'. */
   workspaceJson: string;
-  /** The Python program when kind is 'python' (docs/PYTHON.md §8.3); ignored otherwise. */
-  python?: string;
-  /** Set by the App: untouched starting sketch / untouched example (with its title). */
+  /** The Python program (docs/PYTHON.md §8.3); '' unless kind is 'python' (ignored then). */
+  python: string;
+  /** Set by the App: untouched starting program (blank sketch, BLANK_PYTHON) / untouched example (with its title). */
   unchanged: { kind: 'blank' } | { kind: 'example'; title: string } | null;
-  /** Transpiler errors in `code` (the App runs the check synchronously), 0 when none. */
+  /**
+   * The errors the teacher will see, 0 when none: transpiler errors in `code` (the App runs the
+   * check synchronously). Python: the Python errors, which the placeholder sketch carries
+   * (`placeholderErrorCount(code)`, preferred by the dialog over this field).
+   */
   errorCount: number;
 }
 
@@ -66,7 +77,38 @@ export const HANDIN_TEXT = {
   example: (title: string) => `This is still the example '${title}'. Hand it in anyway?`,
   errors: (n: number) => `Your sketch has ${n} error${n === 1 ? '' : 's'}. Your teacher will see them.`,
   success: (time: string) => `✓ Handed in · ${time} · Your teacher can see it now.`,
+  // Python hand-ins (docs/PYTHON.md §8.3).
+  pythonWork: 'Your Python program and the Arduino sketch made from it',
+  pythonBlank: 'Your Python program is still the empty starting program. Hand it in anyway?',
+  pythonErrors: (n: number) => `Your Python program has ${n} error${n === 1 ? '' : 's'}. Your teacher will see them.`,
+  pythonEmpty: 'Your Python program is empty. There is nothing to hand in yet.',
+  /** A `permission` refusal of a Python hand-in: the class's rules predate Python (docs/PYTHON.md §11.4). */
+  pythonNotReady: 'Your class is not ready for Python hand-ins yet: ask your teacher to update the class rules.',
 } as const;
+
+/** The work line of the Name and Ready views. */
+function workText(work: HandinWork): string {
+  if (work.kind === 'blocks') return 'Your blocks program and the Arduino sketch made from it';
+  if (work.kind === 'python') return HANDIN_TEXT.pythonWork;
+  const lines = work.code.split('\n').length;
+  return `Your Arduino sketch, ${lines} line${lines === 1 ? '' : 's'}`;
+}
+
+/** The untouched-work question (warning line and confirm), or null. */
+function unchangedText(work: HandinWork): string | null {
+  if (work.unchanged === null) return null;
+  if (work.unchanged.kind === 'example') return HANDIN_TEXT.example(work.unchanged.title);
+  return work.kind === 'python' ? HANDIN_TEXT.pythonBlank : HANDIN_TEXT.blank;
+}
+
+/** The errors note, or null: a Python program's errors come from the placeholder sketch it hands in. */
+function errorsText(work: HandinWork): string | null {
+  if (work.kind === 'python') {
+    const n = placeholderErrorCount(work.code) ?? work.errorCount;
+    return n > 0 ? HANDIN_TEXT.pythonErrors(n) : null;
+  }
+  return work.errorCount > 0 ? HANDIN_TEXT.errors(work.errorCount) : null;
+}
 
 /** Errors after which the hand-in may have landed anyway: "Try again" reuses the same id. */
 const RETRY_CODES: readonly ClassroomErrorCode[] = ['timeout', 'offline', 'unknown'];
@@ -288,13 +330,13 @@ export function createHandinDialog(parent: HTMLElement, options: HandinDialogOpt
 
   const fillWork = (): void => {
     if (!work) return;
-    const lines = work.code.split('\n').length;
-    role('work').textContent =
-      work.kind === 'blocks' ? 'Your blocks program and the Arduino sketch made from it' : `Your Arduino sketch, ${lines} line${lines === 1 ? '' : 's'}`;
-    warning.hidden = work.unchanged === null;
-    warning.textContent = work.unchanged === null ? '' : work.unchanged.kind === 'blank' ? HANDIN_TEXT.blank : HANDIN_TEXT.example(work.unchanged.title);
-    errorsNote.hidden = work.errorCount === 0;
-    errorsNote.textContent = work.errorCount > 0 ? HANDIN_TEXT.errors(work.errorCount) : '';
+    role('work').textContent = workText(work);
+    const question = unchangedText(work);
+    warning.hidden = question === null;
+    warning.textContent = question ?? '';
+    const errors = errorsText(work);
+    errorsNote.hidden = errors === null;
+    errorsNote.textContent = errors ?? '';
   };
 
   // --- views --------------------------------------------------------------
@@ -436,7 +478,8 @@ export function createHandinDialog(parent: HTMLElement, options: HandinDialogOpt
     if (!work) return false;
     const problem = draftProblem(draft);
     if (problem) {
-      setStatus(errorText(STUDENT_ERROR_TEXT, problem), 'error');
+      const empty = problem === 'empty_sketch' && draft.kind === 'python' && draft.python.trim() === '';
+      setStatus(empty ? HANDIN_TEXT.pythonEmpty : errorText(STUDENT_ERROR_TEXT, problem), 'error');
       return false;
     }
     if (lastHandin !== null && now().getTime() - lastHandin < LIMITS.handinCooldownMs) {
@@ -447,7 +490,8 @@ export function createHandinDialog(parent: HTMLElement, options: HandinDialogOpt
       setStatus(errorText(STUDENT_ERROR_TEXT, 'offline'), 'error');
       return false;
     }
-    if (work.unchanged && !confirmDialog(work.unchanged.kind === 'blank' ? HANDIN_TEXT.blank : HANDIN_TEXT.example(work.unchanged.title))) return false;
+    const question = unchangedText(work);
+    if (question !== null && !confirmDialog(question)) return false;
     return true;
   };
 
@@ -457,7 +501,7 @@ export function createHandinDialog(parent: HTMLElement, options: HandinDialogOpt
           kind: work.kind,
           code: work.code,
           workspaceJson: work.kind === 'blocks' ? work.workspaceJson : '',
-          python: work.kind === 'python' ? (work.python ?? '') : '',
+          python: work.kind === 'python' ? work.python : '',
         }
       : null;
 
@@ -517,7 +561,7 @@ export function createHandinDialog(parent: HTMLElement, options: HandinDialogOpt
       handedIn(record);
     } catch (err) {
       if (stale(token)) return;
-      handinFailed(err);
+      handinFailed(err, draft.kind);
     } finally {
       if (checkTimer !== null) clearTimeout(checkTimer);
       checkTimer = null;
@@ -539,9 +583,10 @@ export function createHandinDialog(parent: HTMLElement, options: HandinDialogOpt
     showSuccess(record);
   };
 
-  const handinFailed = (err: unknown): void => {
-    const text = describe(err);
+  const handinFailed = (err: unknown, kind: HandinKind): void => {
     const code = codeOf(err);
+    // Rules published before Python hand-ins refuse them (docs/PYTHON.md §8.3, §11.4).
+    const text = code === 'permission' && kind === 'python' ? HANDIN_TEXT.pythonNotReady : describe(err);
     if (code && RETRY_CODES.includes(code)) {
       setStatus(`${HANDIN_TEXT.notArrived} ${text}`, 'error');
       retry.hidden = false;

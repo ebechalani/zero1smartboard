@@ -5,7 +5,7 @@
  * test can check that sign-out leaves none active.
  */
 import { ClassroomError, TEACHER_ERROR_TEXT, errorText, type ClassroomErrorCode } from '../../src/classroom/errors';
-import { LIMITS, nameKeyOf, type HandinRecord } from '../../src/classroom/model';
+import { LIMITS, nameKeyOf, type HandinKind, type HandinRecord } from '../../src/classroom/model';
 import type { ClassDetail, ClassSummary, HandinsUpdate, Member, NewClassInput, TeacherApi, TeacherUser, Unsubscribe } from '../../src/classroom/teacher';
 
 export interface Deferred<T> {
@@ -58,9 +58,10 @@ export interface FakeHandinOptions {
   uid?: string;
   firstName?: string;
   lastName?: string;
-  kind?: 'code' | 'blocks';
+  kind?: HandinKind;
   createdAt?: Date | null;
   code?: string;
+  /** The stored workspace: the Blockly JSON of a Blocks hand-in, the program of a Python one. */
   workspaceJson?: string;
 }
 

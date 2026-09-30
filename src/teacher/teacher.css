@@ -188,6 +188,11 @@ body {
   background: #e0f2fe;
   color: var(--info);
 }
+/* Python's blue on Python's yellow (7.8:1). */
+.z1t-kind-python {
+  background: #fff4c2;
+  color: #1f4e79;
+}
 /* ----------------------------------------------------------- class list */
 .z1t-classes {
   display: flex;
@@ -302,7 +307,8 @@ body {
   align-items: center;
   gap: 8px 12px;
 }
-.z1t-code {
+/* The big class code (the code previews below are pre.z1t-code: the selectors keep them apart). */
+.z1t-code-row .z1t-code {
   font-family: var(--mono);
   font-size: 30px;
   font-weight: 700;
@@ -584,7 +590,7 @@ body {
 .z1t-computer {
   font-size: 12px;
 }
-.z1t-code {
+pre.z1t-code {
   margin: 0;
   max-height: 320px;
   padding: 8px 10px;
@@ -592,6 +598,7 @@ body {
   border: 1px solid var(--border);
   border-radius: 6px;
   background: var(--panel);
+  font-family: var(--mono);
   font-size: 12.5px;
   line-height: 1.45;
   white-space: pre;
@@ -618,6 +625,21 @@ body {
 }
 .z1t-older .z1t-versions {
   margin-top: 8px;
+}
+/* A Python hand-in (docs/PYTHON.md §8.5): the program first, the sketch made from it collapsed. */
+.z1t-python-errors {
+  margin: 0;
+  color: var(--warn);
+  font-size: 13px;
+  font-weight: 600;
+}
+.z1t-sketch > summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 13px;
+}
+.z1t-sketch > .z1t-code {
+  margin-top: 6px;
 }
 
 /* All hand-ins feed */
@@ -726,7 +748,7 @@ body {
   .z1t-main {
     padding: 10px;
   }
-  .z1t-code {
+  .z1t-code-row .z1t-code {
     font-size: 24px;
   }
   .z1t-center-card {

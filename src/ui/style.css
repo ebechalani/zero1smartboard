@@ -680,14 +680,28 @@ input[type='range'] {
 
 /* ---------------------------------------------------------------- python */
 
-/* The Python tab: the Python editor fills it (docs/PYTHON.md §7.3). */
+/* The Python tab: a one-line note ("… What works · Esc then Tab …"), then the
+   Python editor fills the rest (docs/PYTHON.md §7.3). */
 .z1-panel-python {
   display: grid;
-  grid-template-rows: minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
   overflow: hidden;
 }
 .z1-panel-python .z1-editor-host {
+  grid-row: 2;
+}
+.z1-python-note {
   grid-row: 1;
+  margin: 0;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--accent-tint);
+  color: var(--accent-soft);
+  font-size: 12px;
+  line-height: 1.45;
+}
+.z1-python-note .z1-linkbtn {
+  font-weight: 600;
 }
 .z1-python-loading {
   display: grid;
@@ -1306,4 +1320,79 @@ input[type='range'] {
   text-overflow: ellipsis;
   white-space: nowrap;
   vertical-align: bottom;
+}
+
+/* ------------------------------------------------ python "what works" */
+/* python-help-dialog.ts: "What works in ZERO1 Python" (docs/PYTHON.md §7.3);
+   the text scrolls inside the dialog, Close stays in view. */
+
+.z1-dialog.z1-python-help {
+  width: min(760px, calc(100vw - 32px));
+}
+.z1-python-help .z1-dialog-form {
+  max-height: calc(100vh - 34px);
+}
+.z1-help-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-height: 0;
+  overflow: auto;
+  padding-right: 4px;
+  font-size: 13.5px;
+}
+.z1-help-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.z1-help-heading {
+  margin: 0;
+  font-size: 15px;
+  color: var(--accent-soft);
+}
+.z1-help-code {
+  margin: 0;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  font-size: 12.5px;
+  overflow-x: auto;
+}
+.z1-help-list {
+  margin: 0;
+  padding-left: 20px;
+}
+.z1-help-list li + li {
+  margin-top: 3px;
+}
+.z1-help-table {
+  overflow-x: auto;
+}
+.z1-help-table table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+.z1-help-table th,
+.z1-help-table td {
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+}
+.z1-help-table thead th {
+  background: var(--panel-2);
+}
+.z1-help-table tbody th {
+  font-family: var(--mono);
+  font-weight: 500;
+}
+
+/* A console message's action ("Open the Serial Monitor", docs/PYTHON.md §7.9). */
+.z1-console-action {
+  flex: none;
+  margin-left: 8px;
+  font-size: 12px;
 }

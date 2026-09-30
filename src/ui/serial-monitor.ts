@@ -39,6 +39,11 @@ export interface SerialMonitor {
   setBaud(baud: number): void;
   setLineEnding(ending: LineEnding): void;
   getLineEnding(): LineEnding;
+  /**
+   * Force Newline (the choice is disabled, `title` says why), or give the choice back with the
+   * student's own setting (null). Python's input() reads one line (docs/PYTHON.md §7.9).
+   */
+  forceNewline(title: string | null): void;
   /** Send whatever is in the input box (same as pressing Enter). */
   send(): void;
   /** Whole output as plain text, lines joined with '\n'. */
@@ -95,6 +100,9 @@ export function createSerialMonitor(container: HTMLElement, options: SerialMonit
   const input = must<HTMLInputElement>(container, 'input');
   const endingSelect = must<HTMLSelectElement>(container, 'ending');
   const form = must<HTMLFormElement>(container, 'form');
+
+  /** The student's own line-ending choice while Newline is forced (null: not forced). */
+  let ownEnding: LineEnding | null = null;
 
   /** The line currently being written (sketch output without a newline yet). */
   let current = newLine();
@@ -187,9 +195,23 @@ export function createSerialMonitor(container: HTMLElement, options: SerialMonit
       baudLabel.textContent = `${baud} baud`;
     },
     setLineEnding(ending) {
-      endingSelect.value = ending;
+      if (ownEnding !== null) ownEnding = ending;
+      else endingSelect.value = ending;
     },
     getLineEnding: () => endingSelect.value as LineEnding,
+    forceNewline(title) {
+      if (title !== null) {
+        if (ownEnding === null) ownEnding = endingSelect.value as LineEnding;
+        endingSelect.value = 'newline';
+        endingSelect.disabled = true;
+        endingSelect.title = title;
+      } else if (ownEnding !== null) {
+        endingSelect.value = ownEnding;
+        ownEnding = null;
+        endingSelect.disabled = false;
+        endingSelect.removeAttribute('title');
+      }
+    },
     send,
     getText() {
       return Array.from(output.querySelectorAll<HTMLElement>('.z1-serial-line'))

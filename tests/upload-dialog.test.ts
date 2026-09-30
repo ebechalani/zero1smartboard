@@ -4,7 +4,8 @@
  * stages (download → compile → choose → upload → done), the size line, compile
  * errors with .ino lines and hints (also pushed to the console callback), the
  * help text per upload error code, Cancel/abort, "Try again", the Details
- * disclosure, and installUploadButton's feature detection.
+ * disclosure, installUploadButton's feature detection, and Python mode's
+ * payload (note, Python lines, X-sketch-error, success note).
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createUploadDialog, HELP_TEXT, sizeText, type UploadDialog } from '../src/upload/ui/upload-dialog';
@@ -80,8 +81,9 @@ describe('stages', () => {
 
   it('uploads after the board is chosen: "Uploading (page x of y)", then Done', async () => {
     const m = mount({ imageBytes: 5 * 128 });
-    m.dialog.open({ code: SKETCH, kind: 'blocks' });
-    expect(m.role('blocks-note').hidden).toBe(false);
+    m.dialog.open({ code: SKETCH, kind: 'blocks', note: 'This uploads the Arduino sketch made from your blocks (the code shown in the Code tab).' });
+    expect(m.role('note').hidden).toBe(false);
+    expect(m.role('note').textContent).toContain('made from your blocks');
     await until(m, 'choose');
     const texts: string[] = [];
     const observer = new MutationObserver(() => texts.push(m.stageText()));
@@ -166,6 +168,66 @@ describe('compile errors', () => {
     expect(m.stageText()).toBe('The compiler could not start');
     expect(m.role('message').textContent).toContain('HTTP 404');
     expect(m.console[0].text).toContain('HTTP 404');
+  });
+});
+
+describe('Python mode (docs/PYTHON.md §7.12)', () => {
+  const X_SKETCH = 'Python translation error (a bug in the simulator, please tell your teacher): ';
+  const DONE = 'Done — the program is running on the board. Its print() output: open the Arduino IDE Serial Monitor at 9600 baud.';
+  const payload = {
+    code: SKETCH,
+    kind: 'python' as const,
+    note: 'This uploads the Arduino sketch made from your Python program (the code in the Code tab). The board runs this sketch: it cannot run Python itself.',
+    successNote: DONE,
+    mapLine: (sketchLine: number) => (sketchLine === 9 ? 4 : 0),
+    source: 'python' as const,
+    sketchError: (message: string) => `${X_SKETCH}${message}`,
+  };
+
+  it('a compile error points at the Python line and says the sketch made from the program is at fault', async () => {
+    const m = mount({ build: FAILED_BUILD });
+    m.dialog.open(payload);
+    expect(m.role('note').textContent).toBe(payload.note);
+    await until(m, 'error');
+    expect(m.role('message').textContent).toBe('The sketch does not compile: 1 error.');
+    const items = [...m.role('diagnostics').querySelectorAll('li')];
+    expect(items.map((li) => li.textContent)).toEqual([`line 4: ${X_SKETCH}'digitalwrite' was not declared in this scope`]);
+    expect(items[0].querySelector('.z1-upload-hint')).toBeNull(); // no C++ advice: the student cannot fix the sketch
+    expect(m.role('help').hidden).toBe(true);
+    expect(m.console).toEqual([{ level: 'error', text: `${X_SKETCH}'digitalwrite' was not declared in this scope`, line: 4, source: 'python' }]);
+  });
+
+  it('an error on a line made from no Python line has no line; a sketch too big for the board keeps its own words', async () => {
+    const tooBig = "The sketch is too big for the board (32,256 bytes of program storage). Remove code or libraries.";
+    const m = mount({
+      build: {
+        ...FAILED_BUILD,
+        stage: 'link',
+        diagnostics: [
+          { file: 'sketch.ino', line: 2, column: 1, severity: 'error', message: "'pyFail' was not declared in this scope", inSketch: true },
+          { file: '', line: 0, severity: 'error', message: "region 'text' overflowed by 120 bytes", inSketch: false, hint: tooBig },
+        ],
+      },
+    });
+    m.dialog.open(payload);
+    await until(m, 'error');
+    const items = [...m.role('diagnostics').querySelectorAll('li')];
+    expect(items[0].textContent).toBe(`${X_SKETCH}'pyFail' was not declared in this scope`);
+    expect(items[1].textContent).toBe(`region 'text' overflowed by 120 bytes${tooBig}`);
+    expect(items[1].querySelector('.z1-upload-hint')!.textContent).toBe(tooBig);
+    expect(m.console).toEqual([
+      { level: 'error', text: `${X_SKETCH}'pyFail' was not declared in this scope`, line: undefined, source: 'python' },
+      { level: 'error', text: `error: region 'text' overflowed by 120 bytes — ${tooBig}`, line: undefined, source: 'python' },
+    ]);
+  });
+
+  it('says where print() output goes once the program is on the board', async () => {
+    const m = mount();
+    m.dialog.open(payload);
+    await until(m, 'choose');
+    m.click('choose');
+    await until(m, 'done');
+    expect(m.stageText()).toBe(DONE);
   });
 });
 

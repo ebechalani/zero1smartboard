@@ -19,10 +19,12 @@ import { currentStudentName } from '../classroom/session-store';
 import { downloadTextFile, sketchFileName, sketchName } from './sketch-file';
 
 export interface ArduinoIdePayload {
-  /** The Arduino sketch (in Blocks mode: the sketch generated from the blocks). */
+  /** The Arduino sketch (in Blocks and Python mode: the sketch made from the program). */
   code: string;
-  /** Where it comes from: the editor, or the blocks (the dialog then says so). */
+  /** Where it comes from: the editor, the blocks or the Python program. */
   kind: AppMode;
+  /** Shown above the ways (Blocks, Python: "This is the Arduino sketch made from your …", docs/PYTHON.md §7.12). */
+  note?: string;
 }
 
 /** A writable file in a picked folder (the part of FileSystemFileHandle the dialog uses). */
@@ -101,7 +103,7 @@ export function createArduinoIdeDialog(parent: HTMLElement, options: ArduinoIdeD
     <form class="z1-dialog-form" novalidate>
       <h2 id="z1-ide-title">Open in Arduino IDE</h2>
       <p class="z1-muted">Put your sketch into the Arduino IDE on this computer, then upload it to the real ZERO1 board.</p>
-      <p class="z1-ide-note" data-role="blocks-note" hidden>This is the Arduino sketch made from your blocks (the code shown in the Code tab).</p>
+      <p class="z1-ide-note" data-role="note" hidden></p>
 
       <div class="z1-ide-main">
         <button type="button" class="z1-btn z1-btn-primary" data-action="download">Download sketch (.ino)</button>
@@ -231,7 +233,9 @@ export function createArduinoIdeDialog(parent: HTMLElement, options: ArduinoIdeD
     open(next) {
       session++;
       payload = next;
-      role('blocks-note').hidden = next.kind !== 'blocks';
+      const note = role('note');
+      note.textContent = next.note ?? '';
+      note.hidden = !next.note;
       resetSteps();
       setStatus('');
       saveButton.disabled = false;

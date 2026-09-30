@@ -6,7 +6,9 @@
  * Uploading (page x of y) → Done. Compile errors are listed with the .ino
  * line, a hint when one is known (toolchain/diagnostics.ts) and pushed into
  * the app's console through `onConsole`; a "Details" disclosure shows the
- * raw compiler / protocol output. Upload errors carry the uploader's error
+ * raw compiler / protocol output. In Python mode the errors point at the
+ * Python lines the sketch lines were made from and say that the sketch, not
+ * the student's program, is at fault (docs/PYTHON.md §7.12). Upload errors carry the uploader's error
  * code (serial/errors.ts) and a help text per code.
  *
  * The browser's port chooser needs a user gesture, so "Choose your board" is a
@@ -20,9 +22,22 @@ import { formatDiagnostic, type Diagnostic } from '../toolchain/diagnostics';
 import '../upload.css';
 
 export interface UploadPayload {
-  /** The Arduino sketch (in Blocks mode: the sketch generated from the blocks). */
+  /** The Arduino sketch (in Blocks and Python mode: the sketch made from the program). */
   code: string;
   kind: AppMode;
+  /** Shown above the stages (Blocks, Python: "This uploads the Arduino sketch made from your …"). */
+  note?: string;
+  /** Replaces "Done — the sketch is running on the board" (Python: where print() output goes, docs/PYTHON.md §7.12). */
+  successNote?: string;
+  /** The line of the student's program that a sketch line was made from (0 = none): compile errors point there. */
+  mapLine?(sketchLine: number): number;
+  /** Whose line `mapLine` gives: the console jumps to that editor (docs/PYTHON.md §7.10). */
+  source?: ConsoleMessage['source'];
+  /**
+   * Python: a compile error in the generated sketch is not the student's fault. Its text replaces
+   * the C++ hint (X-sketch-error), except for a sketch too big for the board, shown as is.
+   */
+  sketchError?(message: string): string;
 }
 
 export interface UploadDialogOptions {
@@ -72,6 +87,9 @@ const STAGE_TEXT: Record<UploadStage, string> = {
 
 const PAGE_SIZE = 128;
 
+/** Compiler / linker errors of a sketch too big for the board (flash or RAM): they keep their own words in Python mode. */
+const TOO_BIG = /region [`']?(text|data)'? overflowed|will not fit in region|section .* is not within region/;
+
 /** The Arduino IDE's size lines. */
 export function sizeText(b: BuildOutput): string {
   const flash = b.sizes?.flash ?? b.flashBytes ?? 0;
@@ -106,7 +124,7 @@ export function createUploadDialog(parent: HTMLElement, options: UploadDialogOpt
     <form class="z1-dialog-form" novalidate>
       <h2 id="z1-upload-title">Upload to board</h2>
       <p class="z1-muted">Compiles your sketch here in the browser and sends it to the ZERO1 board over the USB cable. No Arduino IDE needed.</p>
-      <p class="z1-ide-note" data-role="blocks-note" hidden>This uploads the Arduino sketch made from your blocks (the code shown in the Code tab).</p>
+      <p class="z1-ide-note" data-role="note" hidden></p>
 
       <div class="z1-upload-stage" data-role="stage" data-tone="busy" role="status" aria-live="polite">
         <span class="z1-upload-icon" aria-hidden="true"></span>
@@ -200,6 +218,13 @@ export function createUploadDialog(parent: HTMLElement, options: UploadDialogOpt
     detailsEl.hidden = lines.length === 0;
   };
 
+  /** The line to show and to jump to: the sketch line, or the program line it was made from (Python). */
+  const lineOf = (d: Diagnostic): number => (d.inSketch && d.line ? (payload.mapLine ? payload.mapLine(d.line) : d.line) : 0);
+
+  /** Python: an error in the generated sketch in the student's words (a sketch too big for the board keeps its own words). */
+  const sketchErrorText = (d: Diagnostic): string | null =>
+    payload.sketchError && d.severity === 'error' && !TOO_BIG.test(d.message) ? payload.sketchError(d.message) : null;
+
   const showDiagnostics = (list: readonly Diagnostic[]): void => {
     diagnosticsEl.replaceChildren();
     for (const d of list) {
@@ -208,11 +233,13 @@ export function createUploadDialog(parent: HTMLElement, options: UploadDialogOpt
       li.dataset.severity = d.severity;
       const where = document.createElement('span');
       where.className = 'z1-upload-where';
-      where.textContent = d.inSketch && d.line ? `line ${d.line}: ` : d.file ? `${d.file.replace(/^.*\//, '')}:${d.line}: ` : '';
+      const line = lineOf(d);
+      where.textContent = line ? `line ${line}: ` : !payload.sketchError && d.file ? `${d.file.replace(/^.*\//, '')}:${d.line}: ` : '';
       const text = document.createElement('span');
-      text.textContent = d.message;
+      const replaced = sketchErrorText(d);
+      text.textContent = replaced ?? d.message;
       li.append(where, text);
-      if (d.hint) {
+      if (d.hint && replaced === null) {
         const hint = document.createElement('span');
         hint.className = 'z1-upload-hint';
         hint.textContent = d.hint;
@@ -257,11 +284,17 @@ export function createUploadDialog(parent: HTMLElement, options: UploadDialogOpt
       showDetails(result.stderr);
       if (!result.ok) {
         const errors = result.diagnostics.filter((d) => d.severity === 'error');
-        for (const d of errors) consoleMessage({ level: 'error', text: `${formatDiagnostic(d)}${d.hint ? ` — ${d.hint}` : ''}`, line: d.inSketch && d.line ? d.line : undefined });
+        for (const d of errors) {
+          const line = lineOf(d) || undefined;
+          const text = sketchErrorText(d) ?? `${formatDiagnostic(d)}${d.hint ? ` — ${d.hint}` : ''}`;
+          consoleMessage({ level: 'error', text, line, source: payload.source });
+        }
         const what = result.stage === 'link' ? 'The sketch could not be linked' : 'The sketch does not compile';
+        // Python: the student cannot fix the generated sketch, and each error already says so.
+        const explained = errors.some((d) => d.hint) || (errors.length > 0 && errors.every((d) => sketchErrorText(d) !== null));
         fail(
           errors.length ? `${what}: ${errors.length === 1 ? '1 error' : `${errors.length} errors`}.` : `${what}.`,
-          errors.some((d) => d.hint) ? '' : 'Fix the lines listed below (the Arduino IDE would show the same errors), then try again.',
+          explained ? '' : 'Fix the lines listed below (the Arduino IDE would show the same errors), then try again.',
           result.diagnostics,
           'Compile error',
         );
@@ -330,7 +363,7 @@ export function createUploadDialog(parent: HTMLElement, options: UploadDialogOpt
       log.push(`done: ${result.pagesWritten} pages at ${result.baud} baud in ${Math.round(result.ms.total)} ms (bootloader ${result.bootloaderVersion?.major}.${result.bootloaderVersion?.minor})`);
       showDetails(log);
       setProgress(1);
-      setStage('done', STAGE_TEXT.done, 'ok');
+      setStage('done', payload.successNote ?? STAGE_TEXT.done, 'ok');
       consoleMessage({ level: 'info', text: `Uploaded to the board: ${result.pagesWritten} pages in ${(result.ms.total / 1000).toFixed(1)} s. The sketch is running.` });
       closeButton.focus();
     } catch (err) {
@@ -384,7 +417,9 @@ export function createUploadDialog(parent: HTMLElement, options: UploadDialogOpt
     open(next) {
       session++;
       payload = next;
-      role('blocks-note').hidden = next.kind !== 'blocks';
+      const note = role('note');
+      note.textContent = next.note ?? '';
+      note.hidden = !next.note;
       if (!dialog.open) dialog.showModal();
       void compile();
     },
