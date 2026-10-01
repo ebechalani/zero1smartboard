@@ -19,7 +19,7 @@ const MEMBER_DOC = { firstName: 'Ali', lastName: 'Khoury', nameKey: 'ali khoury'
 const SAVED: SavedSession = { v: 2, code: CODE, className: '8B Robotics', firstName: 'Ali', lastName: 'Khoury', uid: UID, lastUsedAt: NOW - 60_000, lastHandinAt: 0 };
 const SESSION: StudentSession = { code: CODE, className: '8B Robotics', firstName: 'Ali', lastName: 'Khoury', uid: UID };
 const INFO = { code: CODE, name: '8B Robotics', ownerUid: 'tA', handinsOpen: true };
-const DRAFT: HandinDraft = { kind: 'code', code: 'void setup() {}\nvoid loop() {}\n', workspaceJson: '' };
+const DRAFT: HandinDraft = { kind: 'code', code: 'void setup() {}\nvoid loop() {}\n', workspaceJson: '', python: '' };
 const denied = { code: 'permission-denied', name: 'FirebaseError', message: 'denied' };
 
 function setup(options: FakeStudentOptions = {}, session: SavedSession | null = SAVED, opts: { now?: number; timeoutMs?: number } = {}) {
@@ -196,6 +196,32 @@ describe('handIn', () => {
     expect(fake.docs[`classes/${CODE}/members/${UID}`]).toMatchObject({ handinCount: 1, lastHandinId: id });
     expect(loadSavedSession(storage)).toMatchObject({ lastHandinAt: NOW, lastUsedAt: NOW });
     await expect(api.handIn(SESSION, DRAFT, newHandinId())).rejects.toMatchObject({ code: 'too_soon' });
+  });
+  it('a Python hand-in writes the same 10 keys, with the program in the workspace field (docs/PYTHON.md §8.1)', async () => {
+    const { api, fake } = setup();
+    const id = newHandinId();
+    const python = 'print("Température: 25 °C")\n';
+    // A stray workspaceJson is ignored: only the program goes into `workspace`.
+    const record = await api.handIn(SESSION, { ...DRAFT, kind: 'python', workspaceJson: '{"blocks":{}}', python }, id);
+    expect(record).toMatchObject({ kind: 'python', content: { enc: 'plain', code: DRAFT.code, workspace: python } });
+    expect(fake.ops[0].data).toEqual({
+      uid: UID,
+      firstName: 'Ali',
+      lastName: 'Khoury',
+      nameKey: 'ali khoury',
+      ownerUid: 'tA',
+      kind: 'python',
+      createdAt: expect.anything(),
+      enc: 'plain',
+      code: DRAFT.code,
+      workspace: python,
+    });
+  });
+  it('a Python draft without a program, or with one over 50,000 bytes, is refused without a request', async () => {
+    const { api, fake } = setup();
+    await expect(api.handIn(SESSION, { ...DRAFT, kind: 'python', python: '  \n' }, newHandinId())).rejects.toMatchObject({ code: 'empty_sketch' });
+    await expect(api.handIn(SESSION, { ...DRAFT, kind: 'python', python: 'x'.repeat(50_001) }, newHandinId())).rejects.toMatchObject({ code: 'too_large' });
+    expect(fake.ops).toEqual([]);
   });
   it('a timeout followed by a member read with the same id is a success', async () => {
     const id = newHandinId();

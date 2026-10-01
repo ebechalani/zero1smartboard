@@ -7,7 +7,7 @@
 import type { HandinRecord } from '../classroom/model';
 import type { DashboardContext } from './context';
 import { createDetailPanel, inoButton, openLink } from './detail';
-import { button, el, plural, whenText } from './format';
+import { KIND_LABEL, button, el, plural, whenText } from './format';
 import { latestOfEach, overviewRows, sortRows, zipOf, type OverviewRow } from './handins';
 import { PERIODS, type ClassSession, type Period } from './session';
 
@@ -76,8 +76,9 @@ export function createOverview(ctx: DashboardContext, session: ClassSession): Ov
       el('span', { text: row.status === 'new' ? 'New' : 'Seen' }),
     );
     const last = el('td', { className: 'z1t-last' });
-    last.append(el('span', { text: whenText(row.latest.createdAt, ctx.now()) }), el('span', { className: 'z1-muted', text: ` · ${row.latest.kind === 'blocks' ? 'Blocks' : 'Code'}` }));
-    const versions = el('td', { className: 'z1t-num', text: String(row.versions) });
+    last.append(el('span', { text: whenText(row.latest.createdAt, ctx.now()) }), el('span', { className: 'z1-muted', text: ` · ${KIND_LABEL[row.latest.kind]}` }));
+    // data-label: the column name shown before the number when a phone stacks the row (teacher.css).
+    const versions = el('td', { className: 'z1t-num', text: String(row.versions), attrs: { 'data-label': 'Versions' } });
     const computers = el('td', { className: 'z1t-computers' });
     if (row.closeDevices) computers.append(el('span', { className: 'z1t-badge z1t-badge-warn', text: `${row.computers} computers within an hour` }));
     else computers.append(el('span', { text: plural(row.computers, 'computer') }));

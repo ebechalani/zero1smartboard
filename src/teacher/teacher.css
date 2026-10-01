@@ -1,7 +1,8 @@
 /* Teacher dashboard (src/teacher/*): the top bar, the class list, the class page with its tabs,
-   the Overview table with the detail panel beside it from 1200 px, the Students and Settings
-   cards, the Show-to-the-class overlay. Tokens, .z1-btn, .z1-dialog, .z1-setting, .z1-table and
-   .z1-toast come from src/ui/style.css (imported first, never edited). Prefix: z1t-. */
+   the Overview table (one card per student up to 760 px) with the detail panel beside it from
+   1200 px, the Students and Settings cards, the Show-to-the-class overlay. Tokens, .z1-btn,
+   .z1-dialog, .z1-setting, .z1-table and .z1-toast come from src/ui/style.css (imported first,
+   never edited). Prefix: z1t-. */
 
 #teacher,
 .z1t-root {
@@ -188,6 +189,11 @@ body {
   background: #e0f2fe;
   color: var(--info);
 }
+/* Python's blue on Python's yellow (7.8:1). */
+.z1t-kind-python {
+  background: #fff4c2;
+  color: #1f4e79;
+}
 /* ----------------------------------------------------------- class list */
 .z1t-classes {
   display: flex;
@@ -302,7 +308,8 @@ body {
   align-items: center;
   gap: 8px 12px;
 }
-.z1t-code {
+/* The big class code (the code previews below are pre.z1t-code: the selectors keep them apart). */
+.z1t-code-row .z1t-code {
   font-family: var(--mono);
   font-size: 30px;
   font-weight: 700;
@@ -502,6 +509,7 @@ body {
 }
 .z1t-name .z1t-linkish {
   font-weight: 600;
+  text-align: left;
   text-decoration: none;
 }
 .z1t-name .z1t-linkish:hover {
@@ -509,6 +517,11 @@ body {
 }
 .z1t-num {
   text-align: right;
+}
+/* A long name or date wraps instead of pushing Open and .ino out of the card. */
+.z1t-rows .z1t-name,
+.z1t-rows .z1t-last {
+  white-space: normal;
 }
 .z1t-actions {
   white-space: nowrap;
@@ -525,6 +538,72 @@ body {
   opacity: 0.45;
   cursor: not-allowed;
   pointer-events: none;
+}
+/* Phones: the six columns need 600-700 px, so each student becomes a small card (name and status,
+   then the last hand-in, versions and computers, then Open and .ino) instead of a table that
+   hides Open and .ino past the right edge. The column headers stay for screen readers. */
+@media (max-width: 760px) {
+  .z1t-rows thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+  .z1t-rows,
+  .z1t-rows tbody {
+    display: block;
+  }
+  .z1t-rows tbody tr {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 14px;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  .z1t-rows tbody tr:last-child {
+    border-bottom: 0;
+  }
+  .z1t-rows td {
+    padding: 0;
+    border: 0;
+  }
+  /* The name fills the first line next to the status, so the facts start the second line. */
+  .z1t-rows .z1t-name {
+    order: 1;
+    flex: 1 1 calc(100% - 110px);
+    min-width: 0;
+    font-size: 14px;
+  }
+  .z1t-rows .z1t-status-cell {
+    order: 2;
+    margin-left: auto;
+  }
+  .z1t-rows .z1t-last {
+    order: 3;
+  }
+  .z1t-rows .z1t-num {
+    order: 4;
+    text-align: left;
+  }
+  .z1t-rows .z1t-computers {
+    order: 5;
+  }
+  .z1t-rows td[data-label]::before {
+    content: attr(data-label) ' ';
+    color: var(--muted);
+  }
+  .z1t-rows .z1t-actions {
+    order: 6;
+    flex-basis: 100%;
+    padding-top: 4px;
+  }
+  .z1t-rows .z1t-actions .z1-btn {
+    padding: 5px 14px;
+    font-size: 13px;
+  }
 }
 
 /* Detail panel */
@@ -584,7 +663,7 @@ body {
 .z1t-computer {
   font-size: 12px;
 }
-.z1t-code {
+pre.z1t-code {
   margin: 0;
   max-height: 320px;
   padding: 8px 10px;
@@ -592,6 +671,7 @@ body {
   border: 1px solid var(--border);
   border-radius: 6px;
   background: var(--panel);
+  font-family: var(--mono);
   font-size: 12.5px;
   line-height: 1.45;
   white-space: pre;
@@ -618,6 +698,21 @@ body {
 }
 .z1t-older .z1t-versions {
   margin-top: 8px;
+}
+/* A Python hand-in (docs/PYTHON.md §8.5): the program first, the sketch made from it collapsed. */
+.z1t-python-errors {
+  margin: 0;
+  color: var(--warn);
+  font-size: 13px;
+  font-weight: 600;
+}
+.z1t-sketch > summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 13px;
+}
+.z1t-sketch > .z1t-code {
+  margin-top: 6px;
 }
 
 /* All hand-ins feed */
@@ -726,7 +821,7 @@ body {
   .z1t-main {
     padding: 10px;
   }
-  .z1t-code {
+  .z1t-code-row .z1t-code {
     font-size: 24px;
   }
   .z1t-center-card {

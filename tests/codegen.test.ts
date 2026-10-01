@@ -92,6 +92,15 @@ function makeRuntime(extra: Record<string, unknown> = {}): FakeRuntime {
       if (num(b) === 0) throw new Error('division by zero');
       return num(a) % num(b);
     },
+    __imul: (a: unknown, b: unknown) => Math.imul(num(a), num(b)),
+    __ftoi: (x: unknown) => {
+      const v = num(x);
+      return v > -2147483649 && v < 2147483648 ? Math.trunc(v) | 0 : -2147483648;
+    },
+    __ftou: (x: unknown) => {
+      const v = num(x);
+      return v > -4294967296 && v < 4294967296 ? Math.trunc(v) >>> 0 : 0;
+    },
     __tick: async () => {},
     __array: (dims: number[], fill: unknown): unknown[] => {
       const build = (d: number): unknown[] => Array.from({ length: dims[d]! }, () => (d === dims.length - 1 ? fill : build(d + 1)));
@@ -629,6 +638,21 @@ describe('codegen: X1 sandbox hardening (docs/CLASSROOM.md §3.4)', () => {
     expect(errorOf(`void setup() { String s = "a"; s.__proto__.x = 1; } ${LOOP}`).message).toMatch(NOT_AVAILABLE);
   });
 
+  it('a computed index on a runtime object or a function is a number: Serial[k] with a String k cannot reach Function', async () => {
+    const poc = `String k = "constructor", m = "availableForWrite", n = "peek";\nvoid setup() {\n  Serial[m] = Serial[k][k];\n  Serial[n] = Serial.availableForWrite("globalThis.__x1Pwned = 1");\n  Serial.peek();\n}\n${LOOP}`;
+    const r = transpile(poc);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.js).toContain('__rt.Serial[+(k)]');
+    expect(r.js).toContain('__rt.Serial[+(m)] = ');
+    await expect(run(poc)).rejects.toThrow(TypeError); // Serial["NaN"] is undefined
+    expect((globalThis as { __x1Pwned?: number }).__x1Pwned).toBeUndefined();
+    const f = transpile(`int f() { return 1; }\nString k = "constructor";\nvoid setup() { f[k]; }\n${LOOP}`);
+    expect(f.ok && f.js).toContain('f[+(k)]');
+    // numbers still index
+    expect(transpile(`int a[2];\nvoid setup() { a[1] = 3; bool t = true; a[t] = 4; }\n${LOOP}`).ok).toBe(true);
+  });
+
   it('still allows ordinary members, methods and string keys', async () => {
     const r = await run(`void setup() { Serial.begin(9600); Serial.println("ok"); int a[2]; a[1] = 3; String s = "hi"; s.toUpperCase(); } ${LOOP}`);
     expect(r.serial.join('')).toContain('ok');
@@ -650,6 +674,159 @@ describe('codegen: X1 sandbox hardening (docs/CLASSROOM.md §3.4)', () => {
     expect(__m({ begin: (b: number) => calls.push(String(b)) }, 'begin', [9600])).toBe(1);
     expect(calls).toEqual(['9600']);
     expect(__m('abc', 'length', [])).toBe(3);
+  });
+});
+
+describe('codegen: simulator fidelity (docs/PYTHON.md §6)', () => {
+  // Expected values measured on the chip: the sketch built with avr-g++ 7.3 and run on avr8js
+  // (tools/emulator/run-hex.mjs, A3 = 512). The full-runtime checks are in tests/runtime-fidelity.test.ts.
+
+  it('rule 1: rounds float literals, float arithmetic and float-returning calls to single precision', async () => {
+    const r = await run(`
+      void setup() {
+        Serial.begin(9600);
+        float s = 0.1;
+        float h = 0.5;
+        Serial.println(s == 0.1);
+        Serial.println(0.1 + 0.2 == 0.3);
+        long big = 16777217;
+        Serial.println(big + 0.5 == 16777216.0);
+        float twice = 2.5 * 2;
+        float root = sqrt(h);
+      }
+      ${LOOP}`, 1, { sqrt: (x: unknown) => Math.sqrt(num(x)) });
+    expect(r.serial).toEqual(['1\n', '1\n', '1\n']);
+    expect(r.js).toContain('let s = __f32(0.1);');
+    expect(r.js).toContain('let h = 0.5;'); // exact in single precision: no wrapper
+    expect(r.js).toContain('(__f32(__f32(0.1) + __f32(0.2)) == __f32(0.3))');
+    expect(r.js).toContain('__f32(__f32(big) + 0.5)'); // a long becomes a float first
+    expect(r.js).toContain('let twice = (2.5 * 2);'); // constant result already exact
+    expect(r.js).toContain('let root = __f32(await __rt.sqrt(h));');
+  });
+
+  it('rule 1: f++ on a float adds 1 in single precision and still yields the old value', async () => {
+    const r = await run(`
+      void setup() {
+        Serial.begin(9600);
+        float f = 16777216.0;
+        f++;
+        float g = 0.5;
+        float old = g++;
+        Serial.println(f == 16777216.0);
+        Serial.println(old);
+        Serial.println(g);
+      }
+      ${LOOP}`);
+    expect(r.serial).toEqual(['1\n', '0.50\n', '1.50\n']);
+    expect(r.js).toContain('(f = __f32(f + 1));');
+  });
+
+  it('rule 2: wraps + - * << and unary - at the C width of their type, with Math.imul for 32 bits', async () => {
+    const r = await run(`
+      void setup() {
+        Serial.begin(9600);
+        int p = analogRead(A3) * 100 / 1023;
+        int q = 60 * 1000;
+        Serial.println(p);
+        Serial.println(q);
+        Serial.println(1 << 20);
+        long a = 50000;
+        Serial.println(a * a);
+        unsigned long u = 4000000000UL;
+        Serial.println(u * 3);
+        int m = -32768;
+        Serial.println(-m);
+        int small = 2 * 3;
+      }
+      ${LOOP}`);
+    expect(r.serial).toEqual(['-14\n', '-5536\n', '0\n', '-1794967296\n', '3410065408\n', '-32768\n']);
+    expect(r.js).toContain('__i16((await __rt.analogRead(__rt.A3)) * 100)');
+    expect(r.js).toContain('let q = __i16(60 * 1000);');
+    expect(r.js).toContain('__i16(1 << 20)');
+    expect(r.js).toContain('__imul(a, a)');
+    expect(r.js).toContain('__u32(__imul(u, 3))');
+    expect(r.js).toContain('__i16(-m)');
+    expect(r.js).toContain('let small = (2 * 3);'); // fits: no wrapper
+  });
+
+  it('rule 2: converts operands like C (signed to unsigned, and back to the unsigned width)', async () => {
+    const r = await run(`
+      void setup() {
+        Serial.begin(9600);
+        int neg = -1;
+        unsigned int one = 1;
+        Serial.println(neg < one);
+        Serial.println(neg / one);
+        unsigned long top = 0x80000000UL;
+        Serial.println(top | 1);
+        Serial.println(~one);
+        byte b = 255;
+        Serial.println(b << 8);
+        int x = 5;
+        x += 40000;
+        Serial.println(x);
+      }
+      ${LOOP}`);
+    expect(r.serial).toEqual(['0\n', '65535\n', '2147483649\n', '65534\n', '-256\n', '-25531\n']);
+    expect(r.js).toContain('(__u16(neg) < one)');
+    expect(r.js).toContain('(x = __i16(__i32(x + 40000)))'); // computed as long (40000 is a long), stored as int
+  });
+
+  it('converts floats to integers like avr-gcc (__fixsfsi / __fixunssfsi)', async () => {
+    const r = await run(`
+      void setup() {
+        Serial.begin(9600);
+        float f = 3e9;
+        long l = f;
+        int n = (int)f;
+        unsigned long u = -1.5;
+        Serial.println(l);
+        Serial.println(n);
+        Serial.println(u);
+      }
+      ${LOOP}`);
+    expect(r.serial).toEqual(['-2147483648\n', '0\n', '4294967295\n']);
+    expect(r.js).toContain('let l = __ftoi(f);');
+    expect(r.js).toContain('let n = __i16(__ftoi(f));');
+    expect(r.js).toContain('__ftou((-1.5))');
+  });
+
+  it('min/max/constrain compare in the common type; maths functions take a char as a number', () => {
+    const r = transpile(`
+      void setup() {
+        unsigned int u = 14;
+        long c = constrain(u, -100, 100);
+        unsigned long m = max(0UL, -7);
+        char ch = -32;
+        float up = ceil(ch);
+        Serial.print(ch);
+      }
+      ${LOOP}`);
+    if (!r.ok) throw new Error('transpile failed');
+    expect(r.js).toContain('__rt.constrain(u, __u16((-100)), 100)');
+    expect(r.js).toContain('__rt.max(0, __u32((-7)))');
+    expect(r.js).toContain('__rt.ceil(ch)');
+    expect(r.js).toContain('__rt.Serial.print(__chr(ch))');
+  });
+
+  it('rule 3: abort() is a runtime function', () => {
+    const r = transpile(`void setup() { abort(); }\n${LOOP}`);
+    if (!r.ok) throw new Error(r.errors.map((e) => e.message).join('; '));
+    expect(r.js).toContain('(await __rt.abort());');
+  });
+
+  it('rule 5: float literals with an exponent are valid JavaScript', async () => {
+    const r = await run(`
+      void setup() {
+        Serial.begin(9600);
+        float big = 3.4e38;
+        Serial.println(big > 1e38);
+        Serial.println(1e21 > 1e20);
+      }
+      ${LOOP}`);
+    expect(r.serial).toEqual(['1\n', '1\n']);
+    expect(r.js).toContain('let big = __f32(3.4e+38);');
+    expect(r.js).not.toMatch(/e\+\d+\.0/);
   });
 });
 

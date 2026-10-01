@@ -8,13 +8,20 @@
  * Settings menu resets the board or opens the settings dialog, "Hand in to my
  * teacher" exists only when the class platform is configured and opens the
  * Hand in dialog with the work (docs/CLASSROOM.md §7.3), `#class=` links open
- * it with the code prefilled, the run status stays short, and the global keys
- * leave a sketch alone while a dialog or a menu is open.
+ * it with the code prefilled, the run status stays short, the global keys
+ * leave a sketch alone while a dialog or a menu is open, and the style rules
+ * that keep the header on one row at 1366×768 (also with Upload to board shown)
+ * and put the actions on their own row at 1280×800 (docs/PYTHON.md §7.14).
  *
  * Blockly is never loaded: in Blocks mode `createBlocksPanel` returns a small
  * fake panel whose "blocks" are a list of block types and whose sketch lists
- * them (see FakePanel).
+ * them (see FakePanel). Blocks mode shows that sketch in the Code tab's
+ * read-only mirror and never touches the hand-written sketch (docs/PYTHON.md
+ * §7.5-7.6); "Edit a copy in Code mode" is the only way across.
  */
+import { readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { EditorView } from '@codemirror/view';
 import { makeBoard, settle } from './helpers';
@@ -223,8 +230,14 @@ async function reload(): Promise<HTMLElement> {
   return startBlocks();
 }
 
+/** The Code tab's editable editor: the student's own sketch (`z1.code`). */
 function editorText(root: HTMLElement): string {
-  return EditorView.findFromDOM(root.querySelector<HTMLElement>('.cm-editor')!)!.state.doc.toString();
+  return EditorView.findFromDOM(root.querySelector<HTMLElement>('[data-slot="editor"] .cm-editor')!)!.state.doc.toString();
+}
+
+/** The Code tab's read-only mirror: the sketch made from the blocks. */
+function mirrorText(root: HTMLElement): string {
+  return EditorView.findFromDOM(root.querySelector<HTMLElement>('[data-slot="mirror"] .cm-editor')!)!.state.doc.toString();
 }
 
 function button(root: HTMLElement, slot: string): HTMLButtonElement {
@@ -306,6 +319,133 @@ const SKETCH_FILE = /^zero1_\d{4}_\d{6}\.ino$/;
 // ---------------------------------------------------------------------------
 // Code mode
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Header at school-laptop sizes (docs/PYTHON.md §7.14)
+// ---------------------------------------------------------------------------
+
+/**
+ * The style rules of src/ui/style.css that apply at a window size: the top-level rules and those
+ * of every @media block whose query matches (happy-dom evaluates media queries with matchMedia but
+ * does not lay out; the one-row layout itself is checked in a real browser, see §7.14).
+ */
+function rulesAt(width: number, height: number): CSSStyleRule[] {
+  let style = document.head.querySelector<HTMLStyleElement>('style[data-test="app-css"]');
+  if (!style) {
+    style = document.createElement('style');
+    style.dataset.test = 'app-css';
+    style.textContent = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), '../src/ui/style.css'), 'utf8');
+    document.head.appendChild(style);
+  }
+  (window as unknown as { happyDOM: { setViewport(v: { width: number; height: number }): void } }).happyDOM.setViewport({ width, height });
+  const rules: CSSStyleRule[] = [];
+  for (const rule of Array.from(style.sheet!.cssRules)) {
+    if (rule instanceof CSSMediaRule) {
+      if (window.matchMedia(rule.media.mediaText).matches) rules.push(...(Array.from(rule.cssRules) as CSSStyleRule[]));
+    } else if ('selectorText' in rule) {
+      rules.push(rule as CSSStyleRule);
+    }
+  }
+  return rules;
+}
+
+/** The toolbar while "Upload to board" is shown; happy-dom's `matches()` does not take :not() inside :has(). */
+const UPLOAD_SHOWN = ".z1-toolbar:has([data-slot='upload']:not([hidden]))";
+
+/** `el.matches(selector)`, with UPLOAD_SHOWN worked out here (Chromium: see the measurements in style.css). */
+function matchesRule(el: Element, selector: string): boolean {
+  if (selector.includes(UPLOAD_SHOWN)) {
+    const shown = el.ownerDocument.querySelector("[data-slot='upload']:not([hidden])") !== null;
+    selector = selector.split(UPLOAD_SHOWN).join(shown ? '.z1-toolbar' : '.z1-toolbar.z1-never');
+  }
+  return el.matches(selector);
+}
+
+/** The last value of `property` among the rules at that size that match `el` ('' = none). */
+function cssValue(rules: CSSStyleRule[], el: Element, property: string): string {
+  let value = '';
+  for (const rule of rules) {
+    if (matchesRule(el, rule.selectorText) && rule.style.getPropertyValue(property)) value = rule.style.getPropertyValue(property);
+  }
+  return value;
+}
+
+describe('header at 1366×768 and 1280×800 (docs/PYTHON.md §7.14)', () => {
+  afterEach(() => {
+    (window as unknown as { happyDOM: { setViewport(v: { width: number; height: number }): void } }).happyDOM.setViewport({ width: 1024, height: 768 });
+    document.head.querySelector('style[data-test="app-css"]')?.remove();
+  });
+
+  it('at 1366×768 the Arduino IDE and Settings buttons show their icons only and the actions stay on the brand row (Python mode)', async () => {
+    localStorage.setItem(MODE_STORAGE_KEY, 'python');
+    const root = start();
+    await vi.waitFor(() => expect(root.querySelector('[data-slot="panel-python"] .cm-editor')).not.toBeNull(), { timeout: 10_000 });
+    const rules = rulesAt(1366, 768);
+    const ide = button(root, 'ide');
+    expect(cssValue(rules, ide.querySelector('.z1-btn-label')!, 'display')).toBe('none');
+    expect(cssValue(rules, menuButton(root, 'settings').querySelector('.z1-btn-label')!, 'display')).toBe('none');
+    expect(cssValue(rules, menuButton(root, 'share').querySelector('.z1-btn-label')!, 'display')).toBe(''); // "Share" stays
+    // The label is only hidden: the name and the tooltip stay.
+    expect(ide.getAttribute('aria-label')).toBe('Open the sketch made from this program in the Arduino IDE');
+    expect(ide.title).toBe('Open in the Arduino IDE');
+    expect(cssValue(rules, root.querySelector('.z1-toolbar')!, 'flex-basis')).toBe(''); // no row of its own
+    expect(cssValue(rules, root.querySelector('.z1-title-short')!, 'display')).toBe('inline');
+    expect(Array.from(root.querySelectorAll('.z1-mode .z1-mode-btn'), (b) => b.textContent)).toEqual(['Code', 'Blocks', 'Python']);
+    expect(root.querySelector('.z1-header')!.children).toHaveLength(4); // brand, mode switch, actions, run status
+  });
+
+  it('at 1280×800 the actions get a row of their own under the brand, mode switch and run status, with all their labels', () => {
+    const root = start();
+    const rules = rulesAt(1280, 800);
+    const toolbar = root.querySelector('.z1-toolbar')!;
+    expect(cssValue(rules, toolbar, 'flex-basis')).toBe('100%');
+    expect(cssValue(rules, toolbar, 'order')).toBe('1');
+    expect(cssValue(rules, button(root, 'ide').querySelector('.z1-btn-label')!, 'display')).toBe('');
+    expect(cssValue(rules, menuButton(root, 'settings').querySelector('.z1-btn-label')!, 'display')).toBe('');
+  });
+
+  it('from 1440 px every label shows', () => {
+    const root = start();
+    const rules = rulesAt(1440, 900);
+    expect(cssValue(rules, button(root, 'ide').querySelector('.z1-btn-label')!, 'display')).toBe('');
+    expect(cssValue(rules, root.querySelector('.z1-toolbar')!, 'flex-basis')).toBe('');
+  });
+
+  it('with Upload to board shown, Upload and Arduino IDE show their icons only from 1366 to 1759 px (one row, measured in Chromium)', () => {
+    const root = start();
+    const upload = button(root, 'upload');
+    const ide = button(root, 'ide');
+    const label = (b: HTMLElement) => b.querySelector('.z1-btn-label')!;
+    expect(label(upload).textContent).toBe('Upload to board');
+    upload.hidden = false; // shown where uploading works (Web Serial and a deployed toolchain)
+    for (const [width, height] of [
+      [1366, 768],
+      [1440, 900],
+      [1536, 864],
+      [1759, 900],
+    ]) {
+      const rules = rulesAt(width, height);
+      expect(cssValue(rules, label(upload), 'display'), `${width}`).toBe('none');
+      expect(cssValue(rules, label(ide), 'display'), `${width}`).toBe('none');
+      expect(cssValue(rules, menuButton(root, 'share').querySelector('.z1-btn-label')!, 'display'), `${width}`).toBe('');
+    }
+    // The label is only hidden: the name and the tooltip stay.
+    expect(upload.getAttribute('aria-label')).toBe('Upload this sketch to the ZERO1 board');
+    expect(upload.title).toBe('Compile in the browser and upload to the board over USB');
+    for (const [width, height] of [
+      [1760, 990],
+      [1280, 800],
+    ]) {
+      const rules = rulesAt(width, height);
+      expect(cssValue(rules, label(upload), 'display'), `${width}`).toBe('');
+      expect(cssValue(rules, label(ide), 'display'), `${width}`).toBe('');
+    }
+    // Hidden again (no Web Serial): "Arduino IDE" keeps its label from 1440 px.
+    upload.hidden = true;
+    expect(cssValue(rulesAt(1440, 900), label(ide), 'display')).toBe('');
+    expect(cssValue(rulesAt(1536, 864), label(ide), 'display')).toBe('');
+  });
+});
 
 describe('header toolbar', () => {
   it('starts with New, has no GitHub link and ends with the Settings and Share menus and Arduino IDE', () => {
@@ -524,7 +664,7 @@ describe('Hand in', () => {
     const dialog = root.querySelector<HTMLDialogElement>('dialog.z1-handin')!;
     expect(dialog.open).toBe(true);
     expect(fake.handinOpens).toHaveLength(1);
-    expect(fake.handinOpens[0]).toEqual({ work: { kind: 'code', code: MY_SKETCH, workspaceJson: '', unchanged: null, errorCount: 0 }, joinCode: undefined });
+    expect(fake.handinOpens[0]).toEqual({ work: { kind: 'code', code: MY_SKETCH, workspaceJson: '', python: '', unchanged: null, errorCount: 0 }, joinCode: undefined });
     // Nothing saved: the dialog asks for the class code without downloading anything.
     expect(dialog.querySelector<HTMLElement>('[data-view="code"]')!.hidden).toBe(false);
 
@@ -545,7 +685,7 @@ describe('Hand in', () => {
     pick(root, 'share', 'Hand in to my teacher');
     expect(fake.handinOpens[2].work.unchanged).toEqual({ kind: 'blank' });
     dialog.close();
-    EditorView.findFromDOM(root.querySelector<HTMLElement>('.cm-editor')!)!.dispatch({ changes: { from: 0, insert: 'int x = ;\n' } });
+    EditorView.findFromDOM(root.querySelector<HTMLElement>('[data-slot="editor"] .cm-editor')!)!.dispatch({ changes: { from: 0, insert: 'int x = ;\n' } });
     pick(root, 'share', 'Hand in to my teacher');
     expect(fake.handinOpens[3].work.unchanged).toBeNull();
     expect(fake.handinOpens[3].work.errorCount).toBeGreaterThan(0);
@@ -590,7 +730,7 @@ describe('Arduino IDE', () => {
     button(root, 'ide').click();
     const dialog = root.querySelector<HTMLDialogElement>('dialog.z1-ide')!;
     expect(dialog.open).toBe(true);
-    expect(dialog.querySelector<HTMLElement>('[data-role="blocks-note"]')!.hidden).toBe(true);
+    expect(dialog.querySelector<HTMLElement>('[data-role="note"]')!.hidden).toBe(true);
 
     dialog.querySelector<HTMLButtonElement>('[data-action="download"]')!.click();
     const [file] = await downloads.files();
@@ -672,12 +812,89 @@ describe('global keys with a dialog or a menu open', () => {
 // ---------------------------------------------------------------------------
 
 describe('Blocks mode', () => {
-  it('mirrors the sketch generated from the blocks in the editor', async () => {
+  it('mirrors the sketch generated from the blocks in the read-only mirror, leaving the hand-written sketch alone', async () => {
+    localStorage.setItem(CODE_STORAGE_KEY, MY_SKETCH);
     const root = await startBlocks();
     expect(button(root, 'tab-blocks').getAttribute('aria-selected')).toBe('true');
-    expect(editorText(root)).toBe(sketchOf(DEFAULT_WS));
+    expect(mirrorText(root)).toBe(sketchOf(DEFAULT_WS));
     panel().edit(MY_WS);
+    expect(mirrorText(root)).toBe(sketchOf(MY_WS));
+    expect(editorText(root)).toBe(MY_SKETCH);
+    expect(localStorage.getItem(CODE_STORAGE_KEY)).toBe(MY_SKETCH);
+    // The Code tab shows the mirror, with its banner, instead of the student's editor.
+    expect(root.querySelector<HTMLElement>('[data-slot="mirror"]')!.hidden).toBe(false);
+    expect(root.querySelector<HTMLElement>('[data-slot="editor"]')!.hidden).toBe(true);
+    expect(root.querySelector('[data-slot="code-banner-text"]')!.textContent).toBe('Made from your blocks — read only.');
+  });
+
+  it('switching Code ↔ Blocks asks nothing and copies nothing (docs/PYTHON.md §7.6)', async () => {
+    const confirm = stubConfirm(false);
+    const root = start(MY_SKETCH);
+    button(root, 'mode-blocks').click();
+    await settle();
+    expect(document.body.dataset.mode).toBe('blocks');
+    panel().edit(MY_WS);
+    button(root, 'mode-code').click();
+    await settle();
+    expect(document.body.dataset.mode).toBe('code');
+    expect(editorText(root)).toBe(MY_SKETCH);
+    expect(button(root, 'tab-code').getAttribute('aria-selected')).toBe('true');
+    button(root, 'mode-blocks').click();
+    await settle();
+    expect(fingerprint(panel().getWorkspaceJson())).toBe(fingerprint(MY_WS));
+    expect(confirm).not.toHaveBeenCalled();
+    app!.destroy(); // flushes every save
+    app = null;
+    expect(localStorage.getItem(CODE_STORAGE_KEY)).toBe(MY_SKETCH);
+    expect(fingerprint(JSON.parse(localStorage.getItem(BLOCKS_STORAGE_KEY)!))).toBe(fingerprint(MY_WS));
+  });
+
+  it('Edit a copy in Code mode copies the generated sketch, asks only for hand-written code, and Undo brings it back', async () => {
+    localStorage.setItem(CODE_STORAGE_KEY, MY_SKETCH);
+    const root = await startBlocks();
+    panel().edit(MY_WS);
+    const copy = button(root, 'copy-to-code');
+    expect(copy.textContent).toBe('Edit a copy in Code mode');
+    expect(copy.disabled).toBe(false);
+
+    const refuse = stubConfirm(false);
+    copy.click();
+    await settle();
+    expect(refuse).toHaveBeenCalledWith('Replace your Arduino code in Code mode with this sketch?\nYour current Arduino code can be brought back with Undo.');
+    expect(document.body.dataset.mode).toBe('blocks');
+    expect(localStorage.getItem(CODE_STORAGE_KEY)).toBe(MY_SKETCH);
+
+    stubConfirm(true);
+    copy.click();
+    await settle();
+    expect(document.body.dataset.mode).toBe('code');
     expect(editorText(root)).toBe(sketchOf(MY_WS));
+    expect(localStorage.getItem(CODE_STORAGE_KEY)).toBe(sketchOf(MY_WS));
+    expect(localStorage.getItem('z1.code.previous')).toBe(MY_SKETCH);
+    expect(toastText(root)).toBe('Copied into Code mode · Undo');
+    root.querySelector<HTMLButtonElement>('[data-slot="toast"] button')!.click();
+    expect(editorText(root)).toBe(MY_SKETCH);
+    expect(localStorage.getItem(CODE_STORAGE_KEY)).toBe(MY_SKETCH);
+
+    // The copied text is not hand-written: copying again asks nothing.
+    button(root, 'mode-blocks').click();
+    await settle();
+    copy.click();
+    await settle();
+    const quiet = stubConfirm(false);
+    button(root, 'mode-blocks').click();
+    await settle();
+    copy.click();
+    await settle();
+    expect(quiet).not.toHaveBeenCalled();
+    expect(editorText(root)).toBe(sketchOf(MY_WS));
+  });
+
+  it('Edit a copy in Code mode is off while the generator fails', async () => {
+    const root = await startBlocks();
+    panel().breakGenerator();
+    expect(button(root, 'copy-to-code').disabled).toBe(true);
+    expect(button(root, 'copy-to-code').title).toBe('The blocks could not be turned into a sketch');
   });
 
   it('Copy link copies the #blocks= link, and Download .ino saves the generated sketch', async () => {
@@ -704,7 +921,9 @@ describe('Blocks mode', () => {
     button(root, 'ide').click();
     const dialog = root.querySelector<HTMLDialogElement>('dialog.z1-ide')!;
     expect(dialog.open).toBe(true);
-    expect(dialog.querySelector<HTMLElement>('[data-role="blocks-note"]')!.hidden).toBe(false);
+    const note = dialog.querySelector<HTMLElement>('[data-role="note"]')!;
+    expect(note.hidden).toBe(false);
+    expect(note.textContent).toBe('This is the Arduino sketch made from your blocks (the code shown in the Code tab).');
     dialog.querySelector<HTMLButtonElement>('[data-action="download"]')!.click();
     const [file] = await downloads.files();
     expect(file.name).toMatch(SKETCH_FILE);
@@ -718,6 +937,7 @@ describe('Blocks mode', () => {
       kind: 'blocks',
       code: sketchOf(panel().getWorkspaceJson()),
       workspaceJson: JSON.stringify(panel().getWorkspaceJson()),
+      python: '',
       unchanged: { kind: 'blank' },
       errorCount: 0,
     });
@@ -755,7 +975,7 @@ describe('Blocks mode', () => {
     const root = await startBlocks();
     panel().edit(MY_WS);
     panel().breakGenerator();
-    expect(editorText(root)).toBe(ERROR_SKETCH);
+    expect(mirrorText(root)).toBe(ERROR_SKETCH);
     const downloads = catchDownloads();
 
     const writeText = stubClipboard();
@@ -790,7 +1010,7 @@ describe('Blocks mode', () => {
     await settle();
     expect(accept).toHaveBeenCalledTimes(1);
     expect(fingerprint(panel().getWorkspaceJson())).toBe(fingerprint(DEFAULT_WS));
-    expect(editorText(root)).toBe(sketchOf(DEFAULT_WS));
+    expect(mirrorText(root)).toBe(sketchOf(DEFAULT_WS));
 
     // An example just loaded is the new "untouched" state.
     pickExample(root, BLINK_EXAMPLE.title);

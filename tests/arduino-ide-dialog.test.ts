@@ -320,15 +320,21 @@ describe('Arduino IDE dialog', () => {
     expect(m.status()).toBe('');
   });
 
-  it('says in Blocks mode that this is the sketch made from the blocks', () => {
+  it('shows the note of the payload (Blocks, Python: the sketch made from the program) and none without one', () => {
     const m = mount();
-    const note = m.el.querySelector<HTMLElement>('[data-role="blocks-note"]')!;
-    m.dialog.open({ code: SKETCH, kind: 'blocks' });
+    const note = m.el.querySelector<HTMLElement>('[data-role="note"]')!;
+    m.dialog.open({ code: SKETCH, kind: 'blocks', note: 'This is the Arduino sketch made from your blocks (the code shown in the Code tab).' });
     expect(note.hidden).toBe(false);
     expect(note.textContent).toContain('made from your blocks');
     m.dialog.close();
+    const python = 'This is the Arduino sketch made from your Python program (the code in the Code tab). The board runs this sketch: it cannot run Python itself.';
+    m.dialog.open({ code: SKETCH, kind: 'python', note: python });
+    expect(note.hidden).toBe(false);
+    expect(note.textContent).toBe(python);
+    m.dialog.close();
     m.dialog.open({ code: SKETCH, kind: 'code' });
     expect(note.hidden).toBe(true);
+    expect(note.textContent).toBe('');
   });
 
   it('does not close when a key submits the form', () => {

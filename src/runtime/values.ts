@@ -7,6 +7,7 @@
  *   - `char` expressions passed to runtime functions -> a 1-character string
  * Everything else is a plain JS number / string / boolean / array.
  */
+import { printFloat } from './avr-float';
 
 export class FloatBox {
   constructor(public readonly value: number) {}
@@ -18,33 +19,12 @@ export class FloatBox {
   }
 }
 
-/** Arduino Print::printFloat semantics (round half up, "nan"/"inf"/"ovf"). */
+/**
+ * Arduino `Print::printFloat` semantics, in single precision like the UNO:
+ * halves round up, "nan", "inf" (for both signs), "ovf" beyond ±4294967040.
+ */
 export function formatFloat(v: number, digits = 2): string {
-  if (Number.isNaN(v)) return 'nan';
-  if (!Number.isFinite(v)) return v > 0 ? 'inf' : '-inf';
-  if (v > 4294967040 || v < -4294967040) return 'ovf';
-  digits = Math.max(0, Math.floor(digits));
-  let s = '';
-  if (v < 0) {
-    s = '-';
-    v = -v;
-  }
-  let rounding = 0.5;
-  for (let i = 0; i < digits; i++) rounding /= 10;
-  v += rounding;
-  const intPart = Math.floor(v);
-  let rem = v - intPart;
-  s += String(intPart);
-  if (digits > 0) {
-    s += '.';
-    for (let i = 0; i < digits; i++) {
-      rem *= 10;
-      const d = Math.floor(rem);
-      s += String(d);
-      rem -= d;
-    }
-  }
-  return s;
+  return printFloat(v, digits);
 }
 
 /** Wrap a float-typed value for printing. */
@@ -75,5 +55,19 @@ export class SketchError extends Error {
   constructor(message: string) {
     super(message);
     this.name = 'SketchError';
+  }
+}
+
+/** Text of the console error reported when the sketch calls `abort()` (docs/PYTHON.md §6 item 3). */
+export const ABORT_MESSAGE = 'The sketch stopped: abort() was called.';
+
+/**
+ * Thrown by `abort()`. On the board avr-libc's `abort()` disables the interrupts and
+ * loops forever; the simulator stops the run with an error on the line of the call.
+ */
+export class SketchAbort extends SketchError {
+  constructor() {
+    super(ABORT_MESSAGE);
+    this.name = 'SketchAbort';
   }
 }

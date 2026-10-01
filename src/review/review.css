@@ -1,11 +1,14 @@
 /* Review page (src/review/page.ts): a trusted banner above the sandboxed simulator frame.
    Tokens come from src/ui/style.css (imported first). Classes use the prefix z1r-. */
 
+/* The window's height, not 100%: below 1000 px style.css lets html and body grow with the
+   simulator (height: auto), which left the frame at an iframe's default 150 px on a phone. */
 #review,
 .z1r-root {
   display: flex;
   flex-direction: column;
-  height: 100%;
+  height: 100vh;
+  height: 100dvh;
 }
 
 .z1r-banner {
@@ -36,6 +39,11 @@
   color: var(--error);
   font-weight: 600;
 }
+.z1r-python-errors {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--warn);
+}
 .z1r-actions {
   display: flex;
   flex-wrap: wrap;
@@ -53,4 +61,29 @@
   width: 100%;
   border: 0;
   background: var(--bg);
+}
+
+/* Phones: a tighter banner leaves the simulator most of the screen; the frame scrolls inside. */
+@media (max-width: 520px) {
+  .z1r-banner {
+    gap: 6px 10px;
+    padding: 6px 10px;
+  }
+  .z1r-banner-text {
+    min-width: 0;
+  }
+  .z1r-who {
+    font-size: 14px;
+  }
+  .z1r-note,
+  .z1r-python-errors {
+    font-size: 12px;
+  }
+  .z1r-actions {
+    gap: 6px;
+  }
+  .z1r-actions .z1-btn {
+    padding: 4px 10px;
+    font-size: 13px;
+  }
 }

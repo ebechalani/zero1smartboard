@@ -32,8 +32,11 @@ export interface InstallUploadButtonOptions {
   button: HTMLButtonElement;
   /** Where the dialog is appended (the app root). */
   parent: HTMLElement;
-  /** The current sketch (null with a toast when the blocks are still loading). */
-  getSketch(): UploadPayload | null;
+  /**
+   * The current sketch; `{ error }` when there is none to upload yet (the blocks or Python are
+   * still loading, a Python program has errors): the text is toasted as is. Null: nothing to do.
+   */
+  getSketch(): UploadPayload | { error: string } | null;
   /** Compile errors and upload results, for the app console. */
   onConsole?(message: ConsoleMessage): void;
   toast?(text: string): void;
@@ -61,12 +64,15 @@ export function installUploadButton(options: InstallUploadButtonOptions): Instal
   const { button } = options;
   let dialog: UploadDialog | null = null;
   let service: UploadServiceLike | null = options.service ?? null;
+  /** dispose() came first (the review frame disposes at once): detection shows nothing then. */
+  let disposed = false;
   button.hidden = true;
 
   const onClick = (): void => {
     const sketch = options.getSketch();
-    if (!sketch) {
-      options.toast?.('The blocks are still loading — try again in a moment');
+    if (!sketch) return;
+    if ('error' in sketch) {
+      options.toast?.(sketch.error);
       return;
     }
     dialog?.open(sketch);
@@ -74,7 +80,7 @@ export function installUploadButton(options: InstallUploadButtonOptions): Instal
 
   const ready = (options.detect ?? (() => detectUploadSupport()))().then(
     (support) => {
-      if (!support.ok) return support;
+      if (!support.ok || disposed) return support;
       service ??= new UploadService({ manifest: support.manifest });
       dialog = createUploadDialog(options.parent, { service, onConsole: options.onConsole });
       button.hidden = false;
@@ -89,6 +95,8 @@ export function installUploadButton(options: InstallUploadButtonOptions): Instal
     dialog: () => dialog,
     isOpen: () => dialog?.isOpen() ?? false,
     dispose() {
+      disposed = true;
+      button.hidden = true;
       button.removeEventListener('click', onClick);
       dialog?.close();
       dialog?.element.remove();

@@ -39,8 +39,8 @@ export interface ExamplesMenu<T extends MenuExample = MenuExample> {
   open(): void;
   close(): void;
   isOpen(): boolean;
-  /** Replace the listed examples (closes the menu when it is open). */
-  setExamples(examples: readonly T[]): void;
+  /** Replace the listed examples (closes the menu when it is open); `emptyText` replaces "No examples available" (e.g. "Loading…"). */
+  setExamples(examples: readonly T[], emptyText?: string): void;
   destroy(): void;
 }
 
@@ -66,7 +66,7 @@ export function createExamplesMenu<T extends MenuExample>(
     open: menu.open,
     close: menu.close,
     isOpen: menu.isOpen,
-    setExamples: (next) => menu.setItems(groups(next)),
+    setExamples: (next, emptyText) => menu.setItems(groups(next), emptyText),
     destroy: menu.destroy,
   };
 }

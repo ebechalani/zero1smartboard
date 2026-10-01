@@ -5,9 +5,14 @@
  * `#review=` or from a `#rid=` localStorage handoff the dashboard wrote; the frame asks for it
  * with `z1-review-ready` and gets it with `z1-review`. Nothing runs until the teacher presses Run
  * inside the frame. Imports no Firebase and no classroom module.
+ *
+ * A Python hand-in (docs/PYTHON.md §8.5): "· Python" in the banner, Download .py next to
+ * Download .ino (disabled while the program had errors: its sketch is the placeholder), and Copy
+ * copies the Python.
  */
 import { REVIEW_HANDOFF_PREFIX, decodeReviewPayload, type ReviewPayload } from '../share-link';
-import { sketchFileName } from '../ui/sketch-file';
+import { placeholderErrorCount } from '../sketch/placeholder';
+import { pythonFileName, sketchFileName } from '../ui/sketch-file';
 
 export const BROKEN_LINK_TEXT = 'This review link is broken. Open the hand-in again from the dashboard.';
 export const EXPIRED_LINK_TEXT = 'This review link has expired. Open the hand-in again from the dashboard.';
@@ -31,6 +36,14 @@ export interface ReviewPage {
   readonly payload: ReviewPayload | null;
   readonly iframe: HTMLIFrameElement | null;
   destroy(): void;
+}
+
+/** The banner's kind label. */
+export const KIND_TEXT: Readonly<Record<ReviewPayload['kind'], string>> = { code: 'Code', blocks: 'Blocks', python: 'Python' };
+
+/** "Handed in with 2 Python errors" (the dashboard's words): the note and the reason Download .ino is disabled. */
+export function pythonErrorsText(n: number): string {
+  return `Handed in with ${n} Python error${n === 1 ? '' : 's'}`;
 }
 
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -143,34 +156,52 @@ export function mountReview(root: HTMLElement, options: ReviewPageOptions): Revi
   for (const part of [payload.className, payload.task, payload.title].filter((p) => p !== '')) {
     who.append(` · ${part}`);
   }
-  who.append(` · ${whenText(payload.at, now())} · ${payload.kind === 'blocks' ? 'Blocks' : 'Code'}`);
+  who.append(` · ${whenText(payload.at, now())} · ${KIND_TEXT[payload.kind]}`);
   const line = text('p', 'z1r-note', SANDBOX_TEXT);
   const actions = text('div', 'z1r-actions');
-  const download = document.createElement('button');
-  download.type = 'button';
-  download.className = 'z1-btn';
-  download.textContent = 'Download .ino';
-  download.addEventListener('click', () => (options.download ?? defaultDownload)(sketchFileName(payload.who, new Date(payload.at)), payload.code));
-  const copy = document.createElement('button');
-  copy.type = 'button';
-  copy.className = 'z1-btn';
-  copy.textContent = 'Copy code';
+  const save = options.download ?? defaultDownload;
+  const isPython = payload.kind === 'python';
+  const python = payload.python ?? '';
+  /** Python errors when the hand-in's sketch is the placeholder (docs/PYTHON.md §4.10 T9). */
+  const errors = isPython ? placeholderErrorCount(payload.code) : null;
+  const actionButton = (label: string, onClick: () => void): HTMLButtonElement => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'z1-btn';
+    b.textContent = label;
+    b.addEventListener('click', onClick);
+    return b;
+  };
+  const download = actionButton('Download .ino', () => save(sketchFileName(payload.who, new Date(payload.at)), payload.code));
+  if (errors !== null) {
+    download.disabled = true;
+    download.title = `${pythonErrorsText(errors)}: there is no sketch to download`;
+  }
   const status = text('span', 'z1r-status');
   status.setAttribute('role', 'status');
-  copy.addEventListener('click', () => {
+  // Copy copies what the student wrote: the Python of a Python hand-in (the sketch when an older link has none).
+  const copied = isPython && python !== '' ? python : payload.code;
+  const copy = actionButton('Copy code', () => {
     const copyText = options.copyText ?? ((t: string) => (navigator.clipboard ? navigator.clipboard.writeText(t) : Promise.reject(new Error('clipboard unavailable'))));
-    copyText(payload.code).then(
+    copyText(copied).then(
       () => (status.textContent = 'Copied'),
       () => (status.textContent = 'Could not copy'),
     );
   });
+  if (isPython) copy.title = 'Copy the Python program';
   const dashboard = document.createElement('a');
   dashboard.href = './teacher.html';
   dashboard.className = 'z1-btn';
   dashboard.textContent = 'Dashboard';
+  if (isPython) {
+    const downloadPy = actionButton('Download .py', () => save(pythonFileName(payload.who, new Date(payload.at)), python));
+    downloadPy.disabled = python === '';
+    actions.append(downloadPy);
+  }
   actions.append(download, copy, dashboard, status);
   banner.append(text('div', 'z1r-banner-text'), actions);
   banner.querySelector('.z1r-banner-text')!.append(who, line);
+  if (errors !== null) banner.querySelector('.z1r-banner-text')!.append(text('p', 'z1r-python-errors', pythonErrorsText(errors)));
 
   // The sandbox: exactly allow-scripts (never allow-same-origin, §3.4).
   const iframe = document.createElement('iframe');

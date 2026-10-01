@@ -11,53 +11,18 @@
  * finished sketch needs.
  */
 import * as Blockly from 'blockly';
+import { SEGMENT_HELPERS } from '../sketch/helpers';
+import { Order } from '../sketch/order';
+import { PINS, type PinName } from '../sketch/pins';
 import { KNOWN_RUNTIME_NAMES } from '../transpiler/signatures';
 import { installBuiltinGenerators } from './generator-builtin';
 import { installZero1Generators } from './generator-zero1';
 import { inferTypes, type CType, type TypingResult } from './typing';
 
-/**
- * C operator precedence for the generated expressions (lower binds tighter).
- * `valueToCode` adds parentheses only where the outer operator binds at least
- * as tightly as the inner one.
- */
-export enum Order {
-  ATOMIC = 0,
-  UNARY_POSTFIX = 1,
-  UNARY_PREFIX = 2,
-  MULTIPLICATIVE = 3,
-  ADDITIVE = 4,
-  SHIFT = 5,
-  RELATIONAL = 6,
-  EQUALITY = 7,
-  BITWISE_AND = 8,
-  BITWISE_XOR = 9,
-  BITWISE_OR = 10,
-  LOGICAL_AND = 11,
-  LOGICAL_OR = 12,
-  CONDITIONAL = 13,
-  ASSIGNMENT = 14,
-  NONE = 99,
-}
-
-/** Names of the pin constants a sketch may declare (docs/BLOCKS.md §11.2). */
-export type PinName =
-  | 'LED_RED'
-  | 'LED_GREEN'
-  | 'LED_BUILTIN'
-  | 'BUTTON_1'
-  | 'BUTTON_2'
-  | 'POT_LDR'
-  | 'MOTOR'
-  | 'SERVO_PIN'
-  | 'BUZZER'
-  | 'DHT_PIN'
-  | 'TRIG_PIN'
-  | 'ECHO_PIN'
-  | 'RGB_PIN'
-  | 'SEG_DATA'
-  | 'SEG_LATCH'
-  | 'SEG_CLOCK';
+// The C++ precedence table, the pin table and the 7-segment helpers are shared with the Python
+// translator (docs/PYTHON.md §4.2) and live in src/sketch; re-exported for the per-block generators.
+export { Order };
+export type { PinName };
 
 /** Library objects a sketch may declare. */
 export type ObjectName = 'servo' | 'lcd' | 'dht' | 'pixels';
@@ -75,34 +40,6 @@ export type HelperName =
   | 'trimText'
   | 'trimLeft'
   | 'trimRight';
-
-interface PinInfo {
-  name: PinName;
-  /** Arduino pin expression; null for LED_BUILTIN which already exists. */
-  value: string | null;
-  mode: 'OUTPUT' | 'INPUT' | null;
-  comment: string;
-}
-
-/** Every pin, in the order the constants and pinMode() lines are emitted. */
-const PINS: readonly PinInfo[] = [
-  { name: 'LED_RED', value: 'A1', mode: 'OUTPUT', comment: 'red LED' },
-  { name: 'LED_GREEN', value: 'A2', mode: 'OUTPUT', comment: 'green LED' },
-  { name: 'LED_BUILTIN', value: null, mode: 'OUTPUT', comment: 'built-in LED' },
-  { name: 'BUTTON_1', value: '6', mode: 'INPUT', comment: 'push button 1' },
-  { name: 'BUTTON_2', value: '7', mode: 'INPUT', comment: 'push button 2' },
-  { name: 'POT_LDR', value: 'A3', mode: null, comment: 'potentiometer or LDR (jumper)' },
-  { name: 'MOTOR', value: 'A0', mode: 'OUTPUT', comment: 'DC motor driver' },
-  { name: 'SERVO_PIN', value: '4', mode: null, comment: 'servo signal' },
-  { name: 'BUZZER', value: '8', mode: 'OUTPUT', comment: 'buzzer' },
-  { name: 'DHT_PIN', value: '5', mode: null, comment: 'DHT22 temperature / humidity sensor' },
-  { name: 'TRIG_PIN', value: '3', mode: 'OUTPUT', comment: 'ultrasonic trigger' },
-  { name: 'ECHO_PIN', value: '2', mode: 'INPUT', comment: 'ultrasonic echo' },
-  { name: 'RGB_PIN', value: '9', mode: null, comment: 'RGB LED (WS2812)' },
-  { name: 'SEG_DATA', value: '12', mode: 'OUTPUT', comment: '7-segment: 74HC595 data' },
-  { name: 'SEG_LATCH', value: '11', mode: 'OUTPUT', comment: '7-segment: 74HC595 latch' },
-  { name: 'SEG_CLOCK', value: '10', mode: 'OUTPUT', comment: '7-segment: 74HC595 clock' },
-];
 
 interface ObjectInfo {
   name: ObjectName;
@@ -134,16 +71,8 @@ const OBJECT_SETUP_ORDER: readonly ObjectName[] = ['lcd', 'pixels', 'dht', 'serv
 
 /** Helper functions, verbatim (docs/BLOCKS.md §11.3). */
 export const HELPERS: Readonly<Record<HelperName, string>> = {
-  showSegments: `void showSegments(byte pattern) {          // 74HC595: a = bit 0 … g = bit 6, dp = bit 7
-  digitalWrite(SEG_LATCH, LOW);
-  shiftOut(SEG_DATA, SEG_CLOCK, MSBFIRST, pattern);
-  digitalWrite(SEG_LATCH, HIGH);
-}`,
-  showDigit: `void showDigit(int digit) {
-  const byte DIGITS[10] = {0x3F, 0x06, 0x5B, 0x4F, 0x66, 0x6D, 0x7D, 0x07, 0x7F, 0x6F};
-  if (digit < 0 || digit > 9) { showSegments(0); return; }
-  showSegments(DIGITS[digit]);
-}`,
+  showSegments: SEGMENT_HELPERS.showSegments,
+  showDigit: SEGMENT_HELPERS.showDigit,
   readDistanceCm: `float readDistanceCm() {
   digitalWrite(TRIG_PIN, LOW);
   delayMicroseconds(2);

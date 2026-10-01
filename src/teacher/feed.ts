@@ -5,7 +5,7 @@
 import type { HandinRecord } from '../classroom/model';
 import type { DashboardContext } from './context';
 import { createDetailPanel } from './detail';
-import { el, whenText } from './format';
+import { el, kindChip, whenText } from './format';
 import { overviewRows, recordName } from './handins';
 import type { ClassSession } from './session';
 
@@ -53,7 +53,7 @@ export function createFeed(ctx: DashboardContext, session: ClassSession): FeedTa
       row.append(
         el('span', { className: 'z1t-feed-time', text: whenText(record.createdAt, ctx.now()) }),
         el('strong', { className: 'z1t-feed-name', text: recordName(record) }),
-        el('span', { className: `z1t-kind z1t-kind-${record.kind}`, text: record.kind === 'blocks' ? 'Blocks' : 'Code' }),
+        kindChip(record.kind),
       );
       row.addEventListener('click', () => {
         selectedId = record.id;

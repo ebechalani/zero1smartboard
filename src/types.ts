@@ -436,6 +436,13 @@ export interface Diagnostic {
   column: number; // 1-based
   message: string;
   severity: 'error' | 'warning';
+  /**
+   * Where the underline ends, when known (docs/PYTHON.md §4.2): 1-based line, and the 1-based
+   * column just after the last character of the construct (exclusive). Without them the editor
+   * underlines the word at `line`/`column`.
+   */
+  endLine?: number;
+  endColumn?: number;
 }
 
 export type TranspileResult =
@@ -468,6 +475,11 @@ export interface ConsoleMessage {
   text: string;
   /** Source line (1-based) when known. */
   line?: number;
+  /**
+   * Which program `line` belongs to: the Arduino sketch (the default) or the Python program it
+   * was made from (docs/PYTHON.md §7.10: the console jumps to that editor).
+   */
+  source?: 'sketch' | 'python';
 }
 
 /** Shared services handed to every runtime library / core function. */

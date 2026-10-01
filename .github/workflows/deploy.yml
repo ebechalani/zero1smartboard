@@ -45,8 +45,11 @@ jobs:
       - run: npm run build
         env:
           GITHUB_TOKEN: ${{ github.token }} # finds the toolchain release without hitting the anonymous API rate limit
-      - name: Emulated hardware tests (Optiboot upload, LCD / ultrasonic libraries)
+      - name: Emulated hardware tests (Optiboot upload, LCD / ultrasonic libraries, Python on the chip)
         run: npm run test:hardware-sim
+        env:
+          # Python on the chip (docs/PYTHON.md §10.6): with the release's WebAssembly tools, else apt's avr-g++; never skipped
+          ZERO1_REQUIRE_TOOLCHAIN: '1'
       - name: Toolchain status
         run: |
           if [ -f public/toolchain/manifest.json ]; then
@@ -85,6 +88,8 @@ jobs:
           key: npx-firebase-tools-15.31.0
       - run: npm ci
       - run: npm run test:emulator
+      - name: Rules mutation check (docs/CLASSROOM.md §7.1)
+        run: npx --yes firebase-tools@15.31.0 emulators:exec --only firestore --project demo-zero1 "sh tests-emulator/mutations.sh"
 
   deploy:
     needs: [build, emulator-tests]

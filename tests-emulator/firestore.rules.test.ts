@@ -1,7 +1,8 @@
 /**
  * firestore.rules (docs/CLASSROOM.md §3.1) against the Firestore emulator: the happy path of every
  * client operation and the attacks from the security review (§7.1, cases R1-R8), for the
- * simplified platform (code → first name + last name → Hand in).
+ * simplified platform (code → first name + last name → Hand in), and Python hand-ins
+ * (docs/PYTHON.md §8.2: R6.17, R6.18).
  *
  * Run: npm run test:rules (or npm run test:emulator). RULES_FILE points at a mutated copy for
  * tests-emulator/mutations.sh; the default is the repository's firestore.rules.
@@ -422,7 +423,8 @@ describe('R6 hand-ins: create', () => {
     await assertFails(handIn(db, { data: { uid: 'stu2' } }).commit());
     await assertFails(handIn(db, { data: { ownerUid: 'stu1' } }).commit());
     await assertFails(handIn(db, { data: { createdAt: Timestamp.fromMillis(0) } }).commit());
-    await assertFails(handIn(db, { data: { kind: 'python' } }).commit());
+    await assertFails(handIn(db, { data: { kind: 'pyth0n' } }).commit());
+    await assertFails(handIn(db, { data: { kind: 'pyth0n', workspace: 'print(1)\n' } }).commit()); // any kind but 'code' needs a workspace, but only the three kinds exist
     await assertFails(handIn(db, { data: { grade: 20 } }).commit());
     await assertFails(handIn(db, { data: { title: 'Mine', note: '' } }).commit()); // the old optional fields are gone
     await assertFails(handIn(db, { data: { taskId: '' } }).commit());
@@ -444,6 +446,8 @@ describe('R6 hand-ins: create', () => {
     const db = student('stu1');
     await assertFails(handIn(db, { data: { workspace: '{}' } }).commit());
     await assertFails(handIn(db, { data: { kind: 'blocks', workspace: '' } }).commit());
+    await assertFails(handIn(db, { data: { enc: 'gzip', code: gz('void setup(){}'), workspace: gz('print(1)\n') } }).commit());
+    await assertFails(handIn(db, { data: { kind: 'blocks', enc: 'gzip', code: gz('void setup(){}'), workspace: EMPTY_BYTES } }).commit());
   });
   it('R6.10 waits 10 s between hand-ins from one device', async () => {
     const db = student('stu1');
@@ -495,6 +499,32 @@ describe('R6 hand-ins: create', () => {
     await assertFails(handIn(db, { hid }).commit());
     const m = await getDoc(doc(db, `classes/${CODE}/members/stu1`));
     expect(m.data()?.lastHandinId).toBe(hid);
+  });
+  it('R6.17 Python hand-ins keep the program in workspace, plain and gzip, up to 100 000 B; Code and Blocks pass as before', async () => {
+    const db = student('stu1');
+    const program = 'from machine import Pin\nled = Pin(13, Pin.OUT)\nwhile True:\n    led.toggle()  # Lumière\n';
+    await assertSucceeds(handIn(db, { data: { kind: 'python', workspace: program } }).commit());
+    await seedMember('stu1');
+    await assertSucceeds(handIn(db, { data: { kind: 'python', enc: 'gzip', code: gz('void setup(){}'), workspace: gz(program) } }).commit());
+    await seedMember('stu1');
+    await assertSucceeds(handIn(db, { data: { kind: 'python', workspace: 'x'.repeat(100000) } }).commit()); // the rules' limit; the client stops at 50 000
+    await seedMember('stu1');
+    await assertSucceeds(handIn(db).commit());
+    await seedMember('stu1');
+    await assertSucceeds(handIn(db, { data: { kind: 'blocks', workspace: '{"blocks":{}}' } }).commit());
+  });
+  it('R6.18 a Python hand-in without its program (plain or gzip), over 100 000 B, without a sketch, with mixed types or an extra field is refused', async () => {
+    const db = student('stu1');
+    await assertFails(handIn(db, { data: { kind: 'python' } }).commit()); // workspace ''
+    await assertFails(handIn(db, { data: { kind: 'python', enc: 'gzip', code: gz('void setup(){}'), workspace: EMPTY_BYTES } }).commit());
+    await assertFails(handIn(db, { data: { kind: 'python', workspace: 'x'.repeat(100001) } }).commit());
+    await assertFails(handIn(db, { data: { kind: 'python', workspace: 'é'.repeat(50001) } }).commit());
+    await assertFails(handIn(db, { data: { kind: 'python', enc: 'gzip', code: gz('void setup(){}'), workspace: Bytes.fromUint8Array(new Uint8Array(100001)) } }).commit());
+    await assertFails(handIn(db, { data: { kind: 'python', code: '', workspace: 'print(1)\n' } }).commit());
+    await assertFails(handIn(db, { data: { kind: 'python', enc: 'gzip', code: gz('void setup(){}'), workspace: 'print(1)\n' } }).commit());
+    await assertFails(handIn(db, { data: { kind: 'python', workspace: 12 } }).commit());
+    await assertFails(handIn(db, { data: { kind: 'python', workspace: 'print(1)\n', python: 'print(1)\n' } }).commit()); // no separate python field
+    await assertSucceeds(handIn(db, { data: { kind: 'python', workspace: 'print(1)\n' } }).commit()); // the same member, with its program
   });
 });
 

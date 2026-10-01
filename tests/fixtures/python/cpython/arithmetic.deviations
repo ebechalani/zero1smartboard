@@ -1,0 +1,9 @@
+# line | §2.13 row | what the board (= the simulator) prints
+9 | float-digits | 256 1.414214
+15 | int-32 | -1794967296
+16 | int-32 | -2147483648
+17 | float-digits | 0.3333333 0.6666667 2.5
+18 | float-digits | 0.3
+19 | float-eq | True
+20 | round-float32 | 2.68 1.0
+21 | one-kind | 2.0 1.0

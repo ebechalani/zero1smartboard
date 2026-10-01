@@ -6,8 +6,9 @@
  * free of Blockly.
  *
  * Also hosts the small pure helpers the app shell needs around blocks: the
- * mode and workspace persistence (`z1.mode`, `z1.blocks`, `z1.blocksBaseline`),
- * the `#blocks=` share link, and the Code → Blocks hand-off rule.
+ * mode and workspace persistence (`z1.mode`, `z1.blocks`, `z1.blocksBaseline`)
+ * and the `#blocks=` share link. Blocks mode itself (the Blocks tab, the
+ * read-only sketch in the Code tab) is src/ui/modes/blocks-mode.ts.
  */
 import type { BlockExample } from '../blocks';
 import { parseWorkspaceJson } from '../share-link';
@@ -15,10 +16,21 @@ import { parseWorkspaceJson } from '../share-link';
 type BlocklyModule = typeof import('blockly');
 type BlocksModule = typeof import('../blocks');
 
-/** How the student programs the board. */
-export type AppMode = 'code' | 'blocks';
+/**
+ * How the student programs the board: the header's Code | Blocks | Python switch
+ * (docs/PYTHON.md §7.1). Each mode keeps its own program (§7.6).
+ */
+export type AppMode = 'code' | 'blocks' | 'python';
 
-/** localStorage key of the selected mode (`code` | `blocks`). */
+/** Every mode, in the order of the header's mode switch. */
+export const APP_MODES: readonly AppMode[] = ['code', 'blocks', 'python'];
+
+/** Whether `value` names a mode (a stored `z1.mode`, a review payload's kind). */
+export function isAppMode(value: unknown): value is AppMode {
+  return (APP_MODES as readonly unknown[]).includes(value);
+}
+
+/** localStorage key of the selected mode (`code` | `blocks` | `python`). */
 export const MODE_STORAGE_KEY = 'z1.mode';
 /** localStorage key of the saved Blockly workspace (serialization JSON). */
 export const BLOCKS_STORAGE_KEY = 'z1.blocks';
@@ -28,10 +40,6 @@ export const BLOCKS_STORAGE_KEY = 'z1.blocks';
  * untouched, so New and the Examples menu do not ask "your blocks will be lost".
  */
 export const BLOCKS_BASELINE_STORAGE_KEY = 'z1.blocksBaseline';
-
-/** Question asked when switching Code → Blocks while the editor holds hand-written changes (§11.4). */
-export const CONFIRM_TO_BLOCKS =
-  'Your text changes stay in the Code editor but are not converted to blocks. Switch to Blocks?';
 
 /** Delay between a workspace change and the regeneration of the sketch. */
 const GENERATE_DEBOUNCE_MS = 150;
@@ -200,10 +208,11 @@ function errorSketch(message: string): string {
 // Mode & workspace persistence
 // ---------------------------------------------------------------------------
 
-/** The mode chosen on a previous visit (default `code`). */
+/** The mode chosen on a previous visit (default `code`, also for a value this build does not know). */
 export function loadMode(): AppMode {
   try {
-    return localStorage.getItem(MODE_STORAGE_KEY) === 'blocks' ? 'blocks' : 'code';
+    const saved = localStorage.getItem(MODE_STORAGE_KEY);
+    return isAppMode(saved) ? saved : 'code';
   } catch {
     return 'code';
   }
@@ -288,18 +297,3 @@ export function workspaceFingerprint(workspace: object): string {
 // The encoding lives in src/share-link.ts (docs/CLASSROOM.md §4.9); re-exported so that
 // existing imports keep working.
 export { blocksFromHash, encodeShareBlocks, parseWorkspaceJson } from '../share-link';
-
-// ---------------------------------------------------------------------------
-// Mode switch hand-off
-// ---------------------------------------------------------------------------
-
-/**
- * Whether switching Code → Blocks must ask first (§11.4): yes when the editor
- * text differs from the last sketch generated from the blocks — unless the
- * text is "untouched" (empty, or exactly an example / the last loaded sketch),
- * because then no hand-written work can be lost.
- */
-export function needsConfirmToBlocks(editorText: string, lastGeneratedCode: string | null, untouched: boolean): boolean {
-  if (untouched) return false;
-  return editorText !== lastGeneratedCode;
-}

@@ -2,14 +2,15 @@
 /**
  * UI panel tests (happy-dom). These cover the pure logic of the panels that
  * do not need the board or the transpiler: serial monitor line endings and
- * buffering, share-link encoding, settings persistence, pin map wording,
- * console click-to-line and the examples menu grouping.
+ * buffering (and Newline forced in Python mode), share-link encoding,
+ * settings persistence, pin map wording, console click-to-line (link text per
+ * source, actions) and the examples menu grouping.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BoardConfig, IBoard, PinState } from '../src/types';
 import { DEFAULT_BOARD_CONFIG, PIN_COUNT } from '../src/types';
 import type { Zero1Board } from '../src/zero1';
-import { applyLineEnding, createSerialMonitor, detectBaud, type LineEnding } from '../src/ui/serial-monitor';
+import { SKETCH_SERIAL_WORDS, applyLineEnding, createSerialMonitor, detectBaud, type LineEnding } from '../src/ui/serial-monitor';
 import { codeFromHash, decodeShareCode, encodeShareCode } from '../src/ui/editor';
 import { CONFIG_STORAGE_KEY, createSettingsDialog, loadConfig, sanitizeConfig, saveConfig } from '../src/ui/settings';
 import { PIN_MAP_ROWS, createPinMap, describePinValue } from '../src/ui/pinmap';
@@ -88,6 +89,28 @@ describe('serial monitor output', () => {
     monitor.clear();
     expect(hint.hidden).toBe(false);
     expect(monitor.getText()).toBe('');
+  });
+
+  it('names the sketch in its hint and send box, or what setWords() gives (Python mode: the program)', () => {
+    const monitor = createSerialMonitor(mount(), { onSend: () => {} });
+    const hint = document.querySelector<HTMLElement>('.z1-serial-hint')!;
+    const input = document.querySelector<HTMLInputElement>('[data-role="input"]')!;
+    const send = document.querySelector<HTMLButtonElement>('[data-role="send"]')!;
+    expect(hint.textContent).toBe('Nothing printed yet. Put Serial.begin(9600); in setup() and use Serial.println("Hello"); to see text here.');
+    expect(Array.from(hint.querySelectorAll('code'), (c) => c.textContent)).toEqual(['Serial.begin(9600);', 'setup()', 'Serial.println("Hello");']);
+    expect([input.placeholder, input.getAttribute('aria-label'), send.getAttribute('aria-label')]).toEqual([
+      'Type text to send to the sketch and press Enter',
+      'Text to send to the sketch',
+      'Send text to the sketch',
+    ]);
+    monitor.setWords({ hint: ['Use ', { code: 'print("<b>")' }, ' here.'], placeholder: 'p', inputLabel: 'i', sendLabel: 's' });
+    expect(hint.innerHTML).toBe('Use <code>print("&lt;b&gt;")</code> here.'); // text, never markup
+    expect([input.placeholder, input.getAttribute('aria-label'), send.getAttribute('aria-label')]).toEqual(['p', 'i', 's']);
+    monitor.append('x');
+    expect(hint.hidden).toBe(true); // still the hint: hidden once something is printed
+    monitor.setWords(SKETCH_SERIAL_WORDS);
+    expect(hint.hidden).toBe(true);
+    expect(hint.textContent).toContain('Serial.println("Hello");');
   });
 
   it('keeps at most maxLines lines', () => {
@@ -366,6 +389,49 @@ describe('console panel', () => {
     expect(document.querySelector('.z1-console-status')!.textContent).toBe('Running');
     panel.clear();
     expect(panel.count()).toBe(0);
+  });
+
+  it('names the program a line belongs to, and runs an action without jumping (docs/PYTHON.md §7.9, §7.10)', () => {
+    const jumps: [number, string | undefined][] = [];
+    const panel = createConsolePanel(mount(), { onJumpToLine: (l, source) => jumps.push([l, source]) });
+    panel.push({ level: 'error', text: 'NameError', line: 3, source: 'python' });
+    panel.push({ level: 'warn', text: 'careful', line: 7 });
+    const links = document.querySelectorAll<HTMLButtonElement>('.z1-console-line');
+    expect(links[0].getAttribute('aria-label')).toBe('Go to line 3 in the Python program');
+    expect(links[0].title).toBe('Go to line 3 in the Python program');
+    expect(links[1].getAttribute('aria-label')).toBe('Go to line 7 in the sketch');
+    links[0].click();
+    expect(jumps).toEqual([[3, 'python']]);
+
+    const onSelect = vi.fn();
+    panel.push({ level: 'info', text: 'print() output is in the Serial Monitor tab', line: 2, source: 'python' }, { label: 'Open the Serial Monitor', onSelect });
+    const action = document.querySelector<HTMLButtonElement>('.z1-console-action')!;
+    expect(action.textContent).toBe('Open the Serial Monitor');
+    action.click();
+    expect(onSelect).toHaveBeenCalledTimes(1);
+    expect(jumps).toHaveLength(1); // the action is not a jump to the line
+  });
+});
+
+describe('serial monitor in Python mode', () => {
+  it('forces Newline with a reason, then gives the student\'s own choice back', () => {
+    const sent: string[] = [];
+    const monitor = createSerialMonitor(mount(), { onSend: (t) => sent.push(t) });
+    const select = document.querySelector<HTMLSelectElement>('[data-role="ending"]')!;
+    monitor.setLineEnding('both');
+    monitor.forceNewline("Python's input() reads one line: the Serial Monitor sends Newline");
+    expect(select.value).toBe('newline');
+    expect(select.disabled).toBe(true);
+    expect(select.title).toBe("Python's input() reads one line: the Serial Monitor sends Newline");
+    document.querySelector<HTMLInputElement>('[data-role="input"]')!.value = 'Ali';
+    monitor.send();
+    expect(sent).toEqual(['Ali\n']);
+    monitor.forceNewline(null);
+    expect(select.value).toBe('both');
+    expect(select.disabled).toBe(false);
+    expect(select.hasAttribute('title')).toBe(false);
+    monitor.forceNewline(null); // not forced: nothing changes
+    expect(select.value).toBe('both');
   });
 });
 

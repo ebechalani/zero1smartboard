@@ -149,7 +149,7 @@ describe('hand-ins', () => {
 
     const student = createStudentApi({ storage: memoryStorage(), userAgent: CHROME_LINUX, timeoutMs: 15_000 });
     const session = await student.join(await student.findClass(cls.code), ALI);
-    const draft: HandinDraft = { kind: 'code', code: 'void setup() {}\n', workspaceJson: '' };
+    const draft: HandinDraft = { kind: 'code', code: 'void setup() {}\n', workspaceJson: '', python: '' };
     const id = newHandinId();
     await student.handIn(session, draft, id);
     await waitFor(() => updates.some((u) => u.added.includes(id)), 10_000, 'added');

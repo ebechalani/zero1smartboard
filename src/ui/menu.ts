@@ -43,8 +43,8 @@ export interface Menu {
   open(): void;
   close(): void;
   isOpen(): boolean;
-  /** Replace the items (closes the menu when it is open). */
-  setItems(groups: readonly MenuGroup[]): void;
+  /** Replace the items (closes the menu when it is open); `empty` replaces the options' text shown when there is none. */
+  setItems(groups: readonly MenuGroup[], empty?: string): void;
   destroy(): void;
   /** The "Label ▾" button (the App updates its label, aria-label and title). */
   readonly trigger: HTMLButtonElement;
@@ -85,6 +85,9 @@ export function createMenu(container: HTMLElement, options: MenuOptions, groups:
 
   let items: HTMLButtonElement[] = [];
 
+  /** The text shown when there is no item, set by the last setItems() (else options.empty). */
+  let emptyNow: string | undefined;
+
   function build(source: readonly MenuGroup[]): void {
     items = [];
     list.replaceChildren();
@@ -116,10 +119,11 @@ export function createMenu(container: HTMLElement, options: MenuOptions, groups:
         items.push(item);
       }
     }
-    if (items.length === 0 && options.empty) {
+    const emptyText = emptyNow ?? options.empty;
+    if (items.length === 0 && emptyText) {
       const empty = document.createElement('div');
       empty.className = 'z1-menu-empty';
-      empty.textContent = options.empty;
+      empty.textContent = emptyText;
       list.appendChild(empty);
     }
   }
@@ -177,8 +181,9 @@ export function createMenu(container: HTMLElement, options: MenuOptions, groups:
     open,
     close,
     isOpen: () => !list.hidden,
-    setItems(next) {
+    setItems(next, empty) {
       close();
+      emptyNow = empty;
       build(next);
     },
     destroy() {

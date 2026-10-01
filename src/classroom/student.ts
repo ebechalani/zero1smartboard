@@ -284,7 +284,8 @@ export function createStudentApi(deps: StudentApiDeps = {}): StudentApi {
     const { code } = session;
     const info = classInfo.get(code) ?? (await readClass(f, code));
     if (!info) throw fail('class_deleted');
-    const content = await encodeContent(draft.code, draft.workspaceJson);
+    // A Python hand-in keeps its program in the workspace field (docs/PYTHON.md §8.1).
+    const content = await encodeContent(draft.code, draft.kind === 'python' ? draft.python : draft.workspaceJson);
     const stored = (value: string | Uint8Array) => (typeof value === 'string' ? value : f.sdk.Bytes.fromUint8Array(value));
     const nameKey = nameKeyOf(session.firstName, session.lastName);
 

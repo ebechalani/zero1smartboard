@@ -7,7 +7,8 @@
  * generated code stores back). `char[]` arrays are JS arrays of character
  * codes with a trailing 0; the C functions read and write those in place.
  */
-import { SketchError, FloatBox, formatFloat } from '../values';
+import { dtostrf as avrDtostrf } from '../avr-float';
+import { SketchError, FloatBox } from '../values';
 import type { LibContext } from './print';
 import { charCodeOf, cstr, formatPrintArg, intArg, storeCString, toNumber } from './print';
 
@@ -134,18 +135,35 @@ export function createStrings(lib: LibContext): Record<string, unknown> {
  * The `String(x)` / `String(x, base|decimals)` constructor: an integer with a
  * base (`String(255, HEX)` → "FF"), a float with a number of decimals
  * (`String(3.14159, 2)` → "3.14", default 2), a char stays a character,
- * a bool becomes "1"/"0", a string is copied.
+ * a bool becomes "1"/"0", a string is copied. `String((char)0)` is empty, as on
+ * the board: WString.cpp builds a `char` into a C string and copies it up to its
+ * NUL (the transpiler already cuts string literals at their first NUL).
  */
 export function arduinoString(x: unknown, arg?: unknown): string {
-  if (x instanceof FloatBox) return formatFloat(x.value, arg === undefined ? 2 : intArg(arg));
+  if (x instanceof FloatBox) return floatToString(x.value, arg);
   if (typeof x === 'number') {
-    if (!Number.isInteger(x)) return formatFloat(x, arg === undefined ? 2 : intArg(arg));
+    if (!Number.isInteger(x)) return floatToString(x, arg);
     return formatPrintArg(x, arg === undefined ? undefined : intArg(arg));
   }
-  if (typeof x === 'string') return x;
+  if (typeof x === 'string') return x === '\0' ? '' : x;
   if (typeof x === 'boolean') return x ? '1' : '0';
   if (x === null || x === undefined) return '';
   return formatPrintArg(x);
+}
+
+/**
+ * `String(value, decimalPlaces)` for a float: WString.cpp calls
+ * `dtostrf(value, decimalPlaces + 2, decimalPlaces, buf)`, so `String(2.5, 0)` is " 3"
+ * and `String(1e10, 1)` is "10000000000.0" (never "ovf": that is only `Serial.print`).
+ */
+function floatToString(value: number, decimals: unknown): string {
+  const places = decimals === undefined ? 2 : intArg(decimals) & 0xff;
+  return avrDtostrf(value, places + 2, places);
+}
+
+/** What `String::concat(float)` (and so `String + float`) appends: `dtostrf(value, 4, 2)`. */
+function concatFloat(value: number): string {
+  return avrDtostrf(value, 4, 2);
 }
 
 /** Convert one operand of `String + x` to text according to its static type (§4.4 rule 5). */
@@ -154,7 +172,7 @@ export function __str(v: unknown, kind: ConcatKind): string {
     case 'char':
       return typeof v === 'string' ? v : String.fromCharCode(intArg(v) & 0xff);
     case 'float':
-      return formatFloat(toNumber(v), 2);
+      return concatFloat(toNumber(v));
     case 'bool':
       return toNumber(v) !== 0 ? '1' : '0';
     case 'int':
@@ -320,9 +338,10 @@ function textArg(v: unknown): string {
   return cstr(v);
 }
 
-/** What `String::concat(x)` appends: text as is, a `char` (already a 1-char string) as is, numbers as `print` shows them. */
+/** What `String::concat(x)` appends: text as is, a `char` (already a 1-char string) as is, a float like `dtostrf(x, 4, 2)`, other numbers as `print` shows them. */
 function concatArg(v: unknown): string {
   if (typeof v === 'string') return v;
+  if (v instanceof FloatBox) return concatFloat(v.value);
   return formatPrintArg(v);
 }
 
@@ -373,11 +392,12 @@ function integerToString(n: number, base: number, bits: 16 | 32): string {
   return (bits === 16 ? n & 0xffff : n >>> 0).toString(radix);
 }
 
-/** avr-libc `dtostrf(value, width, precision, buf)`: `width` right-aligns (negative width left-aligns). */
+/**
+ * avr-libc `dtostrf(value, width, precision, buf)`: `width` right-aligns (negative width
+ * left-aligns); 8 significant digits at most, like the chip (src/runtime/avr-float.ts).
+ */
 export function dtostrf(value: number, width: number, precision: number): string {
-  const text = formatFloat(value, Math.max(0, precision));
-  if (width < 0) return text.padEnd(-width, ' ');
-  return text.padStart(width, ' ');
+  return avrDtostrf(value, width, precision);
 }
 
 // ---------------------------------------------------------------------------

@@ -45,7 +45,8 @@ src/
     typesys.ts signatures.ts    static types, runtime signature table       [codegen]
     codegen.ts index.ts         Program -> JS; transpile()                  [codegen]
   runtime/
-    values.ts                   FloatBox, __flt, __chr, StopSignal, SketchError (given)
+    values.ts                   FloatBox, __flt, __chr, StopSignal, SketchError, SketchAbort (given)
+    avr-float.ts                Print::printFloat and avr-libc dtostrf, bit-exact [runtime-core]
     clock.ts                    RealClock, VirtualClock                     [runtime-core]
     board.ts                    class Board implements IBoard               [runtime-core]
     helpers.ts                  numeric helpers (__i16 …), __array, __cstr  [runtime-core]
@@ -65,6 +66,8 @@ src/
     controls.ts settings.ts menu.ts examples-menu.ts audio.ts style.css     [ui-app]
     arduino-ide-dialog.ts sketch-file.ts                                    [ui-app]
     handin-dialog.ts            the student side of the class platform      [ui-app / B]
+  python/                       Python mode's translator: Python → Arduino sketch (§14)  [Python A]
+  sketch/                       pins, C++ precedence, 7-segment helpers, placeholder (Blocks + Python) [Python A]
   share-link.ts                 #code= / #blocks= / #class= links, review payload (pure) [A]
   firebase-config.ts            public Firebase web config (empty = classes off) [A]
   classroom/                    class platform data layer (§12)             [A]
@@ -196,7 +199,8 @@ The output is the body of `new Function('__rt', js)`:
 ```js
 "use strict";
 const { __i8, __u8, __i16, __u16, __i32, __u32, __f32, __bool, __idiv, __imod,
-        __tick, __array, __cstr, __chr, __flt, __str, __m, __mut, __charAt } = __rt;
+        __imul, __ftoi, __ftou, __tick, __array, __cstr, __chr, __flt, __str,
+        __m, __mut, __charAt } = __rt;
 return (async () => {
   const LED = 13;                              // #define / enum members
   let count = 0;                               // globals in source order
@@ -238,7 +242,8 @@ Rules:
    either is unsigned), comparisons/logical → `bool`, `?:` → common type,
    `String`+anything → `String`, char literal → `char`, string literal →
    `char*`. Unknown → `unknown` (treated as double: no integer division, no
-   wrapping).
+   wrapping). A shift has the type of its promoted left operand;
+   `min`/`max`/`constrain` have the common type of their arguments.
    - Integer `/` → `__idiv(a, b)`; integer `%` → `__imod(a, b)`. (Both throw
      `SketchError('division by zero')` for b === 0.)
    - **Assignment coercion**: storing into a variable/param/array element of
@@ -249,13 +254,76 @@ Rules:
      Applies to initialisers, `=`, compound assignments (`x += y` →
      `x = __i16(x + y)`), `++`/`--`, function parameters on entry, and
      `return` values of typed functions. Casts `(T)x` use the same helpers;
-     `(int)3.7` → 3. `String`/class/array assignment: no wrapper.
+     `(int)3.7` → 3. `String`/class/array assignment: no wrapper. A value
+     that already went through the same helper (see "board-exact arithmetic"
+     below; `ExprResult.wrapped`) is not wrapped twice.
    - `++`/`--`: prefix `++x` → `(x = __T(x + 1))`; postfix `x++` in a
      value context → `(x = __T(x + 1), __T(x - 1))`; in a statement/for-update
-     context → `x = __T(x + 1)`. For `unknown`/float types use `x++` directly.
-   - Shifts and bitwise ops are emitted as JS operators (32-bit); the
-     assignment wrapper restores the C width.
+     context → `x = __T(x + 1)`. Floats: `(f = __f32(f + 1))`, and in a value
+     context `([f, f = __f32(f + 1)][0])` (the old value first). For
+     `unknown`/`bool` use `x++` directly.
    - `int` literal larger than 16 bits has type `long`; suffix `L`/`UL` too.
+   - **Board-exact arithmetic** (docs/PYTHON.md §6, "C0"). The simulator
+     computes like the ATmega328P in every mode (Code, Blocks, Python), not
+     only when a value is stored; every rule below was measured against
+     avr-g++ 7.3 + avr8js (`tests/runtime-fidelity.test.ts`):
+     1. *Floats are single precision everywhere* (AVR `double` is `float`).
+        Every expression of C type `float`/`double` is rounded where it is
+        produced: a literal the chip cannot hold exactly → `__f32(0.1)` (an
+        exact one such as `0.5` stays as is), the results of `+ - * /` →
+        `__f32(a * b)`, float-returning runtime calls and methods →
+        `__f32(await __rt.sqrt(x))`, `__f32(await dht.readTemperature())`,
+        casts → `__f32(x)`, `f++` as above. A `long`/`unsigned long` operand
+        of a float operation or comparison is converted first
+        (`__f32(n) + 0.5`: 16777217 → 16777216.0). So `float s = 0.1;
+        s == 0.1` and `0.1 + 0.2 == 0.3` are true, as on the board.
+     2. *Integers wrap at their C width on every operation*: the results of
+        `+ - * <<` and unary `-` of an integer C type (after the promotions)
+        go through `__i16`/`__u16`/`__i32`/`__u32` (`60 * 1000` →
+        `__i16(60 * 1000)` = −5536, `1 << 20` → 0); a 32-bit `*` is
+        `__imul(a, b)` (`Math.imul`; `__u32(__imul(a, b))` for unsigned),
+        because a double loses the low bits of products above 2^53
+        (`long a = 50000; a * a` → −1794967296). `~ & | ^` of an unsigned
+        type are wrapped too (JavaScript gives signed 32-bit results);
+        `>>` of an `unsigned long` is `>>>`; a signed `/` is wrapped unless
+        the divisor is a constant other than −1 (`-32768 / -1` is −32768
+        on the board, `x / 1023` needs no wrapper). The `sq`/`abs` macros
+        wrap an integer result (`sq(300)` → 24464); `sq` of a side-effect-free
+        `long` expression is `__imul(x, x)`. Constant operands whose plain
+        JavaScript result already fits are not wrapped (`(2 * 3)`); a
+        JavaScript `-0` never stands for an integer 0 (`1.0 / 0` is inf).
+     3. *C's usual arithmetic conversions of the operands*: for `/`, `%`,
+        comparisons and `?:`, a signed operand next to an unsigned one is
+        converted first (`int neg = -1; unsigned int one = 1; neg < one` →
+        `(__u16(neg) < one)`, false; `neg / one` → 65535); `min`, `max`
+        and `constrain` (macros) get all their arguments in their common
+        type (`max(0UL, -7)` → 4294967289). The maths functions of
+        `NUMERIC_CALLEES` receive a `char` as its signed number, not boxed
+        with `__chr` (`ceil((char)-32)` is −32).
+     4. *Float → integer* conversions follow avr-gcc's run-time routines:
+        `__ftoi` (`__fixsfsi`: truncation, and −2147483648 for NaN, ±inf and
+        values outside `long`) for `char`/`byte`/`int`/`long`, `__ftou`
+        (`__fixunssfsi`: modulo 2^32, 0 outside ±2^32) for `unsigned int` /
+        `unsigned long`, then the width: `int n = f;` → `let n =
+        __i16(__ftoi(f));`, `long l = f;` → `__ftoi(f)`. Also for a float
+        argument of a user function's integer parameter (at the call site).
+        Out-of-range conversion is undefined behaviour in C: when GCC folds
+        it at compile time it saturates instead (3e9 → 2147483647).
+     5. *Float literals with an exponent* (`3.4e38`, JavaScript text
+        `3.4e+38`) get no `.0` suffix, which would be invalid JavaScript.
+     6. `abort()` is a runtime function (§5.4); `String(float, n)`,
+        `String + float` and `dtostrf()` format like avr-libc (§6.3).
+
+     Remaining known differences: the transcendental functions (`sin`, `exp`,
+     `pow`, …) are JavaScript's, rounded to single precision, and may differ
+     from avr-libc's in the last bit; a float outside the `long` range passed
+     to a runtime function with integer parameters (`map(3e9, …)`) is
+     converted modulo 2^32; `sq()` of a `long` expression containing a call
+     (`sq(millis())`) loses the low bits beyond ±94,906,265; `delay()` of a
+     negative number waits 0 ms (the
+     board waits ~49 days); avr-gcc 7.3 at `-Os` miscompiles a few
+     expressions (`x << ((ul ^ l) & 15)` shifts by 0), which the simulator
+     computes as C says.
 5. **Chars and strings.**
    - `char` values are numbers. `'A'` → `65`.
    - `String` values are JS strings. A `String` declaration without initialiser
@@ -279,9 +347,12 @@ Rules:
      `adding to a string literal is pointer arithmetic in C++; use String("lit") + x`.
      `==`/`!=` between two `String`/`char*` values → JS `===`/`!==`.
    - Passing arguments to **runtime** functions/methods (not user functions):
-     `char`-typed → `__chr(x)`; `float`/`double`-typed → `__flt(x)` **only**
-     when the callee name is `print`, `println`, `String`, or `write`. Never
-     wrap arguments to user-defined functions.
+     `char`-typed → `__chr(x)` (except for the maths functions of
+     `NUMERIC_CALLEES`, which get the signed number); `float`/`double`-typed
+     → `__flt(x)` **only** when the callee name is `print`, `println`,
+     `String`, or `write`. Arguments to user-defined functions are not
+     wrapped, except a float passed for an integer parameter (rule 4,
+     `__ftoi`/`__ftou`).
    - `bool`-typed values are JS booleans; arithmetic on them works (`true + 1`).
 6. **Arrays.** `int a[5];` → `let a = __array([5], 0)`; `float f[2][3]` →
    `__array([2,3], 0)`; `String s[3]` → `__array([3], "")`; `Servo s[2]` →
@@ -326,10 +397,10 @@ Rules:
 Return types the codegen must know (all others → `unknown`):
 
 Core functions: `digitalRead`→int, `analogRead`→int, `millis`/`micros`/`pulseIn`/`pulseInLong`→unsigned long,
-`map`/`random`→long, `constrain`/`min`/`max`/`abs`→type of first argument
-(`min`/`max`: common type), `sqrt sq pow sin cos tan asin acos atan atan2 exp log log10 floor ceil round fabs fmod trunc`→double
+`map`/`random`→long, `abs`/`sq`→type of first argument
+(`min`/`max`/`constrain`: common type of all arguments), `sqrt sq pow sin cos tan asin acos atan atan2 exp log log10 floor ceil round fabs fmod trunc`→double
 (but `sq(int)`→int, `abs(int)`→int, `round`→long), `shiftIn`→unsigned char,
-`bit bitRead lowByte highByte`→int/unsigned char, `word`→unsigned int,
+`bit`→unsigned long (`1UL << b`), `bitRead lowByte highByte`→int/unsigned char, `word`→unsigned int,
 `isDigit isAlpha isAlphaNumeric isSpace isUpperCase isLowerCase isPunct isPrintable isHexadecimalDigit isnan isinf`→bool,
 `toUpperCase toLowerCase`(char)→char, `strlen`→unsigned int, `strcmp strncmp atoi`→int,
 `atol`→long, `atof`→double, `sprintf snprintf`→int, `dtostrf itoa ltoa`→char*,
@@ -414,8 +485,11 @@ __i8(x)  = (x << 24) >> 24        __u8(x)  = x & 0xff
 __i16(x) = (x << 16) >> 16        __u16(x) = x & 0xffff
 __i32(x) = x | 0                  __u32(x) = x >>> 0
 __f32(x) = Math.fround(x)         __bool(x) = !!x   (numbers: x !== 0; strings: true)
-__idiv(a,b) : b===0 → throw SketchError('division by zero'); Math.trunc(a/b)
-__imod(a,b) : b===0 → throw; a % b  (JS semantics equal C for integers)
+__idiv(a,b) : b===0 → throw SketchError('division by zero'); Math.trunc(a/b) + 0
+__imod(a,b) : b===0 → throw; a % b + 0  (JS semantics equal C for integers; + 0: never -0)
+__imul(a,b) = Math.imul(a, b)     low 32 bits of a long product (signed)
+__ftoi(x)   : float → signed integer like avr-gcc __fixsfsi: trunc, NaN/±inf/out of long → -2147483648
+__ftou(x)   : float → unsigned like __fixunssfsi: trunc(x) >>> 0, NaN/±inf/|x| ≥ 2^32 → 0
 __array(dims: number[], fill) : nested arrays
 __cstr(x) : number[] → string up to first 0; string → string
 ```
@@ -432,8 +506,10 @@ UNO reference; a few specifics:
   (also accept the strings). Invalid pin → `SketchError('pin X does not exist on the UNO (use 0-13 or A0-A5)')`.
 - `digitalWrite(pin, v)`: v is truthy/`HIGH`(1) → 1. Warn once per pin
   (`ctx.console`) if the pin was never set to OUTPUT: "digitalWrite(pin) but pinMode(pin, OUTPUT) was never called".
-- `delay(ms)`: `await clock.sleep(ms, signal)` then `throwIfStopped()`. Clamp
-  negative to 0. `delayMicroseconds(us)`: sleep(us/1000).
+- `delay(ms)`: `await clock.sleep(ms, signal)` then `throwIfStopped()`. The
+  decimal part is dropped like the `unsigned long` parameter does
+  (`delay(497.4)` waits 497 ms); clamp negative to 0. `delayMicroseconds(us)`:
+  sleep(trunc(us)/1000).
 - `millis()` = `Math.floor(clock.now())`, `micros()` = `clock.micros()` (both wrapped `__u32`).
 - `tone(pin, freq, duration?)`: board.tone; if duration given, schedule
   `noTone(pin)` after `duration` ms via `clock.sleep` (do not await it; cancel
@@ -442,20 +518,32 @@ UNO reference; a few specifics:
 - `shiftOut(dataPin, clockPin, order, value)`: for each of 8 bits (MSBFIRST:
   bit 7 first): `digitalWrite(dataPin, bit); digitalWrite(clockPin, HIGH); digitalWrite(clockPin, LOW)`.
   `shiftIn` symmetric reading `digitalRead(dataPin)` after clocking HIGH.
-- `map(x, inMin, inMax, outMin, outMax)` with **integer** arithmetic:
-  `__idiv((x - inMin) * (outMax - outMin), (inMax - inMin)) + outMin` on
-  truncated integer inputs. `constrain`, `min`, `max`, `abs`, `sq`, `pow`,
-  `sqrt`, trig, `round` (half away from zero), `random(max)`,
+- `map(x, inMin, inMax, outMin, outMax)` with **32-bit `long`** arithmetic
+  like WMath.cpp: `(x - inMin) * (outMax - outMin) / (inMax - inMin) + outMin`,
+  every step wrapped (`Math.imul` for the product; `map(100000, 0, 200000, 0,
+  100000)` is 7050 on the board). `constrain`, `min`, `max`, `abs`, `sq`
+  (Arduino.h macros: the transpiler converts the arguments and wraps the
+  result, §4.4), `pow`, `sqrt`, trig, `exp`, `log`, `floor`, `ceil`, …
+  (single-precision argument and result, like avr-libc), `radians`/`degrees`
+  (times the single-precision `DEG_TO_RAD`/`RAD_TO_DEG`), `round` (the macro
+  `(long)(x + 0.5)` / `(long)(x - 0.5)` with the addition in single
+  precision), `random(max)`,
   `random(min,max)` (exclusive max, seeded PRNG — mulberry32 — `randomSeed(s)`),
   `bit`, `bitRead`, `lowByte`, `highByte`, `word`, char classification
   functions, `isnan`, `isinf`, `interrupts`/`noInterrupts` (no-op),
   `attachInterrupt(n, isr, mode)`/`detachInterrupt` (store, warn once
   "external interrupts are not simulated on this board"), `digitalPinToInterrupt`,
   `analogReference` (no-op), `yield()` (`ctx.tick()`), `F(s)` → s.
+- `abort()`: throws `SketchAbort` (a `SketchError`, values.ts), so the run
+  stops with status `error` and the console error "The sketch stopped:
+  abort() was called." on the line of the call (§5.6). On the board avr-libc's
+  `abort()` disables the interrupts and loops forever; what was printed
+  before stays on the Serial Monitor (Python's `pyFail`, docs/PYTHON.md §4.8).
 - Constants: `HIGH 1, LOW 0, INPUT 0, OUTPUT 1, INPUT_PULLUP 2, A0..A5 14..19,
   LED_BUILTIN 13, DEC 10, HEX 16, OCT 8, BIN 2, MSBFIRST 1, LSBFIRST 0,
   CHANGE 1, FALLING 2, RISING 3, SDA 18, SCL 19, NULL 0, PI, HALF_PI, TWO_PI,
-  DEG_TO_RAD, RAD_TO_DEG, EULER, F_CPU 16000000`.
+  DEG_TO_RAD, RAD_TO_DEG, EULER, F_CPU 16000000` (`PI` … `EULER` are the
+  single-precision values the board has: `PI` prints as 3.1415927).
 - Servo caveat: when any Servo is attached, `analogWrite` on pins 9/10 warns
   "PWM on pins 9 and 10 is disabled while a Servo is attached" and does a
   digital write instead (register a `servoAttached` counter on `ctx` via a
@@ -490,8 +578,9 @@ sources override earlier ones (libs may replace core names).
   status `error`, `onConsole({level:'error', text, line})` where `line` is
   recovered from the stack (`<anonymous>:L:C` → `lineMap[L - 3]`, because
   `new Function` adds 2 header lines in V8; Firefox uses `Function:L:C`; if
-  nothing matches, omit `line`). Message for `SketchError` is its text; for
-  other JS errors, prefix "runtime error: ".
+  nothing matches, omit `line`). Message for `SketchError` is its text (for
+  `abort()`: "The sketch stopped: abort() was called."); for other JS
+  errors, prefix "runtime error: ".
 - `stop()`: abort the controller, set the flag, resolve after `run()` finishes.
 - `status` transitions: idle → running → stopped|error. A new `run()` on a
   running executor first awaits `stop()`.
@@ -507,7 +596,10 @@ sources override earlier ones (libs may replace core names).
 ### 6.1 Print formatting (`print.ts`)
 
 `formatPrintArg(value: unknown, fmt?: number): string` implementing Arduino `Print`:
-- `FloatBox`/non-integer number: `formatFloat(v, fmt ?? 2)` (from values.ts).
+- `FloatBox`/non-integer number: `formatFloat(v, fmt ?? 2)` (from values.ts):
+  Arduino's `Print::printFloat` with every step in single precision
+  (`printFloat` in `src/runtime/avr-float.ts`): "nan", "inf" for both signs,
+  "ovf" beyond ±4294967040, halves rounded up at the last decimal.
 - integer number with `fmt` undefined or 10: decimal; `fmt` 16/2/8: unsigned
   32-bit (`>>> 0`) in that base, HEX uppercase; `fmt` 0 → raw byte char
   (`write` semantics); other bases 2..36 supported.
@@ -533,8 +625,18 @@ ignored: call Serial.begin(9600) in setup()". `Serial` must be truthy
 
 - `String(x, arg?)` constructor function: number+base (`String(255, HEX)`),
   float+digits (`String(3.14159, 2)` or FloatBox), char (1-char string
-  stays), bool → "1"/"0", string → as is.
-- `__str(v, kind)`: converts for concatenation per §4.4 rule 5.
+  stays), bool → "1"/"0", string → as is. A float is formatted like
+  WString.cpp does, `dtostrf(x, n + 2, n)`: `String(2.5, 0)` is " 3",
+  `String(1e10, 1)` is "10000000000.0" (never "ovf": that is only
+  `Serial.print`), NaN is " NAN".
+- `__str(v, kind)`: converts for concatenation per §4.4 rule 5; a float (and
+  `concat(float)`) is `dtostrf(x, 4, 2)` like `String::concat(float)`.
+- `dtostrf(value, width, prec)` in `src/runtime/avr-float.ts` is a line-by-line
+  port of avr-libc 2.0's `ftoa_engine.S` and `dtoa_prf.c`: at most 8
+  significant digits, then zeros (`dtostrf(4294967296.0, 4, 2)` →
+  "4294967300.00"), "NAN"/"INF"/"-INF" in capitals, negative width →
+  left-aligned. It matches the chip character for character (golden table in
+  `tests/runtime-fidelity.test.ts`).
 - `__m(obj, name, args)`: if `obj` is a string, implement the Arduino String
   API: `length charAt(→ code) indexOf lastIndexOf substring(from, to?) equals
   equalsIgnoreCase startsWith endsWith compareTo toInt toFloat toDouble
@@ -759,15 +861,64 @@ export function createBoardView(container: HTMLElement, board: Zero1Board): Boar
 ### 8.3 App (`app.ts`, others) — owner: ui-app
 
 - `main.ts`: creates `RealClock`, `createZero1Board`, mounts `App`.
-- Editor (`editor.ts`): CodeMirror 6 with `@codemirror/lang-cpp`, a light
-  theme and syntax colours matching the app palette, line numbers, tab = 2 spaces, `Ctrl/Cmd+Enter` = Run. Diagnostics
-  from `transpile()` shown with `@codemirror/lint` `setDiagnostics`. Code is
+- Modes (`src/ui/modes/`, docs/PYTHON.md §7.1): the header switch **Code |
+  Blocks | Python** (`aria-pressed`, `z1.mode`; an unknown value opens Code
+  mode). Everything that differs between the modes lives behind one
+  `ModeController` (`code-mode.ts`, `blocks-mode.ts`, `python-mode.ts`,
+  interface in `types.ts`): the first tab, the header words (`words`), the
+  console words of a run (`runWords`), the texts around the read-only sketch
+  (`mirror`: banner, typing toast, Arduino IDE / Upload notes), Share ▾'s own
+  file (`programFile`: Download .py), `sketch()` (what Run, live lint and
+  every export use; Python translates afresh), `exportWork()`, examples, New,
+  links, review. `app.ts` never compares the mode with a literal
+  (`tests/app-mode-registry.test.ts`). Each mode keeps its own program
+  (`z1.code`, `z1.blocks`, `z1.python`): switching copies nothing and asks
+  nothing. In Blocks and Python mode the Code tab shows a second, read-only
+  editor (the mirror: focusable, never saved, padlock on the tab, "Code (read
+  only)"), with the banner "Made from your … — read only." and **Edit a copy
+  in Code mode** (off while a Python program has errors; asks before
+  replacing hand-written code, keeps it in `z1.code.previous`, toast with
+  Undo for 8 s).
+- Editor (`editor.ts`): CodeMirror 6 with `@codemirror/lang-cpp` by default
+  (`EditorOptions`: `language`, `storageKey`, `indent`, `ariaLabel`,
+  `readOnlyMirror`, `extraExtensions`), a light
+  theme and syntax colours matching the app palette, line numbers, tab = 2 spaces, `Ctrl/Cmd+Enter` = Run,
+  Esc = Stop, then Tab leaves the editor for 2 s (WCAG 2.1.2). Diagnostics
+  from `transpile()` shown with `@codemirror/lint` `setDiagnostics`
+  (underlined up to `endLine`/`endColumn` when given). Code is
   persisted to `localStorage` (`z1.code`) and restored on load; an
   `Examples` menu replaces the code (confirm if the current code differs
   from the last loaded example). **New** puts the Arduino IDE's blank sketch
   (`BLANK_SKETCH`, File > New) in the editor, with the same confirmation; in
-  Blocks mode it resets the workspace to `DEFAULT_WORKSPACE`. Neither stops a
-  running sketch. URL hash `#code=<base64url>` loads shared code.
+  Blocks mode it resets the workspace to `DEFAULT_WORKSPACE`, in Python mode it
+  puts `BLANK_PYTHON`. Neither stops a
+  running sketch. URL hash `#code=<base64url>` loads shared code, `#python=`
+  a Python program (Python mode; asks only when the Python program is not
+  untouched).
+- Python tab (`modes/python-mode.ts`; docs/PYTHON.md §7.3–7.4): exists in
+  Python mode only, just before Generated JS, selected on entering the mode,
+  after Run with errors, New, an example or a link. The translator, example
+  01, the "What works" content and the editor extras come in the lazy
+  Python chunk (`python-chunk.ts`, reached only with `import()`), the other
+  examples in `python-examples-chunk.ts`, fetched together with it
+  ("Loading Python…" meanwhile and "Loading…" in Examples ▾, the
+  chunk-failure path on error, also when a swallowed preload error makes
+  `import()` give undefined). A one-line note
+  above the editor ("… **What works** · Esc then Tab: leave the editor ·
+  Ctrl+M: Tab moves focus") opens the What works dialog
+  (`python-help-dialog.ts`, `WHAT_WORKS` of src/python/help.ts laid out with
+  `textContent`). The Python editor (`z1.python`, 4-space indent,
+  `aria-label` "Python program") has ZERO1 Python's completions
+  (`python-language.ts`: `zero1Completions` over `API_COMPLETIONS` plus the
+  program's own names, never CPython's list), shows non-breaking spaces, and
+  cleans up pastes (`python-paste.ts`: curly quotes, invisible spaces,
+  leading tabs; inserted as pasted, then fixed as a separate undo step, toast
+  "Fixed 3 curly quotes and 12 invisible spaces (Ctrl+Z undoes it)"). Live
+  lint (700 ms) translates, puts the sketch (or the placeholder) into the
+  mirror, and checks the sketch with `transpile()`: its errors become
+  X-sketch-error and its warnings W-sketch on the Python lines they were
+  made from (the analogWrite() warning on a pin without PWM is left out when
+  the program already has its W-pwm-pin / W-pwm-buzzer / W-pwm-servo).
 - Header menus (`menu.ts`: a "Label ▾" trigger with `aria-haspopup="menu"`
   and an absolutely positioned `role="menu"` list, optionally in titled
   groups; opens on click or ArrowDown, arrows / Home / End move between the
@@ -776,22 +927,28 @@ export function createBoardView(container: HTMLElement, board: Zero1Board): Boar
   header menus are built on it: Examples (`examples-menu.ts`), **Settings ▾**
   (Reset the board = `App.reset()`; Board settings… = the settings dialog)
   and **Share ▾**. The Share menu acts at once, without a dialog: **Copy
-  link** puts the `#code=` / `#blocks=` link on the clipboard and toasts
+  link** puts the `#code=` / `#blocks=` / `#python=` link on the clipboard and toasts
   "Link copied" (when the clipboard refuses or is missing: a toast and a
   `window.prompt` with the link selected, "Press Ctrl+C to copy the link");
   **Download .ino** saves `sketchFileName()` (`sketch-file.ts`) named after
   the student's remembered name (`currentStudentName()`,
-  `src/classroom/session-store.ts`) and toasts the file name; **Hand in to my
+  `src/classroom/session-store.ts`) and toasts the file name; in Python mode
+  **Download .py** (before it; `menu.setItems()` on every mode change) saves
+  the program as `pythonFileName()` (`zero1_ali_khoury_0928_143210.py`), also
+  while it has errors, whereas Download .ino, Arduino IDE and Upload refuse a
+  Python program with errors with the toast "Fix the errors in your Python
+  program first — see the console."; **Hand in to my
   teacher** (only when the class platform is configured) opens the Hand in
   dialog. The former Share dialog and the email sending (a Google Apps Script
   relay) are gone; `main.ts` removes the relay's two legacy `localStorage`
   keys once.
 - Hand in dialog (`handin-dialog.ts`, opened by Share ▾ → Hand in to my teacher, spec
   docs/CLASSROOM.md §1.2 and §4.10). The App builds a `HandinWork` from the
-  same `exportSketch()` as Share (the sketch, in Blocks mode also the
-  workspace JSON), plus `unchanged` (the blank sketch / empty program, or an
+  same `exportWork()` as Share (the sketch, in Blocks mode also the
+  workspace JSON, in Python mode also the Python program), plus `unchanged` (the blank sketch / empty program, or an
   untouched example with its title) and `errorCount` from a synchronous
-  `transpile()`. The dialog loads `src/classroom/student.ts` with `import()`
+  `transpile()` (a Python program with errors: the count its placeholder
+  sketch carries). The dialog loads `src/classroom/student.ts` with `import()`
   on first open and calls `restore()`; nothing is downloaded while no session
   is saved. One short flow (simplified by teacher decision, 2026-09-27):
   Loading → Code (class code, checked locally with `normalizeClassCode` /
@@ -810,8 +967,10 @@ export function createBoardView(container: HTMLElement, board: Zero1Board): Boar
   prefilled, or shows the "Classes are not set up on this site." toast when
   not configured. All class strings are rendered with `textContent`.
 - Arduino IDE dialog (`arduino-ide-dialog.ts`, opened by the "Arduino IDE"
-  button with the editor text, or in Blocks mode the sketch generated from
-  the blocks — the same `exportSketch()` as Share). A web page cannot start
+  button with the editor text, or in Blocks and Python mode the sketch made
+  from the program — the same `exportWork()` as Share — with the mode's note:
+  "This is the Arduino sketch made from your Python program (the code in the
+  Code tab). The board runs this sketch: it cannot run Python itself."). A web page cannot start
   the desktop IDE (it has no URL protocol), so the dialog offers three ways:
   **Download sketch (.ino)** saves `sketchFileName()` (`sketch-file.ts`:
   `zero1[_<name>]_MMDD_HHMMSS.ino`) and lights up three numbered steps that
@@ -829,23 +988,45 @@ export function createBoardView(container: HTMLElement, board: Zero1Board): Boar
   version). A note sends Chromebook users to the Arduino Cloud Editor
   (app.arduino.cc → Create → Import). Status line (`aria-live`) and Close;
   Esc closes; every `open()` starts with no status and the steps reset.
-- Run: `transpile()` → on error show diagnostics in the editor and console,
-  else `board.reset()`, `executor.run(js)`; buttons reflect status; the
-  header shows a running indicator and elapsed `millis()`.
+- Run: `mode.sketch()` (a Python program with errors: its errors in the
+  console on Python lines, "N errors" in the header, the Python tab and the
+  cursor on the first one) → `transpile()` → on error show diagnostics in the editor and console,
+  else `board.reset()`, `executor.run(js)` (Python: the line map composed
+  through the source map, runtime messages through `pythonize()`, the
+  program's warnings in the console on Python lines); buttons reflect status; the
+  header shows a running indicator and elapsed `millis()`. The console says
+  "Sketch started." / "Sketch stopped after N loop() calls." (Python:
+  "Program started." / "Program stopped after N rounds of the while True
+  loop."). A Python program without `while True:` (`endsAfterSetup`) is
+  ended by the frame loop once `setup()` returned and no tone sounds (2 s of
+  board time at most): "Program finished (it has no while True loop).",
+  "Finished at N ms". A program that calls `input()` (`usesInput`) shows the
+  Serial Monitor with the cursor in its send box.
   Stop: `executor.stop()`. Reset (Settings ▾ → Reset the board): stop +
   `board.reset()` + clear serial.
 - Serial monitor (`serial-monitor.ts`): output area (monospace, autoscroll
   toggle, clear, max 5000 lines), input line + Send (Enter), line-ending
   select (No line ending / Newline / Carriage return / Both; default
-  Newline), baud label ("9600 baud" from `Serial.begin`, display only).
+  Newline; in Python mode forced to Newline and disabled, `forceNewline()`,
+  the student's choice comes back in the other modes), baud label ("9600 baud" from `Serial.begin`, display only).
   Output arrives via `board.serial.onTx`. Show a hint when the sketch printed
-  nothing yet.
+  nothing yet. The hint and the send box name what prints and reads
+  (`setWords()`, the mode's `runWords.serial`): the sketch and
+  `Serial.println("Hello");` in Code and Blocks mode, "your program" and
+  `print("Hello")` in Python mode. Output while the tab is hidden puts a dot on the tab (its
+  `aria-label` then reads "Serial Monitor, new output"); in Python mode the
+  first such output of a run also puts "print() output is in the Serial
+  Monitor tab" with the link "Open the Serial Monitor" into the console.
 - Pin map (`pinmap.ts`): the lesson table (Sr.No, Part, Description, Pin)
   plus live `Mode` and `Value` columns (`value` = level, PWM duty, tone Hz,
   servo angle, analog value as appropriate) refreshed 10×/s.
 - Generated JS tab: read-only view of the transpiled code (for teachers).
 - Console panel (`console-panel.ts`): messages from `onConsole` with level
-  colours; clicking a message with a line jumps the editor to it.
+  colours; clicking a message with a line jumps to it by the message's
+  `source`: `'python'` opens the Python tab (switching to Python mode when
+  needed) and moves the Python editor there, `'sketch'` the Code tab of the
+  current mode ("Go to line N in the Python program" / "… in the sketch").
+  A message may end with an action button (the print() hint).
 - Inputs panel (`controls.ts`): POT slider (0..1023, two-way with the knob),
   LDR light slider (0..100 %) with sun/moon icons, DHT temperature (-40..80)
   and humidity (0..100) sliders, ultrasonic distance slider (2..400 cm),
@@ -858,9 +1039,23 @@ export function createBoardView(container: HTMLElement, board: Zero1Board): Boar
   `buzzer.state.freq` (start on first user gesture; gain 0.05; mute toggle).
 - Examples menu (`examples-menu.ts`, on `menu.ts`): grouped list from `src/examples/index.ts`.
 - Keyboard: `Ctrl/Cmd+Enter` run, `Esc` stop — both ignored while the
-  Settings, Hand in, Arduino IDE or Upload dialog is open (Esc then closes the
+  Settings, Hand in, Arduino IDE, Upload or What works dialog is open (Esc then closes the
   dialog), and Esc is ignored while a header menu is open (it closes the menu).
-- Mode from links: a `#code=` / `#blocks=` link decides the mode at start-up
+- Header (docs/PYTHON.md §7.14): at 1366–1439 px the Settings and Arduino IDE
+  buttons show their icons only (`aria-label` and tooltip unchanged), so
+  brand, mode switch, the seven actions and the run status stay on one row.
+  While Upload to board is shown, Upload and Arduino IDE show their icons only
+  from 1366 to 1759 px (`.z1-toolbar:has(…upload:not([hidden]))`), which keeps
+  one row with "Share · <name>" and "Error at 12345 ms" (measured in Chromium
+  at 1366, 1440, 1536 and 1600 px); below 1366 px the
+  actions get a row of their own. Entering a mode toasts its name ("Python
+  mode").
+- Upload to board (`src/upload`): `getSketch()` gives an `UploadPayload`
+  (in Blocks and Python mode with the mode's note; Python adds `successNote`,
+  `mapLine`, `source: 'python'` and `sketchError`, so compile errors point at
+  Python lines with the X-sketch-error text, except "too big", shown as is)
+  or `{ error }`, toasted as is.
+- Mode from links: a `#code=` / `#blocks=` / `#python=` link decides the mode at start-up
   (`this.mode = fromLink.kind`), so a saved Blocks mode never hides a shared
   sketch; only without a link is `loadMode()` used.
 - Review mode (`isReviewFrame()`: `location.hash === '#review'` inside an
@@ -871,8 +1066,18 @@ export function createBoardView(container: HTMLElement, board: Zero1Board): Boar
   `hashchange` listener, posts
   `{ type: 'z1-review-ready' }` to the parent and accepts `{ type: 'z1-review',
   payload }` only from `window.parent` on the site's own origin; the payload
-  decides the mode (blocks from `workspaceJson`, else the sketch with the
-  "generated from blocks" banner) and nothing runs until Run. A `#review=` /
+  decides the mode (`ModeController.review()`): Blocks from `workspaceJson`;
+  Python (docs/PYTHON.md §7.13) shows the payload's `python` read-only in the
+  Python tab and today's translation in the Code tab; when that is not the
+  handed-in `code`, a banner above the program ("The simulator was updated
+  since this hand-in: the Code tab shows today's translation.") offers **Use
+  the handed-in sketch** (the mirror and Run then use `code`, on sketch
+  lines). Otherwise (no workspace / no Python, the chunk cannot load, the
+  program has errors today) the handed-in sketch in Code mode — read-only for
+  Python — with the banner "Made from the student's blocks." / "… Python
+  program." (the Code tab's banner uses the same words over the mirror in the
+  frame). The Upload button stays hidden (disposed before detection ends).
+  Nothing runs until Run. A `#review=` /
   `#rid=` hash on the site origin is sent to `./review.html` with
   `location.replace` (docs/CLASSROOM.md §3.4).
 - X1 hardening: `codegen.ts` refuses the member names `constructor`,
@@ -881,8 +1086,8 @@ export function createBoardView(container: HTMLElement, board: Zero1Board): Boar
   ("'name' is not available in the simulator"); `__m` / `__mut` in
   `src/runtime/libs/strings.ts` refuse the same names and any function
   inherited from `Object.prototype` / `Function.prototype`.
-- Update prompt: `vite:preloadError` (and a Blockly chunk that cannot be
-  fetched while online) flushes the editor and blocks autosave and shows the
+- Update prompt: `vite:preloadError` (and a Blockly or Python chunk that cannot be
+  fetched while online) flushes every mode's autosave and shows the
   banner "The simulator was updated. Reload the page to continue (your work is
   saved)." with a Reload button (`data-slot="update"`); the Hand in dialog
   reports `app_updated` errors to it through `onAppUpdated`.
@@ -1102,3 +1307,94 @@ review.html, src/review/main.ts, page.ts, review.css
   `failNext`), `tests/review-page.test.ts` and `tests/zip.test.ts`. The build check
   (`scripts/check-bundle.mjs`) confirms that neither page's static import graph contains
   Firebase.
+
+---
+
+## 14. Python translator (`src/python`) — owner: A (Python mode)
+
+Python mode (docs/PYTHON.md) never runs Python: `pythonToArduino(source)` translates a
+MicroPython-style program into an Arduino sketch, and everything downstream (Run, the Code tab,
+hand-in, share, review, Open in Arduino IDE, Upload) works on that sketch. The UI reaches the
+translator only through the lazy chunk `src/ui/python-chunk.ts` (docs/PYTHON.md §7.16); nothing
+outside `src/python` imports more than `src/python/index.ts`.
+
+```
+normalize → tokenize (tokens.ts) → parse (parser.ts, ast.ts)   syntax errors §5.1: one, then stop
+  → resolve (scope.ts)     scopes, imports, API bindings, main-loop split, C++ names (reserved-names.ts)
+  → analyzeFlow (flow.ts)  CFG per scope, reaching definitions, webs, definite assignment, dominators
+  → infer (kinds.ts)       kinds of webs / parameters / returns / expressions, variables and storage (D1–D3)
+  → check (check.ts)       every NA- / E- / W- rule of §5 (messages.ts); errors → the T9 placeholder
+  → emit (emit.ts)         the sketch + SourceMap (sourcemap.ts), helpers (helpers.ts)
+```
+
+- **Entry.** `translate.ts`: `pythonToArduino` never throws (X-internal); `analyze()` returns
+  the typed program and the diagnostics (errors first, at most 20 + X-too-many; warnings only
+  without errors). A program with errors gets `pythonPlaceholder(n)` (`src/sketch/placeholder.ts`);
+  one without errors is emitted (X-sketch-too-long above 50,000 bytes).
+- **Emitter** (`emit.ts`, docs/PYTHON.md §4.7): header, the module docstring and the comments
+  of the imports the program starts with, includes, zero1 pin constants (`src/sketch/pins.ts`),
+  library objects, globals (D1: an initialiser when the first definition is a constant that runs
+  before any use), functions in Python order, `setup()` (the statements before the final
+  `while True:`), `loop()` (its body; `continue` there is `return;`), then the helpers. Locals are
+  declared where kinds.ts placed them (D2/D3). Expressions are printed with C++ precedence
+  (`src/sketch/order.ts`), every int is a `long` (N1: `L` literals, `(long)` casts of narrower
+  readings), `//` `%` `**` and guarded divisions go through the helpers (N3–N5). The board API is
+  lowered by the member ids of `api.ts` (`Pin.on`, `time.sleep_ms`, …). Statements that can never
+  run (after an endless loop, a `return`, `break` or `continue`) are left out with a comment.
+  Python's order of evaluation (E4): where C++ leaves it open (operands, arguments), the parts
+  with effects — calls of own functions that have effects, `input()`, `pop()` — that could run
+  out of order are worked out first into `value1`, `value2`, … (`order()` / `hoist()` through
+  `ctx.pre`), and print() / putstr() work out their values before printing when a value with
+  effects comes after printed text. E3 without warnings: a local or parameter the C++ never reads
+  gets `(void)name;` (`quietUnused()`), overflowing literal arithmetic is written as its 32-bit
+  result.
+- **Helpers** (`helpers.ts`, §4.8): the fixed texts verbatim, the list helpers generated per
+  element type from one template (`…L` long, `…F` float, `…S` String, `…B` bool, `…C` colour,
+  `…P` Pin, `…Y` byte); `helperTexts(names)` adds what each needs, in `helperOrder`, each once.
+  `Serial.begin(9600)` is written when the program prints, reads, or uses a helper that can stop
+  it (`pyFail` prints `Line N: <Python error>`, flushes and calls `abort()`).
+- **Source map** (`sourcemap.ts`, §4.9): every sketch line records the first line of the Python
+  statement it was made from (0 for scaffolding and helper bodies); `composeJsLineMap()` gives the
+  Executor Python lines; `pythonizeRuntimeMessage()` turns an `abort()` report into the last
+  `Line N: …` line of the Serial Monitor, so a runtime stop has its Python line on every browser.
+- **Runtime texts in Python words** (`messages.ts` `RUNTIME_WORDINGS`, §5.9): the simulator's own
+  console texts that a translated program can still trigger (a `Pin` switched without
+  `Pin.OUT`, a pin or ADC number worked out while running, PWM
+  on pins 9/10 next to a `Servo()`, `servo.angle()` after `detach()`, an LCD at another address,
+  the LCD or RGB LED used by a function before the line that makes it) are reworded by
+  `pythonizeRuntimeMessage()`; everything else passes through. A new console text in
+  `src/runtime` that Python can reach needs an entry (and a case in `tests/python-runtime.test.ts`).
+- **PWM.** `duty_u16(v)` is `analogWrite(p, v / 256)`: 65535 → 255 and 32768 → 128, the first
+  value that switches a pin without PWM on, as W-pwm-pin says (it was `/ 257` before 2026-09-30).
+- **Examples** (`src/examples/python`, §9): 33 `NN_name.py` files imported with `?raw`; `index.ts`
+  lists the 13 lessons (`PYTHON_LESSON_EXAMPLES`), `parts.ts` the 20 part-by-part examples 40–59
+  (`PYTHON_PART_EXAMPLES`); `PYTHON_EXAMPLES` is both, in the order of `EXAMPLES`. Example 01,
+  the first-visit program, is also exported alone (`first.ts`, `PYTHON_FIRST_EXAMPLE`): the Python
+  chunk carries it, the other 32 are a lazy chunk of their own (`src/ui/python-examples-chunk.ts`). Each has the id, title and group of its `.ino` twin, a
+  module docstring with the twin's four header sections in Python words, the twin's behaviour,
+  and translates with no warning. The sensor examples 52–58 catch `OSError` (no echo, DHT22
+  unplugged) where their twins print a value; those branches have Python-only tests.
+- **Tests.** `python-tokens`, `python-parser`, `python-resolve`, `python-flow`, `python-kinds`,
+  `python-errors` (the §5 table and its meta-tests), `python-api`, `python-reserved`,
+  `python-emit` (goldens `tests/fixtures/python/<case>.py` → `<case>.ino`, `UPDATE_GOLDEN=1`
+  regenerates; T1–T9 compared with docs/PYTHON.md §4.10; every golden transpiles without
+  warnings and, with the WebAssembly toolchain built, compiles with avr-g++ `-Wall -Wextra`
+  without warnings), `python-helpers` (§4.8 verbatim; each helper's value in the simulator against
+  Python's; every runtime stop), `python-sourcemap`, `python-contract`,
+  `python-runtime` (every row of §2.13 on the simulator, the runtime stops of §5.6 with their
+  console error and `Line N:` text, `input()`, the finish of a program without `while True:`,
+  every `RUNTIME_WORDINGS` entry against the real text) and `python-cpython` (the print-only
+  programs of `tests/fixtures/python/cpython/` against CPython 3.12's output, recorded by
+  `node scripts/record-cpython.mjs`; lines that differ are listed in `<name>.deviations` with
+  their §2.13 row and the board's line).
+  **Twin behaviour** (§10.4): `tests/example-behaviour.ts` holds `EXAMPLE_BEHAVIOUR`, the
+  behaviour checks of every example keyed by example id, and `describeExampleBehaviour(label,
+  sourceOf)`, which registers the checks of the examples `sourceOf(id)` gives a sketch for.
+  `examples.test.ts` runs it on the `.ino` sources, `python-examples.test.ts` on the sketches made
+  from the Python examples (plus their list, headers, translation without warnings, a clean
+  4-second run and the Python-only checks), so both twins pass the same assertions.
+  `npm run test:hardware-sim` adds `tests-hardware-sim/python-board.test.ts`: every golden and
+  every Python example compiles without warnings and fits the UNO; the helpers, the deterministic
+  goldens and examples print the same Serial output on avr8js as in the simulator (distances, and
+  the numbers made from them, within 1 cm: the chip times the echo a little differently); `duty_u16()`
+  and `len()` of accented text behave on the chip as the warnings say.

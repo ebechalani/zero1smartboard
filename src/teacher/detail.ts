@@ -1,12 +1,14 @@
 /**
  * The hand-in detail panel (docs/CLASSROOM.md §1.3 T6) and the Open / .ino controls the Overview
  * shares with it (T5). Every user string is rendered with textContent (§3.4). Open is a real
- * link to review.html so middle-click works; .ino and Copy act with no await after the click.
+ * link to review.html so middle-click works; .ino, .py and Copy act with no await after the click.
+ * A Python hand-in (docs/PYTHON.md §8.5) shows the program first and the sketch made from it in a
+ * collapsed <details>; while it has no sketch (Python errors), Download .ino is disabled.
  */
-import { fullName, shortDeviceId, type HandinRecord } from '../classroom/model';
+import { contentOf, fullName, shortDeviceId, type HandinRecord } from '../classroom/model';
 import { SAVE_FAILED, type DashboardContext } from './context';
-import { button, el, fullWhenText, plural } from './format';
-import { DECODE_PROBLEM_TEXT, fileStem, inoName, newestFirst } from './handins';
+import { button, el, fullWhenText, kindChip, plural } from './format';
+import { DECODE_PROBLEM_TEXT, fileStem, inoName, newestFirst, pyName, pythonErrorCount, pythonErrorsText } from './handins';
 import { makeZip } from './zip';
 import type { ClassSession } from './session';
 
@@ -27,17 +29,44 @@ export function openLink(ctx: DashboardContext, session: ClassSession, record: H
   return a;
 }
 
-/** The .ino download button for `record`: enabled once decoded; the click downloads at once. */
+/**
+ * The .ino download button for `record`: enabled once decoded; the click downloads at once.
+ * Disabled for a Python hand-in with errors, whose `code` is the placeholder, not a sketch.
+ */
 export function inoButton(ctx: DashboardContext, session: ClassSession, record: HandinRecord, text = '.ino', onDownload?: () => void): HTMLButtonElement {
   const decoded = session.cache.get(record.id);
+  const errors = decoded?.ok ? pythonErrorCount(contentOf(record.kind, decoded)) : null;
   const b = button(text, () => {
     const d = session.cache.get(record.id);
-    if (!d?.ok) return;
+    if (!d?.ok || errors !== null) return;
     ctx.download(inoName(record, ctx.now()), d.code);
     onDownload?.();
   });
-  b.disabled = !decoded?.ok;
-  b.title = decoded?.ok ? 'Download the sketch as an .ino file' : decoded ? DECODE_PROBLEM_TEXT[decoded.problem] : 'Unpacking…';
+  b.disabled = !decoded?.ok || errors !== null;
+  b.title = !decoded
+    ? 'Unpacking…'
+    : !decoded.ok
+      ? DECODE_PROBLEM_TEXT[decoded.problem]
+      : errors !== null
+        ? `${pythonErrorsText(errors)}: there is no sketch to download`
+        : record.kind === 'python'
+          ? 'Download the Arduino sketch made from the Python program as an .ino file'
+          : 'Download the sketch as an .ino file';
+  return b;
+}
+
+/** Download .py of a Python hand-in: enabled once decoded; the click downloads at once. */
+function pyButton(ctx: DashboardContext, session: ClassSession, record: HandinRecord, onDownload?: () => void): HTMLButtonElement {
+  const decoded = session.cache.get(record.id);
+  const python = decoded?.ok ? contentOf(record.kind, decoded).python : '';
+  const b = button('Download .py', () => {
+    const d = session.cache.get(record.id);
+    if (!d?.ok) return;
+    ctx.download(pyName(record, ctx.now()), contentOf(record.kind, d).python);
+    onDownload?.();
+  });
+  b.disabled = python === '';
+  b.title = !decoded ? 'Unpacking…' : !decoded.ok ? DECODE_PROBLEM_TEXT[decoded.problem] : 'Download the Python program as a .py file';
   return b;
 }
 
@@ -97,17 +126,30 @@ export function createDetailPanel(ctx: DashboardContext, session: ClassSession, 
     const card = el('article', { className: 'z1t-version', attrs: { 'data-handin': record.id } });
     const when = fullWhenText(record.createdAt, ctx.now());
     const head = el('header', { className: 'z1t-version-head' });
-    head.append(el('strong', { text: when }), el('span', { className: `z1t-kind z1t-kind-${record.kind}`, text: record.kind === 'blocks' ? 'Blocks' : 'Code' }));
+    head.append(el('strong', { text: when }), kindChip(record.kind));
     card.append(head);
     const member = session.members?.find((m) => m.uid === record.uid);
     const computer = `Computer ${shortDeviceId(record.uid)}${member ? ` · ${member.device}` : ''}`;
     card.append(el('p', { className: 'z1-muted z1t-computer', text: computer }));
 
-    if (decoded?.ok) {
-      const pre = el('pre', { className: 'z1t-code', text: decoded.code, attrs: { tabindex: '0' } });
+    const content = decoded?.ok ? contentOf(record.kind, decoded) : null;
+    const isPython = record.kind === 'python';
+    if (content && isPython) {
+      // The Python first (what the student wrote), then the sketch made from it, collapsed.
+      const errors = pythonErrorCount(content);
+      if (errors !== null) card.append(el('p', { className: 'z1t-python-errors', text: pythonErrorsText(errors) }));
+      card.append(el('pre', { className: 'z1t-code z1t-python', text: content.python, attrs: { tabindex: '0', 'aria-label': 'The Python program' } }));
+      const sketch = el('details', { className: 'z1t-sketch' });
+      sketch.append(
+        el('summary', { text: 'The Arduino sketch made from it' }),
+        el('pre', { className: 'z1t-code', text: content.code, attrs: { tabindex: '0', 'aria-label': 'The Arduino sketch made from the Python program' } }),
+      );
+      card.append(sketch);
+    } else if (content) {
+      const pre = el('pre', { className: 'z1t-code', text: content.code, attrs: { tabindex: '0' } });
       if (record.kind === 'blocks') card.append(el('p', { className: 'z1-muted', text: 'The Arduino sketch made from the blocks:' }));
       card.append(pre);
-    } else if (decoded) {
+    } else if (decoded && !decoded.ok) {
       card.append(el('p', { className: 'z1t-error', text: DECODE_PROBLEM_TEXT[decoded.problem] }));
     } else {
       card.append(el('p', { className: 'z1-muted', text: 'Unpacking…' }));
@@ -129,13 +171,15 @@ export function createDetailPanel(ctx: DashboardContext, session: ClassSession, 
       };
     }
     const copyStatus = el('span', { className: 'z1t-status', attrs: { role: 'status' } });
+    // Copy copies what the student wrote: the Python of a Python hand-in, else the sketch.
     const copy = button('Copy code', () => {
       const d = session.cache.get(record.id);
       if (!d?.ok) return;
-      ctx.copyText(d.code).then(
+      const c = contentOf(record.kind, d);
+      ctx.copyText(isPython ? c.python : c.code).then(
         () => (copyStatus.textContent = 'Copied'),
         () => {
-          const pre = card.querySelector<HTMLElement>('.z1t-code');
+          const pre = card.querySelector<HTMLElement>(isPython ? '.z1t-python' : '.z1t-code');
           if (pre) {
             const range = document.createRange();
             range.selectNodeContents(pre);
@@ -148,7 +192,12 @@ export function createDetailPanel(ctx: DashboardContext, session: ClassSession, 
       );
     });
     copy.disabled = !decoded?.ok;
-    actions.append(open, ino, copy, copyStatus);
+    if (isPython) {
+      copy.title = 'Copy the Python program';
+      actions.append(open, pyButton(ctx, session, record, () => session.markSeen(record.nameKey, record.createdAt)), ino, copy, copyStatus);
+    } else {
+      actions.append(open, ino, copy, copyStatus);
+    }
     card.append(actions);
 
     // Remove the computer, delete.

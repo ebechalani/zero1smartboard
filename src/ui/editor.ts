@@ -1,16 +1,19 @@
 /**
- * Code editor panel: CodeMirror 6 configured for Arduino C++, with transpiler
- * diagnostics, Ctrl/Cmd+Enter to run, Esc to stop, and persistence of the
- * sketch to localStorage. The `#code=` share-link encoding is re-exported
- * from src/share-link.ts.
+ * Code editor panel: CodeMirror 6 with transpiler diagnostics, Ctrl/Cmd+Enter
+ * to run, Esc to stop (then Tab leaves the editor), and persistence of the
+ * text to localStorage. Arduino C++ by default; the Python editor passes its
+ * language, storage key and indent (docs/PYTHON.md §7.4). The `#code=`
+ * share-link encoding is re-exported from src/share-link.ts.
  *
- * The editor can be switched to read-only (Blocks mode shows the generated
- * sketch here); `setCode()` keeps working in that state so the app can update
- * the document programmatically.
+ * The editor can be switched to read-only (the review frame's Python program
+ * and handed-in sketch, docs/PYTHON.md §7.13); `setCode()` keeps working in that
+ * state so the app can update the document programmatically. A
+ * `readOnlyMirror` editor (the Code tab in Blocks and Python mode, §7.5) is
+ * read-only for good, still focusable and selectable, and never saves.
  */
 import { basicSetup } from 'codemirror';
 import { EditorView, keymap } from '@codemirror/view';
-import { Compartment, EditorState, Prec } from '@codemirror/state';
+import { Compartment, EditorState, Prec, type Extension } from '@codemirror/state';
 import { cpp } from '@codemirror/lang-cpp';
 import { HighlightStyle, indentUnit, syntaxHighlighting } from '@codemirror/language';
 import { tags as t } from '@lezer/highlight';
@@ -24,8 +27,11 @@ export const CODE_STORAGE_KEY = 'z1.code';
 /** Delay before an edit is written to localStorage. */
 const SAVE_DEBOUNCE_MS = 400;
 
+/** After Esc, how long Tab / Shift+Tab move the focus out of the editor instead of indenting (WCAG 2.1.2). */
+const TAB_ESCAPE_MS = 2000;
+
 export interface EditorOptions {
-  /** Sketch shown when the editor is created. */
+  /** Text shown when the editor is created. */
   initialCode: string;
   /** Ctrl/Cmd+Enter inside the editor. */
   onRun(): void;
@@ -33,8 +39,25 @@ export interface EditorOptions {
   onStop(): void;
   /** Called (not debounced) after every document change. */
   onChange?(code: string): void;
-  /** Save the sketch to localStorage (default true; false in the sandboxed review frame, which has no storage). */
+  /** Save the text to localStorage (default true; false in the sandboxed review frame, which has no storage). */
   persist?: boolean;
+  /** The language support (default Arduino C++, `cpp()`). */
+  language?: Extension;
+  /** localStorage key of the text (default `z1.code`). */
+  storageKey?: string;
+  /** Spaces per indent level, also the tab size (default 2). */
+  indent?: 2 | 4;
+  /** `aria-label` of the editable area, e.g. "Arduino sketch". */
+  ariaLabel: string;
+  /**
+   * Read-only for good but focusable, selectable and copyable (no `EditorView.editable.of(false)`);
+   * saves nothing (`persist` is ignored, `flush()` does nothing).
+   */
+  readOnlyMirror?: boolean;
+  /** A read-only mirror: the student tried to type, paste or drop into it. */
+  onReadOnlyInput?(): void;
+  /** Further extensions (after the defaults). */
+  extraExtensions?: Extension[];
 }
 
 export interface Editor {
@@ -45,9 +68,11 @@ export interface Editor {
   setDiagnostics(diagnostics: readonly Diagnostic[]): void;
   /** Move the cursor to a 1-based line (and optional column) and scroll it into view. */
   goToLine(line: number, column?: number): void;
-  /** Forbid (or allow again) typing; the text stays selectable and copyable. */
+  /** Forbid (or allow again) typing; the editor stays focusable, selectable and copyable. */
   setReadOnly(readOnly: boolean): void;
   isReadOnly(): boolean;
+  /** Change the `aria-label` of the editable area. */
+  setLabel(ariaLabel: string): void;
   focus(): void;
   /** Write a pending autosave now (before a reload prompt). */
   flush(): void;
@@ -113,16 +138,22 @@ const lightHighlight = HighlightStyle.define([
 export function createEditor(container: HTMLElement, options: EditorOptions): Editor {
   let saveTimer: ReturnType<typeof setTimeout> | null = null;
   const readOnlyCompartment = new Compartment();
+  const labelCompartment = new Compartment();
+  const mirror = options.readOnlyMirror === true;
+  const persist = !mirror && options.persist !== false;
+  const storageKey = options.storageKey ?? CODE_STORAGE_KEY;
+  const indent = options.indent ?? 2;
 
   const flushSave = (): void => {
     if (saveTimer !== null) {
       clearTimeout(saveTimer);
       saveTimer = null;
     }
-    if (options.persist !== false) saveCode(view.state.doc.toString());
+    if (persist) saveText(storageKey, view.state.doc.toString());
   };
 
   const scheduleSave = (): void => {
+    if (!persist) return;
     if (saveTimer !== null) clearTimeout(saveTimer);
     saveTimer = setTimeout(flushSave, SAVE_DEBOUNCE_MS);
   };
@@ -142,15 +173,42 @@ export function createEditor(container: HTMLElement, options: EditorOptions): Ed
   );
   // Stop is bound at normal precedence, after basicSetup, so that Escape
   // first closes an open autocomplete or search panel (as students expect).
+  // It also arms CodeMirror's tab-focus mode: Esc then Tab leaves the editor
+  // (the key binding returns true, so CodeMirror's own Esc handling never runs).
   const stopShortcut = keymap.of([
     {
       key: 'Escape',
-      run: () => {
+      run: (target) => {
         options.onStop();
+        target.setTabFocusMode(TAB_ESCAPE_MS);
         return true;
       },
     },
   ]);
+
+  const labelled = (label: string): Extension => EditorView.contentAttributes.of({ 'aria-label': label });
+
+  const mirrorExtensions: Extension[] = mirror
+    ? [
+        EditorState.readOnly.of(true),
+        // Typing into the read-only sketch explains where to change it (docs/PYTHON.md §7.5).
+        EditorView.domEventHandlers({
+          keydown(event) {
+            const typing = event.key.length === 1 || event.key === 'Enter' || event.key === 'Backspace' || event.key === 'Delete';
+            if (typing && !event.ctrlKey && !event.metaKey && !event.altKey) options.onReadOnlyInput?.();
+            return false;
+          },
+          paste() {
+            options.onReadOnlyInput?.();
+            return false;
+          },
+          drop() {
+            options.onReadOnlyInput?.();
+            return false;
+          },
+        }),
+      ]
+    : [];
 
   const view = new EditorView({
     parent: container,
@@ -160,18 +218,21 @@ export function createEditor(container: HTMLElement, options: EditorOptions): Ed
         runShortcut,
         basicSetup,
         stopShortcut,
-        cpp(),
+        options.language ?? cpp(),
         lightTheme,
         syntaxHighlighting(lightHighlight),
         lintGutter(),
-        indentUnit.of('  '),
-        EditorState.tabSize.of(2),
+        indentUnit.of(' '.repeat(indent)),
+        EditorState.tabSize.of(indent),
+        labelCompartment.of(labelled(options.ariaLabel)),
         readOnlyCompartment.of([]),
+        mirrorExtensions,
         EditorView.updateListener.of((update) => {
           if (!update.docChanged) return;
           scheduleSave();
           options.onChange?.(update.state.doc.toString());
         }),
+        options.extraExtensions ?? [],
       ],
     }),
   });
@@ -207,14 +268,14 @@ export function createEditor(container: HTMLElement, options: EditorOptions): Ed
       view.focus();
     },
     setReadOnly(readOnly) {
-      if (view.state.readOnly === readOnly) return;
-      view.dispatch({
-        effects: readOnlyCompartment.reconfigure(
-          readOnly ? [EditorState.readOnly.of(true), EditorView.editable.of(false)] : [],
-        ),
-      });
+      if (mirror || view.state.readOnly === readOnly) return;
+      // No EditorView.editable.of(false): the keyboard can still reach, select and copy the text.
+      view.dispatch({ effects: readOnlyCompartment.reconfigure(readOnly ? EditorState.readOnly.of(true) : []) });
     },
     isReadOnly: () => view.state.readOnly,
+    setLabel(ariaLabel) {
+      view.dispatch({ effects: labelCompartment.reconfigure(labelled(ariaLabel)) });
+    },
     focus: () => view.focus(),
     destroy() {
       window.removeEventListener('pagehide', onPageHide);
@@ -224,16 +285,25 @@ export function createEditor(container: HTMLElement, options: EditorOptions): Ed
   };
 }
 
-/** Convert a transpiler diagnostic (1-based line/column) into a CodeMirror range. */
-function toCmDiagnostic(state: EditorState, d: Diagnostic): CmDiagnostic {
+/**
+ * Convert a diagnostic (1-based line/column) into a CodeMirror range: up to
+ * `endLine`/`endColumn` (exclusive) when the diagnostic has them, else the
+ * identifier/token at the position, or the rest of the line.
+ */
+export function toCmDiagnostic(state: EditorState, d: Diagnostic): CmDiagnostic {
   const doc = state.doc;
   const line = doc.line(clamp(d.line, 1, doc.lines));
   const from = Math.min(line.from + Math.max(0, d.column - 1), line.to);
-  // Underline the identifier/token at the position, or the rest of the line.
+  const severity = d.severity;
+  if (d.endLine !== undefined && d.endColumn !== undefined && d.endLine >= 1) {
+    const end = doc.line(clamp(d.endLine, 1, doc.lines));
+    const to = Math.min(end.from + Math.max(0, d.endColumn - 1), end.to);
+    if (to > from) return { from, to, severity, message: d.message };
+  }
   const rest = doc.sliceString(from, line.to);
   const token = /^[A-Za-z0-9_]+/.exec(rest);
   const to = token ? from + token[0].length : Math.max(from + 1, line.to);
-  return { from, to: Math.min(to, doc.length), severity: d.severity, message: d.message };
+  return { from, to: Math.min(to, doc.length), severity, message: d.message };
 }
 
 function clamp(v: number, lo: number, hi: number): number {
@@ -246,19 +316,29 @@ function clamp(v: number, lo: number, hi: number): number {
 
 /** Read the sketch saved by a previous visit, or null when there is none. */
 export function loadSavedCode(): string | null {
+  return loadText(CODE_STORAGE_KEY);
+}
+
+/** Save the sketch for the next visit (silently ignores storage errors). */
+export function saveCode(code: string): void {
+  saveText(CODE_STORAGE_KEY, code);
+}
+
+/** The text saved under `key` by a previous visit, or null when there is none (or no storage). */
+export function loadText(key: string): string | null {
   try {
-    return localStorage.getItem(CODE_STORAGE_KEY);
+    return localStorage.getItem(key);
   } catch {
     return null;
   }
 }
 
-/** Save the sketch for the next visit (silently ignores storage errors). */
-export function saveCode(code: string): void {
+/** Save `text` under `key` for the next visit (silently ignores storage errors). */
+export function saveText(key: string, text: string): void {
   try {
-    localStorage.setItem(CODE_STORAGE_KEY, code);
+    localStorage.setItem(key, text);
   } catch {
-    // Private mode or quota exceeded: the sketch simply is not remembered.
+    // Private mode or quota exceeded: the text simply is not remembered.
   }
 }
 

@@ -1,6 +1,8 @@
 #!/bin/sh
 # Mutation check of firestore.rules (docs/CLASSROOM.md §7.1, Appendix B): every file in
 # tests-emulator/mutations/ removes one protection, and the rules suite must catch each one.
+# Each file is a copy of firestore.rules: when the rules change, apply the change to every copy
+# (tests/rules-mutations.test.ts, in npm test, fails when a copy differs by more than 4 lines).
 # Run from the repository root with the Firestore emulator up, e.g.
 #   npx --yes firebase-tools@15.31.0 emulators:exec --only firestore --project demo-zero1 "sh tests-emulator/mutations.sh"
 # Exit status 1 when a mutation survives.

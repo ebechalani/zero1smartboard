@@ -5,7 +5,10 @@
  */
 import { T, type StaticType } from './typesys';
 
-/** Return type rule for a core function: a fixed type, the type of the first argument, or the common type of all arguments. */
+/**
+ * Return type rule for a core function: a fixed type, the type of the first argument, or the
+ * common type of all arguments (the `min`/`max`/`constrain` macros, which also compare in it).
+ */
 export type ReturnRule = StaticType | 'firstArg' | 'common';
 
 export const CORE_RETURN: Readonly<Record<string, ReturnRule>> = {
@@ -17,7 +20,7 @@ export const CORE_RETURN: Readonly<Record<string, ReturnRule>> = {
   pulseInLong: T.ulong,
   map: T.long,
   random: T.long,
-  constrain: 'firstArg',
+  constrain: 'common',
   min: 'common',
   max: 'common',
   abs: 'firstArg',
@@ -43,7 +46,7 @@ export const CORE_RETURN: Readonly<Record<string, ReturnRule>> = {
   radians: T.double,
   degrees: T.double,
   shiftIn: T.uchar,
-  bit: T.long,
+  bit: T.ulong, // #define bit(b) (1UL << (b))
   bitRead: T.int,
   lowByte: T.uchar,
   highByte: T.uchar,
@@ -220,6 +223,16 @@ export const STRING_MUTATORS: ReadonlySet<string> = new Set([
 /** Callee names for which float arguments are boxed with `__flt` (printing semantics). */
 export const FLOAT_BOXING_CALLEES: ReadonlySet<string> = new Set(['print', 'println', 'String', 'write']);
 
+/**
+ * Maths functions and macros: a `char` argument is passed as its signed number (-32), not
+ * boxed as a character like for `print` (which would read back as 224).
+ */
+export const NUMERIC_CALLEES: ReadonlySet<string> = new Set([
+  'map', 'constrain', 'min', 'max', 'abs', 'sq', 'sqrt', 'pow', 'sin', 'cos', 'tan', 'asin', 'acos', 'atan',
+  'atan2', 'exp', 'log', 'log10', 'floor', 'ceil', 'round', 'fabs', 'fmod', 'trunc', 'radians', 'degrees',
+  'isnan', 'isinf', 'isfinite',
+]);
+
 /** Runtime functions that write into a char array argument and therefore need the raw array. */
 export const RAW_CHAR_ARRAY_CALLEES: ReadonlySet<string> = new Set([
   'sprintf',
@@ -260,7 +273,7 @@ export const KNOWN_RUNTIME_NAMES: ReadonlySet<string> = new Set([
   'bit', 'bitRead', 'lowByte', 'highByte', 'word', 'isDigit', 'isAlpha', 'isAlphaNumeric', 'isSpace',
   'isWhitespace', 'isUpperCase', 'isLowerCase', 'isPunct', 'isPrintable', 'isGraph', 'isControl',
   'isAscii', 'isHexadecimalDigit', 'toUpperCase', 'toLowerCase', 'toAscii', 'interrupts', 'noInterrupts',
-  'attachInterrupt', 'detachInterrupt', 'digitalPinToInterrupt', 'F',
+  'attachInterrupt', 'detachInterrupt', 'digitalPinToInterrupt', 'F', 'abort',
   // core constants
   'HIGH', 'LOW', 'INPUT', 'OUTPUT', 'INPUT_PULLUP', 'A0', 'A1', 'A2', 'A3', 'A4', 'A5', 'LED_BUILTIN',
   'DEC', 'HEX', 'OCT', 'BIN', 'MSBFIRST', 'LSBFIRST', 'CHANGE', 'FALLING', 'RISING', 'NOT_AN_INTERRUPT',

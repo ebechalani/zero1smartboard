@@ -45,13 +45,13 @@ describe('flow', () => {
 
     const sketch = `// blink\n${'void loop() {\n  digitalWrite(13, HIGH);\n  delay(500);\n  digitalWrite(13, LOW);\n  delay(500);\n}\n'.repeat(30)}`;
     const id = newHandinId();
-    const record = await student.handIn(session, { kind: 'code', code: sketch, workspaceJson: '' }, id);
+    const record = await student.handIn(session, { kind: 'code', code: sketch, workspaceJson: '', python: '' }, id);
     expect(record.content.enc).toBe('gzip');
 
     // "Timed out but went through": the same id again is refused by the rules, and the member doc proves it arrived.
     await patchDoc(env, `classes/${cls.code}/members/${session.uid}`, { lastHandinAt: (await import('firebase/firestore')).Timestamp.fromMillis(Date.now() - 20_000) });
     clock.offset = 20_000; // past the local cooldown as well
-    const retry = await student.handIn(session, { kind: 'code', code: sketch, workspaceJson: '' }, id);
+    const retry = await student.handIn(session, { kind: 'code', code: sketch, workspaceJson: '', python: '' }, id);
     expect(retry.id).toBe(id);
     expect(await readDoc(env, `classes/${cls.code}/members/${session.uid}`)).toMatchObject({ handinCount: 1, lastHandinId: id });
 
@@ -73,7 +73,7 @@ describe('flow', () => {
     await patchDoc(env, `classes/${cls.code}/members/${session.uid}`, { lastHandinAt: (await import('firebase/firestore')).Timestamp.fromMillis(Date.now() - 20_000) });
     clock.offset = 40_000;
     const id2 = newHandinId();
-    await student.handIn(session2, { kind: 'code', code: sketch, workspaceJson: '' }, id2);
+    await student.handIn(session2, { kind: 'code', code: sketch, workspaceJson: '', python: '' }, id2);
     await waitFor(() => updates.some((u) => u.added.includes(id2)), 10_000, 'second hand-in');
     const names = new Set(updates.at(-1)!.items.map((h) => h.nameKey));
     expect(names).toEqual(new Set(['ali khoury', 'sara mansour']));

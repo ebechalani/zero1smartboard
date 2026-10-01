@@ -7,7 +7,7 @@ rules_version = '2';
 //
 //   classes/{code}                 a class; the doc id IS the class code
 //   classes/{code}/members/{uid}   a device (anonymous uid) with the name its student typed
-//   classes/{code}/handins/{id}    one hand-in: the name + the sketch (+ blocks), never edited
+//   classes/{code}/handins/{id}    one hand-in: the name + the sketch (+ blocks or Python), never edited
 //
 // Anyone who knows the class code can hand in under any name (docs/CLASSROOM.md §3.5):
 // the code is the only secret, and the teacher deletes what does not belong.
@@ -217,7 +217,8 @@ service cloud.firestore {
       }
 
       // Sketch and blocks: either plain strings (enc 'plain', sizes in UTF-8 bytes) or gzip bytes
-      // (enc 'gzip'); a Code hand-in has an empty workspace, a Blocks hand-in a non-empty one.
+      // (enc 'gzip'); a Code hand-in has an empty workspace; Blocks (Blockly JSON) and Python (the
+      // Python source) hand-ins a non-empty one.
       function validContent(d) {
         return ((d.enc == 'plain'
                   && d.code is string && d.workspace is string
@@ -227,7 +228,7 @@ service cloud.firestore {
                   && d.code.size() <= 50000
                   && d.workspace.size() <= 100000))
           && d.code.size() > 0
-          && (d.kind == 'blocks' ? d.workspace.size() > 0 : d.workspace.size() == 0);
+          && (d.kind == 'code' ? d.workspace.size() == 0 : d.workspace.size() > 0);
       }
 
       function validHandinShape() {
@@ -239,7 +240,7 @@ service cloud.firestore {
           && d.lastName is string
           && d.nameKey is string
           && d.ownerUid is string
-          && d.kind in ['code', 'blocks']
+          && d.kind in ['code', 'blocks', 'python']
           && d.createdAt == request.time
           && validContent(d);
       }
