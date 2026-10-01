@@ -56,15 +56,8 @@ jobs:
           (cd a && sha256sum -c SHA256SUMS)
       - uses: actions/setup-node@v4
         with: { node-version: 22 }
-      - name: Smoke test (each module loads and prints its version)
-        run: |
-          cd a
-          for t in cc1plus avr-as avr-ld avr-objcopy; do
-            node --input-type=module -e "
-              const f = (await import('./$t.mjs')).default;
-              const m = await f({ noInitialRun: true, print: console.log, printErr: console.error });
-              try { m.callMain(['--version']); } catch (e) { if (typeof e.status !== 'number') throw e; }"
-          done
+      - name: Smoke test (C++ and C through cc1plus / cc1 -> avr-as -> avr-ld -> avr-objcopy)
+        run: node tools/avr-toolchain-wasm/test/smoke.mjs a
       - name: Release assets
         if: startsWith(github.ref, 'refs/tags/avr-toolchain-wasm-v')
         uses: softprops/action-gh-release@v2

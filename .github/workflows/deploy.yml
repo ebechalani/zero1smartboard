@@ -4,6 +4,11 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+  # A new avr-toolchain-wasm-v* release: once its workflow has built the compiler and attached
+  # it to the release, redeploy so that "Upload to board" appears without a manual run.
+  workflow_run:
+    workflows: [avr-toolchain-wasm]
+    types: [completed]
 
 permissions:
   contents: read
@@ -11,13 +16,16 @@ permissions:
   id-token: write
 
 # Only this workflow uses the "pages" group: a pull request run (ci.yml) can never cancel a deploy.
+# A toolchain run that does not deploy (a pull request run, a failed run) gets a group of its
+# own, so that it cannot cancel a deploy in progress either.
 concurrency:
-  group: pages
+  group: ${{ (github.event_name != 'workflow_run' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')) && 'pages' || format('pages-skip-{0}', github.run_id) }}
   cancel-in-progress: true
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    if: github.event_name != 'workflow_run' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
+    runs-on: ubuntu-24.04 # its gcc-avr is 7.3.0, the GCC of cc1plus.wasm; a newer Ubuntu ships another
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -56,7 +64,9 @@ jobs:
             echo "Upload feature ON: $(node -p "require('./public/toolchain/manifest.json').release")"
             test -f dist/toolchain/tools/cc1plus.wasm
           else
-            echo "::warning::No avr-toolchain-wasm release found: the site is deployed WITHOUT the Upload feature"
+            echo "::warning::No usable avr-toolchain-wasm release (none yet, or its files are not attached): the site is deployed WITHOUT the Upload feature"
+            # started by a toolchain release: deploying without its compiler would hide the failure
+            if [ "${{ github.event_name }}" = workflow_run ]; then exit 1; fi
           fi
       - uses: actions/upload-pages-artifact@v3
         with:
@@ -65,6 +75,7 @@ jobs:
   # Security rules and data-layer integration tests against the Firebase emulators
   # (docs/CLASSROOM.md §7.1-7.2, §7.6). firebase-tools is fetched with npx, not installed.
   emulator-tests:
+    if: github.event_name != 'workflow_run' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

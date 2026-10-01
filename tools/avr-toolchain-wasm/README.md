@@ -56,7 +56,7 @@ WORK=/some/scratch/dir JOBS=4 ./build.sh        # stages: fetch emsdk deps binut
 
 Stages are idempotent (`./build.sh binutils`, `./build.sh gcc-package`, ...).
 Outputs land in `$WORK/out/`: the ten `.mjs`/`.wasm` files, `SHA256SUMS`,
-`SOURCES.txt` (exact commits/tarball hashes/emsdk revision), `VERSIONS.json`.
+`SOURCES.txt` (exact commits/tarball hashes/emsdk revision).
 
 Measured on the development machine (4 vCPU, 15 GB RAM, host build, no Docker
 daemon available): gmp+mpfr+mpc 2 min, binutils 3 min 15 s, GCC configure +
@@ -136,7 +136,10 @@ identical between horang's binaries and ours.
 * **Determinism**: binutils was built twice here from wiped build trees and came out
   bit-identical; GCC was built once with the final flags. The CI workflow builds
   twice in Docker and fails if the two `SHA256SUMS` differ. No absolute build path
-  is embedded in any `.wasm` (`-ffile-prefix-map`).
+  is embedded in any `.wasm` (`-ffile-prefix-map`), but `cc1plus.wasm`/`cc1.wasm`
+  carry GCC's 16-byte `executable_checksum`, which hashes the link command line and
+  so the build directories: builds at other paths than the Docker image's `/build`
+  differ in those 16 bytes only (RESULTS.md, "Docker build").
 * The spike's `cc1-diff` found 5 of 38 core/library `.cpp` files where **horang's**
   cc1plus differs from the native Debian compiler (register allocation
   differences, e.g. `HardwareSerial.cpp`). Our build is identical to horang's on

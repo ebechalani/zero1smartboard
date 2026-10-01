@@ -1,6 +1,6 @@
 # Reproducible build environment for the AVR toolchain WebAssembly rebuild.
 #   docker build -t avr-toolchain-wasm .
-#   docker run --rm -v "$PWD/out:/build/work/out" avr-toolchain-wasm
+#   mkdir -p out && docker run --rm -v "$PWD/out:/build/work/out-mount" avr-toolchain-wasm
 # Everything build.sh needs on the build side (native gcc for GCC's gen* tools,
 # flex/bison for binutils/gcc parsers, texinfo, python3 for emsdk). The
 # emsdk release is pinned here AND in build.sh (EMSDK_VERSION); keep them equal.
