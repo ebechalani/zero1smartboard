@@ -13,7 +13,7 @@
 #
 # Outputs (WORK/out/): cc1plus.mjs+wasm, avr-as.mjs+wasm, avr-ld.mjs+wasm,
 # avr-objcopy.mjs+wasm, SHA256SUMS, SOURCES.txt, VERSIONS.json.
-set -euo pipefail
+set -Eeuo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORK="${WORK:-$HERE/work}"
@@ -71,6 +71,16 @@ EM_STACK_BINUTILS=-sSTACK_SIZE=8MB
 C_COMPAT="-Wno-error=implicit-function-declaration -Wno-error=implicit-int -Wno-error=int-conversion -Wno-error=incompatible-function-pointer-types -Wno-error=incompatible-pointer-types"
 
 log() { printf '\n[%s] %s\n' "$(date +%H:%M:%S)" "$*" >&2; }
+# The stages send the tools' output to $LOGS/*.log; when a step fails, show the
+# end of the newest log and any configure error, or CI only says "exit code 2".
+show_logs_on_error() {
+  local newest
+  newest="$(ls -t "$LOGS"/*.log 2>/dev/null | head -1)" || true
+  [ -n "$newest" ] || return 0
+  { echo "---- last 40 lines of $newest ----"; tail -n 40 "$newest"
+    echo "---- configure errors in $LOGS ----"; grep -h "configure: error" "$LOGS"/*.log || echo "(none)"; } >&2
+}
+trap show_logs_on_error ERR
 sha_check() { echo "$2  $1" | sha256sum -c - >/dev/null || { echo "SHA-256 mismatch for $1" >&2; exit 1; }; }
 fetch_tar() { local url="$1" name="$2" sha="$3"; [ -f "$SRC/$name" ] || curl -sSfL -o "$SRC/$name" "$url"; sha_check "$SRC/$name" "$sha"; }
 
@@ -211,6 +221,10 @@ stage_binutils_package() {
 stage_gcc() {
   em_env
   log "gcc configure"
+  # gcc/configure (run by 'make all-gcc') probes these for assembler features.
+  for t in /usr/bin/avr-as /usr/bin/avr-ld; do
+    [ -x "$t" ] || { echo "$t not found: install binutils-avr (GCC's configure needs it, see Dockerfile)" >&2; exit 1; }
+  done
   mkdir -p "$WORK/build-gcc" && cd "$WORK/build-gcc"
   [ -f config.status ] || "$SRC/gcc/configure" --build="$BUILD" --host="$HOST" --target=avr --prefix="$PREFIX" \
       --with-gmp="$DEPS" --with-mpfr="$DEPS" --with-mpc="$DEPS" --without-isl \

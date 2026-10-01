@@ -49,7 +49,8 @@ cd tools/avr-toolchain-wasm
 docker build -t avr-toolchain-wasm .
 mkdir -p out && docker run --rm -v "$PWD/out:/build/work/out-mount" avr-toolchain-wasm
 
-# or directly on a Debian/Ubuntu host with build-essential git curl python3 flex bison texinfo
+# or directly on an Ubuntu 24.04 host with build-essential git curl python3 flex bison texinfo
+# and binutils-avr (GCC's configure runs /usr/bin/avr-as and avr-ld; see the Dockerfile)
 WORK=/some/scratch/dir JOBS=4 ./build.sh        # stages: fetch emsdk deps binutils gcc package
 ```
 
