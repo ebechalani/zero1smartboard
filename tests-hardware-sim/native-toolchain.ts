@@ -50,7 +50,7 @@ export class NativeToolchain implements SketchToolchain {
     try {
       setup?.(fs);
       const mapped = args.map((a) => (a.startsWith('/') ? real(a) : a.startsWith('-L/') ? `-L${real(a.slice(2))}` : a));
-      const r = spawnSync(this.programs[tool], mapped, { cwd: root, encoding: 'utf8', maxBuffer: 64 << 20 });
+      const r = spawnSync(this.programs[tool], mapped, { cwd: root, encoding: 'utf8', maxBuffer: 64 << 20, env: { ...process.env, LC_ALL: 'C' } });
       const files: Record<string, Uint8Array> = {};
       for (const path of outputs) {
         try {
