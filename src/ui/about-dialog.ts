@@ -16,13 +16,15 @@ export interface AboutDialog {
 export const ABOUT_TEXT = {
   title: 'ZERO1 Smart Board Simulator',
   tagline: 'ICT & Robotics for STEAM Education',
+  description: 'Write, simulate and upload Arduino, Blocks and Python programs for the ZERO1 Smart Board, directly in the browser.',
   credits: [
-    ['Board design', 'Wissam Daccache'],
-    ['Simulator', 'Eddy Bachaalany'],
+    ['Hardware design', 'Wissam Daccache'],
+    ['Software development', 'Eddy Bachaalany'],
   ],
   rights: '© 2026 ZERO1 Education. All rights reserved.',
-  notices: 'Upload to board includes open-source components (the AVR compiler, the Arduino core and libraries) distributed under their own licences.',
-  noticesLink: 'Third-party licences',
+  notices:
+    'This software includes open-source components, including the GNU AVR toolchain and the Arduino core libraries, distributed under their respective licences.',
+  noticesLink: 'View third-party licences',
   noticesPlain: 'Third-party licences: THIRD_PARTY_NOTICES.md on the simulator site.',
 } as const;
 
@@ -49,6 +51,7 @@ export function createAboutDialog(parent: HTMLElement, options: { noticesUrl?: s
   title.id = 'z1-about-title';
   names.append(title, el('p', 'z1-about-tagline', ABOUT_TEXT.tagline));
   head.append(logo, names);
+  const description = el('p', 'z1-about-description', ABOUT_TEXT.description);
 
   // Credits: role and name side by side
   const credits = el('dl', 'z1-about-credits');
@@ -75,7 +78,7 @@ export function createAboutDialog(parent: HTMLElement, options: { noticesUrl?: s
   close.type = 'button';
   close.dataset.action = 'close';
   actions.appendChild(close);
-  form.append(head, credits, legal, actions);
+  form.append(head, description, credits, legal, actions);
   dialog.appendChild(form);
   form.addEventListener('submit', (e) => e.preventDefault());
   close.addEventListener('click', () => dialog.close());

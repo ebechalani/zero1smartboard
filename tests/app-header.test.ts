@@ -485,14 +485,14 @@ describe('Settings ▾ → About', () => {
     expect(dialog.getAttribute('aria-labelledby')).toBe('z1-about-title');
     const credits = Array.from(dialog.querySelectorAll('.z1-about-credits dt'), (dt) => [dt.textContent, dt.nextElementSibling?.textContent]);
     expect(credits).toEqual([
-      ['Board design', 'Wissam Daccache'],
-      ['Simulator', 'Eddy Bachaalany'],
+      ['Hardware design', 'Wissam Daccache'],
+      ['Software development', 'Eddy Bachaalany'],
     ]);
     expect(dialog.querySelector('.z1-about-rights')!.textContent).toBe('© 2026 ZERO1 Education. All rights reserved.');
     // the open-source parts (the GPL compiler of Upload to board, ...) keep their own licences
     const link = dialog.querySelector('a')!;
     expect(link.getAttribute('href')).toBe('THIRD_PARTY_NOTICES.md');
-    expect(link.textContent).toBe('Third-party licences');
+    expect(link.textContent).toBe('View third-party licences');
     expect(link.target).toBe('_blank');
     dialog.querySelector<HTMLButtonElement>('[data-action="close"]')!.click();
     expect(dialog.open).toBe(false);

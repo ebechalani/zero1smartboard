@@ -1472,6 +1472,10 @@ input[type='range'] {
   text-transform: uppercase;
   color: var(--accent-strong);
 }
+.z1-about-description {
+  margin: 0;
+  line-height: 1.5;
+}
 .z1-about-credits {
   display: grid;
   grid-template-columns: max-content 1fr;
