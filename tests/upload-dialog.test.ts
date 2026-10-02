@@ -9,7 +9,7 @@
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createUploadDialog, HELP_TEXT, sizeText, type UploadDialog } from '../src/upload/ui/upload-dialog';
-import { installUploadButton } from '../src/upload';
+import { installUploadButton, UNSUPPORTED_ADVICE, UNSUPPORTED_FALLBACK, UNSUPPORTED_TEXT } from '../src/upload';
 import type { ConsoleMessage } from '../src/types';
 import { FAILED_BUILD, FakeUploadService, OK_BUILD, type FakeUploadServiceOptions } from './fakes/upload/fake-upload-service';
 
@@ -311,7 +311,7 @@ describe('upload errors', () => {
 });
 
 describe('installUploadButton', () => {
-  it('shows the button only when supported and opens the dialog with the current sketch', async () => {
+  it('shows the button and, where uploading works, opens the dialog with the current sketch', async () => {
     const button = document.createElement('button');
     button.hidden = true;
     const parent = document.createElement('div');
@@ -356,15 +356,79 @@ describe('installUploadButton', () => {
     expect(installed.isOpen()).toBe(false);
   });
 
-  it('keeps the button hidden when unsupported', async () => {
+  it('keeps the button shown where uploading cannot work, and a click says why and what to do (Firefox, Safari, phones)', async () => {
+    const button = document.createElement('button');
+    button.hidden = true; // as in the page markup
+    const parent = document.createElement('div');
+    document.body.append(button, parent);
+    const getSketch = vi.fn(() => ({ code: SKETCH, kind: 'code' as const }));
+    const installed = installUploadButton({ button, parent, detect: async () => ({ ok: false, reason: 'no-serial', message: UNSUPPORTED_TEXT['no-serial'] }), getSketch });
+    expect(button.hidden).toBe(false); // at once, not only after the detection: a hidden button cannot be found
+    const support = await installed.ready;
+    expect(support.reason).toBe('no-serial');
+    expect(button.hidden).toBe(false);
+    expect(installed.dialog()).toBeNull(); // no Upload dialog, no compiler download here
+    button.click();
+    const dialog = parent.querySelector<HTMLDialogElement>('dialog.z1-upload-unsupported')!;
+    expect(dialog.open).toBe(true);
+    expect(installed.isOpen()).toBe(true); // the app's global keys leave the sketch alone
+    expect(getSketch).not.toHaveBeenCalled();
+    expect(dialog.querySelector('[data-role="reason"]')!.textContent).toBe(
+      'This browser cannot send a program to the board over USB: uploading works in Chrome or Edge on a computer.',
+    );
+    expect(Array.from(dialog.querySelectorAll('[data-role="advice"] li'), (li) => li.textContent)).toEqual(UNSUPPORTED_ADVICE['no-serial']);
+    expect(dialog.textContent).toContain(UNSUPPORTED_FALLBACK); // the Arduino IDE way works everywhere
+    dialog.querySelector<HTMLButtonElement>('[data-action="close"]')!.click();
+    expect(dialog.open).toBe(false);
+    button.click(); // a second click reuses the same dialog
+    expect(parent.querySelectorAll('dialog.z1-upload-unsupported')).toHaveLength(1);
+    installed.dispose();
+    expect(button.hidden).toBe(true);
+    expect(parent.querySelector('dialog')).toBeNull();
+  });
+
+  it('a site without the compiler (no toolchain/manifest.json) says so on click', async () => {
     const button = document.createElement('button');
     const parent = document.createElement('div');
     document.body.append(button, parent);
-    const installed = installUploadButton({ button, parent, detect: async () => ({ ok: false, reason: 'no-serial', message: 'Uploading works in Chrome or Edge on a computer.' }), getSketch: () => null });
+    const installed = installUploadButton({ button, parent, detect: async () => ({ ok: false, reason: 'no-toolchain', message: UNSUPPORTED_TEXT['no-toolchain'] }), getSketch: () => null });
+    await installed.ready;
+    button.click();
+    const dialog = parent.querySelector<HTMLDialogElement>('dialog.z1-upload-unsupported')!;
+    expect(dialog.querySelector('[data-role="reason"]')!.textContent).toBe(UNSUPPORTED_TEXT['no-toolchain']);
+    expect(Array.from(dialog.querySelectorAll('[data-role="advice"] li'), (li) => li.textContent)).toEqual(UNSUPPORTED_ADVICE['no-toolchain']);
+  });
+
+  it('a detection that throws counts as "no compiler": the button still explains itself', async () => {
+    const button = document.createElement('button');
+    const parent = document.createElement('div');
+    document.body.append(button, parent);
+    const installed = installUploadButton({ button, parent, detect: () => Promise.reject(new Error('offline')), getSketch: () => null });
     const support = await installed.ready;
-    expect(support.reason).toBe('no-serial');
-    expect(button.hidden).toBe(true);
-    expect(installed.dialog()).toBeNull();
+    expect(support).toMatchObject({ ok: false, reason: 'no-toolchain', message: 'offline' });
+    button.click();
+    expect(parent.querySelector<HTMLDialogElement>('dialog.z1-upload-unsupported')!.open).toBe(true);
+  });
+
+  it('a click before the detection ends is answered when it ends', async () => {
+    const button = document.createElement('button');
+    const parent = document.createElement('div');
+    document.body.append(button, parent);
+    let finish!: (s: { ok: boolean; message: string }) => void;
+    const service = new FakeUploadService();
+    const installed = installUploadButton({
+      button,
+      parent,
+      service,
+      detect: () => new Promise((resolve) => (finish = resolve)),
+      getSketch: () => ({ code: SKETCH, kind: 'code' }),
+    });
+    button.click();
+    expect(installed.isOpen()).toBe(false);
+    finish({ ok: true, message: '' });
+    await installed.ready;
+    expect(installed.isOpen()).toBe(true); // the Upload dialog, with the sketch of the moment it opens
+    installed.dispose();
   });
 
   it('toasts the { error } of a sketch that is not ready as is, and does nothing for null (docs/PYTHON.md §7.12)', async () => {

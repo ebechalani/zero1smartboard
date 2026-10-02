@@ -30,11 +30,17 @@ LTO plugin), so it is 3–45 % bigger than the Arduino IDE's build (median
 
 ### Feature detection
 
-The button appears only when **all** of these hold: `navigator.serial` exists
-(Chrome, Edge, Opera on Windows, macOS, Linux and ChromeOS), the page is a
-secure context, WebAssembly is enabled, module workers work, and
-`toolchain/manifest.json` was published with the site (§5). Otherwise the
-button stays hidden and the *Arduino IDE* dialog remains the way to the board.
+The button is always shown (except in the teacher's review frame). Uploading
+works only when **all** of these hold: `navigator.serial` exists (Chrome, Edge,
+Opera on Windows, macOS, Linux and ChromeOS), the page is a secure context,
+WebAssembly is enabled, module workers work, and `toolchain/manifest.json` was
+published with the site (§5). Otherwise a click opens a short dialog that says
+why (for example *This browser cannot send a program to the board over USB:
+uploading works in Chrome or Edge on a computer.*), what to do instead, and that
+the *Arduino IDE* dialog remains the way to the board
+(`src/upload/ui/unsupported-dialog.ts`). An earlier version hid the button in
+those browsers, and teachers looking in Firefox, Safari or on a tablet could not
+find it at all.
 
 ## 2. Browser and operating-system support
 

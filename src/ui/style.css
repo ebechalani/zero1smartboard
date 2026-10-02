@@ -203,13 +203,15 @@ p {
     display: none;
   }
 }
-/* "Upload to board" (shown only where uploading works) makes the row about
-   155 px longer: up to 1759 px its ⬆ and the ∞ of Arduino IDE show alone, so the
-   header stays on one row with a remembered student name and the longest run
-   status (measured in Chromium at 1366, 1440, 1536 and 1600 px). */
+/* "Upload to board" (always shown, except in the review frame) makes the row about
+   155 px longer: up to 1759 px it reads "⬆ Upload" while Arduino IDE and Settings
+   show their ∞ and ⚙ alone, so the header stays on one row with a remembered student name and a
+   long run status (measured in Chromium at 1366, 1440, 1536 and 1759 px).
+   An icon alone was too easy to miss: teachers could not find the button. */
 @media (min-width: 1366px) and (max-width: 1759px) {
-  .z1-toolbar [data-slot='upload'] .z1-btn-label,
-  .z1-toolbar:has([data-slot='upload']:not([hidden])) [data-slot='ide'] .z1-btn-label {
+  .z1-toolbar [data-slot='upload'] .z1-btn-label-more,
+  .z1-toolbar:has([data-slot='upload']:not([hidden])) [data-slot='ide'] .z1-btn-label,
+  .z1-toolbar:has([data-slot='upload']:not([hidden])) [data-slot='settings'] .z1-btn-label {
     display: none;
   }
 }
@@ -321,6 +323,14 @@ p {
 .z1-btn-run.is-restart:hover:not(:disabled) {
   background: var(--accent-strong);
   border-color: var(--accent-strong);
+}
+
+/* Upload to board: tinted so that it stands out next to the plain actions. */
+.z1-btn-upload {
+  background: var(--accent-tint);
+  border-color: var(--accent);
+  color: var(--accent-strong);
+  font-weight: 600;
 }
 
 .z1-btn-stop:not(:disabled) {
@@ -1340,6 +1350,13 @@ input[type='range'] {
   white-space: nowrap;
   vertical-align: bottom;
 }
+/* 1366-1439 px with Upload shown: the remembered name after "Share" is cut
+   shorter, which leaves room for the word "Upload" (measured in Chromium). */
+@media (min-width: 1366px) and (max-width: 1439px) {
+  .z1-toolbar:has([data-slot='upload']:not([hidden])) [data-slot='share'] .z1-handin-name {
+    max-width: 8ch;
+  }
+}
 
 /* ------------------------------------------------ python "what works" */
 /* python-help-dialog.ts: "What works in ZERO1 Python" (docs/PYTHON.md §7.3);
@@ -1414,4 +1431,40 @@ input[type='range'] {
   flex: none;
   margin-left: 8px;
   font-size: 12px;
+}
+
+/* ------------------------------------------------ about + "cannot upload here" */
+/* about-dialog.ts (Settings ▾ → About) and src/upload/ui/unsupported-dialog.ts. */
+
+.z1-dialog.z1-about,
+.z1-dialog.z1-upload-unsupported {
+  width: min(480px, calc(100vw - 32px));
+}
+.z1-about-product {
+  margin: 0;
+  font-weight: 600;
+}
+.z1-about-rights {
+  margin: 0;
+  color: var(--muted);
+}
+.z1-about-credits {
+  margin: 0;
+  padding-left: 20px;
+}
+.z1-about-credits li + li {
+  margin-top: 3px;
+}
+.z1-about-notices {
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+.z1-upload-unsupported-reason {
+  margin: 0;
+  font-weight: 600;
+}
+.z1-upload-unsupported .z1-dialog-note {
+  margin: 0;
+  color: var(--muted);
 }

@@ -35,11 +35,11 @@ export interface UploadSupport {
 }
 
 export const UNSUPPORTED_TEXT: Record<UnsupportedReason, string> = {
-  'no-serial': 'Uploading works in Chrome or Edge on a computer (this browser cannot talk to USB devices).',
+  'no-serial': 'This browser cannot send a program to the board over USB: uploading works in Chrome or Edge on a computer.',
   'insecure-context': 'Uploading needs a secure page (https:// or localhost).',
   'no-wasm': 'This browser cannot run the compiler (WebAssembly is disabled).',
   'no-module-worker': 'This browser is too old to run the compiler in the background. Update Chrome or Edge.',
-  'no-toolchain': 'The compiler is not installed on this site (no toolchain/manifest.json).',
+  'no-toolchain': 'Upload to board is not available on this copy of the site: its compiler is not installed (no toolchain/manifest.json).',
 };
 
 /** Options for uploading a compiled sketch. */

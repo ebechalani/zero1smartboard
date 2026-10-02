@@ -404,20 +404,34 @@ describe('header at 1366×768 and 1280×800 (docs/PYTHON.md §7.14)', () => {
     expect(cssValue(rules, menuButton(root, 'settings').querySelector('.z1-btn-label')!, 'display')).toBe('');
   });
 
-  it('from 1440 px every label shows', () => {
+  it('from 1760 px every label shows (from 1440 px while Upload to board is hidden: the review frame)', () => {
     const root = start();
+    const label = (slot: string) => root.querySelector(`[data-slot="${slot}"] .z1-btn-label`)!;
+    for (const [width, height] of [
+      [1760, 990],
+      [1920, 1080],
+    ]) {
+      const rules = rulesAt(width, height);
+      for (const slot of ['ide', 'settings', 'share', 'upload']) expect(cssValue(rules, label(slot), 'display'), `${slot} ${width}`).toBe('');
+      expect(cssValue(rules, root.querySelector('.z1-toolbar')!, 'flex-basis')).toBe('');
+    }
+    button(root, 'upload').hidden = true;
     const rules = rulesAt(1440, 900);
-    expect(cssValue(rules, button(root, 'ide').querySelector('.z1-btn-label')!, 'display')).toBe('');
+    expect(cssValue(rules, label('ide'), 'display')).toBe('');
+    expect(cssValue(rules, label('settings'), 'display')).toBe('');
     expect(cssValue(rules, root.querySelector('.z1-toolbar')!, 'flex-basis')).toBe('');
   });
 
-  it('with Upload to board shown, Upload and Arduino IDE show their icons only from 1366 to 1759 px (one row, measured in Chromium)', () => {
+  it('with Upload to board shown, it reads "⬆ Upload" from 1366 to 1759 px while Arduino IDE and Settings show their icons only (one row, measured in Chromium)', () => {
     const root = start();
     const upload = button(root, 'upload');
     const ide = button(root, 'ide');
+    const settings = menuButton(root, 'settings');
     const label = (b: HTMLElement) => b.querySelector('.z1-btn-label')!;
+    const more = upload.querySelector('.z1-btn-label-more')!;
     expect(label(upload).textContent).toBe('Upload to board');
-    upload.hidden = false; // shown where uploading works (Web Serial and a deployed toolchain)
+    expect(upload.classList.contains('z1-btn-upload')).toBe(true); // tinted: it stands out from the plain actions
+    expect(upload.hidden).toBe(false); // always shown: where uploading cannot work, a click says why
     for (const [width, height] of [
       [1366, 768],
       [1440, 900],
@@ -425,11 +439,20 @@ describe('header at 1366×768 and 1280×800 (docs/PYTHON.md §7.14)', () => {
       [1759, 900],
     ]) {
       const rules = rulesAt(width, height);
-      expect(cssValue(rules, label(upload), 'display'), `${width}`).toBe('none');
+      // never an icon alone: teachers could not find a bare ⬆
+      expect(cssValue(rules, label(upload), 'display'), `${width}`).toBe('');
+      expect(cssValue(rules, more, 'display'), `${width}`).toBe('none'); // "Upload", not "Upload to board"
       expect(cssValue(rules, label(ide), 'display'), `${width}`).toBe('none');
+      expect(cssValue(rules, label(settings), 'display'), `${width}`).toBe('none');
       expect(cssValue(rules, menuButton(root, 'share').querySelector('.z1-btn-label')!, 'display'), `${width}`).toBe('');
     }
-    // The label is only hidden: the name and the tooltip stay.
+    // the remembered name after "Share" is cut shorter only where the row is tightest
+    const name = document.createElement('span');
+    name.className = 'z1-handin-name';
+    label(menuButton(root, 'share')).after(name);
+    expect(cssValue(rulesAt(1366, 768), name, 'max-width')).toBe('8ch');
+    expect(cssValue(rulesAt(1440, 900), name, 'max-width')).toBe('14ch');
+    // The labels are only hidden: the names and the tooltips stay.
     expect(upload.getAttribute('aria-label')).toBe('Upload this sketch to the ZERO1 board');
     expect(upload.title).toBe('Compile in the browser and upload to the board over USB');
     for (const [width, height] of [
@@ -438,12 +461,37 @@ describe('header at 1366×768 and 1280×800 (docs/PYTHON.md §7.14)', () => {
     ]) {
       const rules = rulesAt(width, height);
       expect(cssValue(rules, label(upload), 'display'), `${width}`).toBe('');
+      expect(cssValue(rules, more, 'display'), `${width}`).toBe('');
       expect(cssValue(rules, label(ide), 'display'), `${width}`).toBe('');
+      expect(cssValue(rules, label(settings), 'display'), `${width}`).toBe('');
     }
-    // Hidden again (no Web Serial): "Arduino IDE" keeps its label from 1440 px.
+    // Hidden (only in the review frame): "Arduino IDE" and "Settings" keep their labels from 1440 px.
     upload.hidden = true;
     expect(cssValue(rulesAt(1440, 900), label(ide), 'display')).toBe('');
     expect(cssValue(rulesAt(1536, 864), label(ide), 'display')).toBe('');
+    expect(cssValue(rulesAt(1536, 864), label(settings), 'display')).toBe('');
+    expect(cssValue(rulesAt(1366, 768), name, 'max-width')).toBe('14ch');
+  });
+});
+
+describe('Settings ▾ → About', () => {
+  it('names the rights holder, the creator of the board and the author of the simulator, and links the licences', () => {
+    const root = start();
+    expect(root.querySelector<HTMLDialogElement>('dialog.z1-about')!.open).toBe(false);
+    pick(root, 'settings', 'About…');
+    const dialog = root.querySelector<HTMLDialogElement>('dialog.z1-about')!;
+    expect(dialog.open).toBe(true);
+    expect(dialog.querySelector('h2')!.textContent).toBe('About the ZERO1 Simulator');
+    const text = dialog.textContent!.replace(/\s+/g, ' ');
+    expect(text).toContain('© 2026 ZERO1 Education. All rights reserved.');
+    expect(text).toContain('The ZERO1 Smart Board was created by Wissam Daccache.');
+    expect(text).toContain('The simulator was made by Eddy Bachaalany.');
+    // the open-source parts (the GPL compiler of Upload to board, ...) keep their own licences
+    const link = dialog.querySelector('a')!;
+    expect(link.getAttribute('href')).toBe('THIRD_PARTY_NOTICES.md');
+    expect(link.target).toBe('_blank');
+    dialog.querySelector<HTMLButtonElement>('[data-action="close"]')!.click();
+    expect(dialog.open).toBe(false);
   });
 });
 
@@ -465,8 +513,8 @@ describe('header toolbar', () => {
       'ide',
       'upload',
     ]);
-    // "Upload to board" only shows itself in browsers with Web Serial and a deployed toolchain.
-    expect((toolbar.lastElementChild as HTMLElement).hidden).toBe(true);
+    // "Upload to board" is always shown; where uploading cannot work, a click says why (tests/upload-dialog.test.ts).
+    expect((toolbar.lastElementChild as HTMLElement).hidden).toBe(false);
     // No separate Reset or Hand in buttons: they live in the Settings and Share menus.
     expect(root.querySelector('[data-slot="reset"], [data-slot="handin"]')).toBeNull();
     const settings = menuButton(root, 'settings');
@@ -474,7 +522,7 @@ describe('header toolbar', () => {
     expect(settings.getAttribute('aria-haspopup')).toBe('menu');
     expect(settings.getAttribute('aria-label')).toBe('Open the settings menu');
     expect(settings.querySelector('.z1-btn-label')!.textContent).toBe('Settings'); // hidden at 1366-1439 px by the CSS
-    expect(menuItems(root, 'settings')).toEqual(['Reset the board', 'Board settings…']);
+    expect(menuItems(root, 'settings')).toEqual(['Reset the board', 'Board settings…', 'About…']);
     const share = menuButton(root, 'share');
     expect(share.textContent!.replace(/\s+/g, ' ').trim()).toBe('🔗 Share ▾');
     expect(share.getAttribute('aria-haspopup')).toBe('menu');

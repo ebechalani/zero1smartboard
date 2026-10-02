@@ -13,22 +13,27 @@
  *     getSketch: () => this.exportSketch(), onConsole: (m) => this.console.push(m), toast: (t) => this.toast(t),
  *   });
  *
- * The button stays hidden until feature detection passes (Chrome/Edge on a
- * computer, WebAssembly, module workers, toolchain published with the site).
+ * The button is always shown (except where the app disposes it, the teacher's review frame).
+ * Where feature detection fails (not Chrome/Edge on a computer, no WebAssembly or module
+ * workers, no toolchain published with the site), a click explains why and what to do
+ * instead: a hidden button could not be found, and said nothing about the reason.
  */
 import { createUploadDialog, type UploadDialog, type UploadPayload } from './ui/upload-dialog';
 import { UploadService, detectUploadSupport, type UploadServiceLike, type UploadSupport } from './service';
+import { createUnsupportedDialog, type UnsupportedDialog } from './ui/unsupported-dialog';
 import type { ConsoleMessage } from '../types';
 
 export { UploadService, detectUploadSupport, browserSupportsUpload, supportsModuleWorkers, UNSUPPORTED_TEXT, BOARD_USB_FILTERS } from './service';
 export type { UploadServiceLike, UploadSupport, UnsupportedReason, UploadOptions, BuildOutput, DownloadProgress, UploadProgress, UploadResult } from './service';
 export { createUploadDialog, HELP_TEXT, sizeText, describeError } from './ui/upload-dialog';
+export { createUnsupportedDialog, UNSUPPORTED_ADVICE, UNSUPPORTED_FALLBACK } from './ui/unsupported-dialog';
+export type { UnsupportedDialog } from './ui/unsupported-dialog';
 export type { UploadDialog, UploadDialogOptions, UploadPayload, UploadStage } from './ui/upload-dialog';
 export { UploadError } from './serial/errors';
 export type { UploadErrorCode } from './serial/errors';
 
 export interface InstallUploadButtonOptions {
-  /** The header button (`<button data-slot="upload" hidden>`); it is shown when uploading is supported. */
+  /** The header button (`<button data-slot="upload" hidden>`); shown at once, hidden again by dispose(). */
   button: HTMLButtonElement;
   /** Where the dialog is appended (the app root). */
   parent: HTMLElement;
@@ -47,28 +52,43 @@ export interface InstallUploadButtonOptions {
 }
 
 export interface InstalledUploadButton {
-  /** Resolves once feature detection ran (the button is then shown or left hidden). */
+  /** Resolves once feature detection ran (a click then opens the Upload dialog, or says why it cannot). */
   readonly ready: Promise<UploadSupport>;
   /** The dialog, once installed (null while unsupported). */
   dialog(): UploadDialog | null;
-  /** True while the dialog is open (the app's global keys leave a sketch alone then). */
+  /** True while the Upload dialog or the "cannot upload here" dialog is open (the app's global keys leave a sketch alone then). */
   isOpen(): boolean;
   dispose(): void;
 }
 
 /**
- * Wire the header button: hidden unless the feature is supported here, opens
- * the Upload dialog with the current sketch otherwise.
+ * Wire the header button: always shown; it opens the Upload dialog with the current sketch where
+ * uploading works, and the "cannot upload here" dialog (why, and what to do instead) elsewhere.
  */
 export function installUploadButton(options: InstallUploadButtonOptions): InstalledUploadButton {
   const { button } = options;
   let dialog: UploadDialog | null = null;
+  let unsupported: UnsupportedDialog | null = null;
   let service: UploadServiceLike | null = options.service ?? null;
+  /** The detection result, once known. */
+  let support: UploadSupport | null = null;
+  /** A click came before the detection ended: answered when it ends. */
+  let clickPending = false;
   /** dispose() came first (the review frame disposes at once): detection shows nothing then. */
   let disposed = false;
-  button.hidden = true;
+  button.hidden = false;
 
   const onClick = (): void => {
+    if (disposed) return;
+    if (!support) {
+      clickPending = true;
+      return;
+    }
+    if (!support.ok) {
+      unsupported ??= createUnsupportedDialog(options.parent);
+      unsupported.open(support);
+      return;
+    }
     const sketch = options.getSketch();
     if (!sketch) return;
     if ('error' in sketch) {
@@ -77,29 +97,36 @@ export function installUploadButton(options: InstallUploadButtonOptions): Instal
     }
     dialog?.open(sketch);
   };
+  button.addEventListener('click', onClick);
 
-  const ready = (options.detect ?? (() => detectUploadSupport()))().then(
-    (support) => {
-      if (!support.ok || disposed) return support;
-      service ??= new UploadService({ manifest: support.manifest });
-      dialog = createUploadDialog(options.parent, { service, onConsole: options.onConsole });
-      button.hidden = false;
-      button.addEventListener('click', onClick);
-      return support;
-    },
-    (err: unknown): UploadSupport => ({ ok: false, reason: 'no-toolchain', message: String((err as Error)?.message ?? err) }),
-  );
+  const ready = (options.detect ?? (() => detectUploadSupport()))()
+    .catch((err: unknown): UploadSupport => ({ ok: false, reason: 'no-toolchain', message: String((err as Error)?.message ?? err) }))
+    .then((result) => {
+      if (disposed) return result;
+      if (result.ok) {
+        service ??= new UploadService({ manifest: result.manifest });
+        dialog = createUploadDialog(options.parent, { service, onConsole: options.onConsole });
+      }
+      support = result;
+      if (clickPending) {
+        clickPending = false;
+        onClick();
+      }
+      return result;
+    });
 
   return {
     ready,
     dialog: () => dialog,
-    isOpen: () => dialog?.isOpen() ?? false,
+    isOpen: () => (dialog?.isOpen() ?? false) || (unsupported?.isOpen() ?? false),
     dispose() {
       disposed = true;
       button.hidden = true;
       button.removeEventListener('click', onClick);
       dialog?.close();
       dialog?.element.remove();
+      unsupported?.close();
+      unsupported?.element.remove();
       service?.dispose();
     },
   };
