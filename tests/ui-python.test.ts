@@ -238,6 +238,12 @@ function pick(root: HTMLElement, slot: string, label: string): void {
   item!.click();
 }
 
+/** "＋ New ▾" → its first item, the blank sketch / program (New and Examples are one menu). */
+function pickNew(root: HTMLElement): void {
+  root.querySelector<HTMLButtonElement>('[data-slot="examples"] > button')!.click();
+  root.querySelector<HTMLButtonElement>('[data-slot="examples"] .z1-menu-item')!.click();
+}
+
 function menuItems(root: HTMLElement, slot: string): string[] {
   return Array.from(root.querySelectorAll(`[data-slot="${slot}"] [role="menuitem"]`), (b) => b.textContent ?? '');
 }
@@ -334,14 +340,15 @@ describe('mode switch', () => {
   it('names the program in the header in Python mode (§7.14)', async () => {
     const root = await startPython();
     expect(button(root, 'run').getAttribute('aria-label')).toBe('Run the program (Ctrl+Enter)');
-    expect(button(root, 'stop').getAttribute('aria-label')).toBe('Stop the program (Esc)');
-    expect(button(root, 'new').getAttribute('aria-label')).toBe('Start a new blank Python program');
-    expect(button(root, 'new').title).toBe('New blank Python program');
+    // the first item of "＋ New ▾"
+    const blank = () => root.querySelector<HTMLButtonElement>('[data-slot="examples"] .z1-menu-item')!;
+    expect(blank().textContent).toBe('New blank Python program');
+    expect(blank().title).toBe('Start a new blank Python program');
     expect(button(root, 'ide').getAttribute('aria-label')).toBe('Open the sketch made from this program in the Arduino IDE');
     expect(button(root, 'upload').getAttribute('aria-label')).toBe('Upload the sketch made from this program to the ZERO1 board');
     await switchTo(root, 'code');
     expect(button(root, 'run').getAttribute('aria-label')).toBe('Run the sketch (Ctrl+Enter)');
-    expect(button(root, 'new').getAttribute('aria-label')).toBe('Start a new blank sketch');
+    expect(blank().textContent).toBe('New blank sketch');
   });
 });
 
@@ -575,7 +582,7 @@ describe('New and Examples in Python mode (§7.7)', () => {
     expect(localStorage.getItem(PYTHON_STORAGE_KEY)).toBeNull(); // nothing typed yet
 
     const confirm = stubConfirm(false);
-    button(root, 'new').click();
+    pickNew(root);
     await settle();
     expect(confirm).not.toHaveBeenCalled();
     expect(pythonText(root)).toBe(BLANK_PYTHON);
@@ -584,7 +591,7 @@ describe('New and Examples in Python mode (§7.7)', () => {
     expect(selectedTab(root)).toBe('tab-python');
 
     type(view(root, 'panel-python'), 'x = 1\n');
-    button(root, 'new').click();
+    pickNew(root);
     await settle();
     expect(confirm).toHaveBeenCalledWith('Start a new blank program?\nYour current Python program will be lost.');
     expect(pythonText(root)).toBe(`x = 1\n${BLANK_PYTHON}`);
@@ -594,15 +601,17 @@ describe('New and Examples in Python mode (§7.7)', () => {
   it('the Examples menu says "Loading…" while the Python chunks are on the way, not "No examples available"', async () => {
     const root = start({ mode: 'python' });
     root.querySelector<HTMLButtonElement>('[data-slot="examples"] > button')!.click();
-    expect(root.querySelector('[data-slot="examples"] .z1-menu-empty')?.textContent).toBe('Loading…');
+    // under the blank-program item, the examples heading reads "Loading…"
+    expect(menuItems(root, 'examples')).toEqual(['New blank Python program']);
+    expect(root.querySelector('[data-slot="examples"] .z1-menu-group-title')?.textContent).toBe('Loading…');
     await pythonReady(root);
-    expect(menuItems(root, 'examples')).toEqual(PYTHON_EXAMPLES.map((e) => e.title));
+    expect(menuItems(root, 'examples')).toEqual(['New blank Python program', ...PYTHON_EXAMPLES.map((e) => e.title)]);
   });
 
   it('lists the Python examples and loads them into the Python editor, never the C++ one', async () => {
     const root = await startPython();
-    expect(menuItems(root, 'examples')).toEqual(PYTHON_EXAMPLES.map((e) => e.title));
-    button(root, 'new').click();
+    expect(menuItems(root, 'examples')).toEqual(['New blank Python program', ...PYTHON_EXAMPLES.map((e) => e.title)]);
+    pickNew(root);
     await settle();
     button(root, 'tab-serial').click();
 
@@ -621,7 +630,8 @@ describe('New and Examples in Python mode (§7.7)', () => {
     expect(confirm).toHaveBeenCalledWith(`Replace your Python program with the example "${PYTHON_EXAMPLES[0].title}"?\nYour current Python program will be lost.`);
 
     await switchTo(root, 'code');
-    expect(menuItems(root, 'examples').sort()).toEqual(EXAMPLES.map((e) => e.title).sort());
+    expect(menuItems(root, 'examples')[0]).toBe('New blank sketch');
+    expect(menuItems(root, 'examples').slice(1).sort()).toEqual(EXAMPLES.map((e) => e.title).sort());
   });
 });
 
@@ -676,7 +686,8 @@ describe('Run in Python mode (§7.8)', () => {
     const running = app!.run();
     await vi.waitFor(() => expect(root.querySelector<HTMLElement>('[data-slot="status"]')!.dataset.status).toBe('running'));
     expect(compose).toHaveBeenCalledTimes(1);
-    expect(button(root, 'run').getAttribute('aria-label')).toBe('Restart the program (Ctrl+Enter)');
+    expect(button(root, 'run').getAttribute('aria-label')).toBe('Stop the program (Esc)'); // Run becomes Stop while it runs
+    expect(button(root, 'run').textContent!.replace(/\s+/g, ' ').trim()).toBe('■ Stop');
     await vi.waitFor(() => expect(root.querySelector('.z1-serial')!.textContent).toContain('ON'));
     await app!.stop();
     await running;

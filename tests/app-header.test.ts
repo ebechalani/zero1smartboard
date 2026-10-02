@@ -24,7 +24,9 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { EditorView } from '@codemirror/view';
-import { makeBoard, settle } from './helpers';
+import { TICK_COST_MS, makeBoard, settle } from './helpers';
+import { VirtualClock } from '../src/runtime/clock';
+import { createZero1Board } from '../src/zero1';
 import { BLANK_SKETCH, COPY_FALLBACK, mountApp, type App } from '../src/ui/app';
 import { CODE_STORAGE_KEY, encodeShareCode } from '../src/ui/editor';
 import {
@@ -298,6 +300,12 @@ function pick(root: HTMLElement, slot: string, label: string): void {
   item!.click();
 }
 
+/** "＋ New ▾" → its first item, the blank sketch / program (New and Examples are one menu). */
+function pickNew(root: HTMLElement): void {
+  menuButton(root, 'examples').click();
+  root.querySelector<HTMLButtonElement>('[data-slot="examples"] .z1-menu-item')!.click();
+}
+
 /** Open the Examples menu and pick `title`. */
 function pickExample(root: HTMLElement, title: string): void {
   pick(root, 'examples', title);
@@ -481,14 +489,18 @@ describe('Settings ▾ → About', () => {
     pick(root, 'settings', 'About…');
     const dialog = root.querySelector<HTMLDialogElement>('dialog.z1-about')!;
     expect(dialog.open).toBe(true);
-    expect(dialog.querySelector('h2')!.textContent).toBe('About the ZERO1 Simulator');
-    const text = dialog.textContent!.replace(/\s+/g, ' ');
-    expect(text).toContain('© 2026 ZERO1 Education. All rights reserved.');
-    expect(text).toContain('The ZERO1 Smart Board was created by Wissam Daccache.');
-    expect(text).toContain('The simulator was made by Eddy Bachaalany.');
+    expect(dialog.querySelector('h2')!.textContent).toBe('ZERO1 Smart Board Simulator');
+    expect(dialog.getAttribute('aria-labelledby')).toBe('z1-about-title');
+    const credits = Array.from(dialog.querySelectorAll('.z1-about-credits dt'), (dt) => [dt.textContent, dt.nextElementSibling?.textContent]);
+    expect(credits).toEqual([
+      ['Hardware design', 'Wissam Daccache'],
+      ['Software development', 'Eddy Bachaalany'],
+    ]);
+    expect(dialog.querySelector('.z1-about-rights')!.textContent).toBe('© 2026 ZERO1 Education. All rights reserved.');
     // the open-source parts (the GPL compiler of Upload to board, ...) keep their own licences
     const link = dialog.querySelector('a')!;
     expect(link.getAttribute('href')).toBe('THIRD_PARTY_NOTICES.md');
+    expect(link.textContent).toBe('View third-party licences');
     expect(link.target).toBe('_blank');
     dialog.querySelector<HTMLButtonElement>('[data-action="close"]')!.click();
     expect(dialog.open).toBe(false);
@@ -496,18 +508,22 @@ describe('Settings ▾ → About', () => {
 });
 
 describe('header toolbar', () => {
-  it('starts with New, has no GitHub link and ends with the Settings and Share menus and Arduino IDE', () => {
+  it('starts with "＋ New ▾" (a blank sketch, then the examples), has one Run/Stop button and no GitHub link', () => {
     const root = start();
     const toolbar = root.querySelector('.z1-toolbar')!;
     const first = toolbar.firstElementChild as HTMLElement;
-    expect(first.dataset.slot).toBe('new');
-    expect(first.textContent!.trim().endsWith('New')).toBe(true);
-    expect(first.getAttribute('aria-label')).toBe('Start a new blank sketch');
+    expect(first.dataset.slot).toBe('examples');
+    const newMenu = menuButton(root, 'examples');
+    expect(newMenu.textContent!.replace(/\s+/g, ' ').trim()).toBe('＋ New ▾');
+    expect(newMenu.getAttribute('aria-label')).toBe('New: a blank sketch or an example');
+    const items = menuItems(root, 'examples');
+    expect(items[0]).toBe('New blank sketch'); // then the examples, by topic
+    expect(items.slice(1)).toEqual(EXAMPLES.map((e) => e.title));
+    expect(root.querySelector('[data-slot="examples"] .z1-menu-item')!.getAttribute('title')).toBe('Start a new blank sketch');
+    expect(root.querySelector('[data-slot="new"], [data-slot="stop"]')).toBeNull();
     expect(Array.from(toolbar.children, (el) => (el as HTMLElement).dataset.slot)).toEqual([
-      'new',
       'examples',
       'run',
-      'stop',
       'settings',
       'share',
       'ide',
@@ -550,10 +566,8 @@ describe('header toolbar', () => {
     expect(menuButton(root, 'share').title).toBe('Share: copy the link or download an .ino file');
     expect(menuButton(root, 'share').querySelector('.z1-handin-name')).toBeNull();
     expect(Array.from(root.querySelectorAll('.z1-toolbar > *'), (el) => (el as HTMLElement).dataset.slot)).toEqual([
-      'new',
       'examples',
       'run',
-      'stop',
       'settings',
       'share',
       'ide',
@@ -584,7 +598,7 @@ describe('New', () => {
     expect(editorText(root)).toBe(MY_SKETCH);
 
     const refuse = stubConfirm(false);
-    button(root, 'new').click();
+    pickNew(root);
     await Promise.resolve();
     expect(refuse).toHaveBeenCalledTimes(1);
     expect(refuse.mock.calls[0][0]).toBe('Start a new blank sketch?\nYour current code will be lost.');
@@ -594,7 +608,7 @@ describe('New', () => {
     expect(button(root, 'tab-code').getAttribute('aria-selected')).toBe('false');
 
     const accept = stubConfirm(true);
-    button(root, 'new').click();
+    pickNew(root);
     await Promise.resolve();
     expect(accept).toHaveBeenCalledTimes(1);
     expect(editorText(root)).toBe(BLANK_SKETCH);
@@ -608,7 +622,7 @@ describe('New', () => {
     const root = start();
     expect(editorText(root)).toBe(EXAMPLES[0].source);
     const confirm = stubConfirm(false);
-    button(root, 'new').click();
+    pickNew(root);
     await Promise.resolve();
     expect(editorText(root)).toBe(BLANK_SKETCH);
 
@@ -618,7 +632,7 @@ describe('New', () => {
     document.body.innerHTML = '';
     const again = start(BLANK_SKETCH);
     expect(editorText(again)).toBe(BLANK_SKETCH);
-    button(again, 'new').click();
+    pickNew(again);
     await Promise.resolve();
     expect(confirm).not.toHaveBeenCalled();
     expect(editorText(again)).toBe(BLANK_SKETCH);
@@ -728,7 +742,7 @@ describe('Hand in', () => {
     expect(fake.handinOpens[1].work.unchanged).toEqual({ kind: 'example', title: EXAMPLES[0].title });
     expect(fake.handinOpens[1].work.errorCount).toBe(0);
     dialog.close();
-    button(root, 'new').click();
+    pickNew(root);
     await Promise.resolve();
     pick(root, 'share', 'Hand in to my teacher');
     expect(fake.handinOpens[2].work.unchanged).toEqual({ kind: 'blank' });
@@ -799,6 +813,38 @@ describe('run status', () => {
     expect(status(root).dataset.status).toBe('error');
     expect(status(root).textContent!.trim()).toBe('1 error');
     expect(consoleStatus(root)).toBe('1 error — fix and run again');
+  });
+
+  it('Run and Stop are one button: "▶ Run" starts the sketch, then reads "■ Stop" (red) and stops it', async () => {
+    // a sketch that loops forever, on a clock that lets the test's own timers run (VirtualClock alone only yields microtasks)
+    class SteppingClock extends VirtualClock {
+      private ticks = 0;
+      override async yield(): Promise<void> {
+        await super.yield();
+        if (++this.ticks % 500 === 0) await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+    }
+    localStorage.setItem(CODE_STORAGE_KEY, 'void setup() {\n  pinMode(A1, OUTPUT);\n}\n\nvoid loop() {\n  digitalWrite(A1, HIGH);\n  delay(100);\n}\n');
+    const root = document.createElement('div');
+    document.body.appendChild(root);
+    const clock = new SteppingClock({ yieldCostMs: TICK_COST_MS });
+    app = mountApp(root, createZero1Board(clock), clock);
+    const run = button(root, 'run');
+    const face = () => run.textContent!.replace(/\s+/g, ' ').trim();
+    expect(face()).toBe('▶ Run');
+    expect(run.classList.contains('is-stop')).toBe(false);
+    const running = app!.run();
+    await vi.waitFor(() => expect(status(root).dataset.status).toBe('running'));
+    expect(face()).toBe('■ Stop');
+    expect(run.classList.contains('is-stop')).toBe(true);
+    expect(run.getAttribute('aria-label')).toBe('Stop the sketch (Esc)');
+    expect(run.title).toBe('Stop (Esc)');
+    run.click(); // stops, it does not restart
+    await running;
+    await vi.waitFor(() => expect(status(root).dataset.status).toBe('stopped'));
+    expect(face()).toBe('▶ Run');
+    expect(run.classList.contains('is-stop')).toBe(false);
+    expect(run.getAttribute('aria-label')).toBe('Run the sketch (Ctrl+Enter)');
   });
 
   it('keeps a runtime error short in the header, with the full sentence in the console', async () => {
@@ -1041,20 +1087,20 @@ describe('Blocks mode', () => {
   it('New asks only when the blocks differ from the empty program or the last loaded example', async () => {
     const root = await startBlocks();
     const quiet = stubConfirm(false);
-    button(root, 'new').click();
+    pickNew(root);
     await settle();
     expect(quiet).not.toHaveBeenCalled(); // the empty program: nothing to lose
     expect(toastText(root)).toBe('New blank program');
 
     panel().edit(MY_WS);
-    button(root, 'new').click();
+    pickNew(root);
     await settle();
     expect(quiet).toHaveBeenCalledTimes(1);
     expect(quiet.mock.calls[0][0]).toBe('Start a new blank program?\nYour current blocks will be lost.');
     expect(fingerprint(panel().getWorkspaceJson())).toBe(fingerprint(MY_WS));
 
     const accept = stubConfirm(true);
-    button(root, 'new').click();
+    pickNew(root);
     await settle();
     expect(accept).toHaveBeenCalledTimes(1);
     expect(fingerprint(panel().getWorkspaceJson())).toBe(fingerprint(DEFAULT_WS));
@@ -1065,7 +1111,7 @@ describe('Blocks mode', () => {
     await settle();
     expect(fingerprint(panel().getWorkspaceJson())).toBe(fingerprint(BLINK_WS));
     const again = stubConfirm(false);
-    button(root, 'new').click();
+    pickNew(root);
     await settle();
     expect(again).not.toHaveBeenCalled();
     expect(fingerprint(panel().getWorkspaceJson())).toBe(fingerprint(DEFAULT_WS));
@@ -1080,7 +1126,7 @@ describe('Blocks mode', () => {
     root = await reload();
     expect(fingerprint(panel().getWorkspaceJson())).toBe(fingerprint(BLINK_WS)); // restored from z1.blocks
     const confirm = stubConfirm(false);
-    button(root, 'new').click();
+    pickNew(root);
     await settle();
     expect(confirm).not.toHaveBeenCalled();
     expect(fingerprint(panel().getWorkspaceJson())).toBe(fingerprint(DEFAULT_WS));
