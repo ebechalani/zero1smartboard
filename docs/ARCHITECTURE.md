@@ -795,8 +795,9 @@ WCAG AA on its background). Responsive grid:
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│ header: ZERO1 Simulator · [Code|Blocks] · [＋ New] [Examples ▾] [▶ Run] │
-│   [■ Stop] [⚙ Settings ▾] [🔗 Share · Ali K… ▾] [∞ Arduino IDE]        │
+│ header: ZERO1 Simulator · [Code|Blocks|Python] · [＋ New ▾]          │
+│   [▶ Run ⇄ ■ Stop] [⚙ Settings ▾] [🔗 Share · Ali K… ▾] [∞ Arduino IDE] │
+│                       ＋ New ▾: New blank sketch · the examples by topic │
 │   [⬆ Upload] · run status                                              │
 │                       Settings ▾: Reset the board · Board settings… ·   │
 │                                   About…                                │
@@ -817,6 +818,10 @@ Code | Blocks switch, the actions, run status) is one row from 1366 px wide
 (up to 1439 px the Settings button shows only its ⚙; the run status texts
 stay short, e.g. "2 errors", "Error at 1523 ms"); narrower, the actions
 move to rows of their own under the brand, the mode switch and the status.
+**＋ New ▾** holds "New blank sketch" (the mode's words) and then the examples
+by topic (`examples-menu.ts`, one menu by teacher request); **Run** is one
+button that reads "▶ Run" while idle and a red "■ Stop" (`.is-stop`) while a
+sketch runs, a click then stops it (Ctrl+Enter still restarts, Esc stops).
 Below 1536 px the brand reads "ZERO1 Simulator" (`.z1-title-short`); the full
 name stays in `<title>` and in visually hidden text. Settings and Share are
 dropdown menus (fewer header buttons, by teacher request): **Settings ▾** holds
@@ -1050,7 +1055,7 @@ export function createBoardView(container: HTMLElement, board: Zero1Board): Boar
   dialog), and Esc is ignored while a header menu is open (it closes the menu).
 - Header (docs/PYTHON.md §7.14): at 1366–1439 px the Settings and Arduino IDE
   buttons show their icons only (`aria-label` and tooltip unchanged), so
-  brand, mode switch, the seven actions and the run status stay on one row.
+  brand, mode switch, the actions and the run status stay on one row.
   Upload to board is always shown, except in the review frame (where uploading
   cannot work, a click opens `src/upload/ui/unsupported-dialog.ts`: why, and what
   to do). While it is shown, from 1366 to 1759 px it reads "⬆ Upload" (tinted,

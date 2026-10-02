@@ -149,11 +149,11 @@ describe('review mode', () => {
     expect(postMessage).toHaveBeenCalledWith({ type: 'z1-review-ready' }, '*');
     expect(document.body.dataset.mode).toBe('code'); // not the saved Blocks mode: storage was never read
     expect(editorText(root)).toBe('');
-    for (const name of ['new', 'examples', 'share', 'ide']) expect(slot(root, name).hidden, name).toBe(true);
+    for (const name of ['examples', 'share', 'ide']) expect(slot(root, name).hidden, name).toBe(true); // "＋ New ▾" holds New and the examples
     expect(root.querySelector('dialog.z1-handin')).toBeNull();
     expect(Array.from(root.querySelectorAll('[data-slot="share"] [role="menuitem"]'), (b) => b.textContent)).toEqual(['Copy link', 'Download .ino']);
     // The Settings menu (Reset the board, Board settings…, About…) stays: the teacher may reset and rewire the board.
-    for (const name of ['run', 'stop', 'settings', 'mode-code', 'mode-blocks', 'mode-python']) expect(slot(root, name).hidden, name).toBe(false);
+    for (const name of ['run', 'settings', 'mode-code', 'mode-blocks', 'mode-python']) expect(slot(root, name).hidden, name).toBe(false);
     expect(slot(root, 'upload').hidden).toBe(true); // no upload from a hand-in
     expect(slot(root, 'copy-to-code').hidden).toBe(true); // a copy would write z1.code
     expect(Array.from(root.querySelectorAll('[data-slot="settings"] [role="menuitem"]'), (b) => b.textContent)).toEqual(['Reset the board', 'Board settings…', 'About…']);
@@ -355,7 +355,7 @@ describe('review mode', () => {
     expect(python.state.doc.toString()).not.toContain('saved'); // storage was never read
     python.dispatch({ changes: { from: 0, insert: '# note\n' } });
     window.confirm = () => true;
-    slot(root, 'new').click(); // hidden in the frame, but even a click writes nothing
+    root.querySelector<HTMLButtonElement>('[data-slot="examples"] .z1-menu-item')!.click(); // New: hidden in the frame, but even a click writes nothing
     await new Promise((r) => setTimeout(r, 600));
     expect(python.state.doc.toString().startsWith('from machine import Pin')).toBe(true);
     app!.destroy();

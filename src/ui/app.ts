@@ -30,7 +30,7 @@ import { downloadTextFile, sketchFileName } from './sketch-file';
 import { createArduinoIdeDialog, type ArduinoIdeDialog } from './arduino-ide-dialog';
 import { createAboutDialog, type AboutDialog } from './about-dialog';
 import { createHandinDialog, type HandinDialog, type HandinWork } from './handin-dialog';
-import { createExamplesMenu, type ExamplesMenu, type MenuExample } from './examples-menu';
+import { createExamplesMenu, type ExamplesMenu, type MenuExample, type NewItem } from './examples-menu';
 import { createBuzzerAudio, loadMuted, saveMuted, type BuzzerAudio } from './audio';
 import { isClassroomConfigured } from '../classroom/firebase';
 import { STUDENT_ERROR_TEXT } from '../classroom/errors';
@@ -167,8 +167,6 @@ export class App {
   private readonly mirror: Editor;
 
   private readonly runButton: HTMLButtonElement;
-  private readonly stopButton: HTMLButtonElement;
-  private readonly newButton: HTMLButtonElement;
   private readonly ideButton: HTMLButtonElement;
   private readonly uploadSlot: HTMLButtonElement;
   private readonly statusBox: HTMLElement;
@@ -222,8 +220,6 @@ export class App {
     root.innerHTML = this.template();
 
     this.runButton = this.slot<HTMLButtonElement>('run');
-    this.stopButton = this.slot<HTMLButtonElement>('stop');
-    this.newButton = this.slot<HTMLButtonElement>('new');
     this.ideButton = this.slot<HTMLButtonElement>('ide');
     this.uploadSlot = this.slot<HTMLButtonElement>('upload');
     this.statusBox = this.slot('status');
@@ -336,7 +332,13 @@ export class App {
         : null;
 
     // The menu lists the current mode's examples; a pick goes to that mode (never decided by the example's shape).
-    this.examplesMenu = createExamplesMenu<MenuExample>(this.slot('examples'), this.mode.examples(), (example) => void this.mode.loadExample(example));
+    // "＋ New ▾": a blank sketch first, then the examples (one menu, by teacher request)
+    this.examplesMenu = createExamplesMenu<MenuExample>(
+      this.slot('examples'),
+      this.mode.examples(),
+      (example) => void this.mode.loadExample(example),
+      this.newItem(),
+    );
 
     this.settingsMenu = createMenu(
       this.slot('settings'),
@@ -359,16 +361,15 @@ export class App {
 
     // --- header actions ---------------------------------------------------
     this.createModeButtons();
-    this.newButton.addEventListener('click', () => void this.newSketch());
-    this.runButton.addEventListener('click', () => void this.run());
-    this.stopButton.addEventListener('click', () => void this.stop());
+    // One button: Run while idle, Stop while a sketch runs (Ctrl+Enter still restarts, Esc stops).
+    this.runButton.addEventListener('click', () => void (this.running ? this.stop() : this.run()));
     this.ideButton.addEventListener('click', () => this.openInIde());
     this.copyButton.addEventListener('click', () => void this.copyToCode());
     if (this.handinDialog) this.setHandinName(currentStudentName()); // the previous student's name shows until they press Change
     this.slot('reload').addEventListener('click', () => location.reload());
     if (review) {
       // The teacher reviews one hand-in: no new work, no examples, no links out of the sandbox.
-      for (const slot of ['new', 'examples', 'share', 'ide']) this.slot(slot).hidden = true;
+      for (const slot of ['examples', 'share', 'ide']) this.slot(slot).hidden = true;
       this.uploadButton.dispose(); // review mode: no upload from a hand-in
     }
 
@@ -621,16 +622,23 @@ export class App {
   private setRunning(on: boolean): void {
     this.running = on;
     document.body.dataset.running = on ? 'true' : 'false';
-    this.stopButton.disabled = !on;
-    this.runButton.classList.toggle('is-restart', on);
+    this.runButton.classList.toggle('is-stop', on);
     this.updateRunLabel();
     this.lastMillisShown = -1;
   }
 
-  /** "Run the sketch (Ctrl+Enter)", or "Restart …" while a sketch runs. */
+  /** "▶ Run" while idle, "■ Stop" while a sketch runs: one button, the mode's words. */
   private updateRunLabel(): void {
-    const label = this.mode.words.run;
-    this.runButton.setAttribute('aria-label', this.running ? label.replace(/^Run\b/, 'Restart') : label);
+    const words = this.mode.words;
+    this.runButton.querySelector('[data-role="icon"]')!.textContent = this.running ? '■' : '▶';
+    this.runButton.querySelector('[data-role="label"]')!.textContent = this.running ? 'Stop' : 'Run';
+    this.runButton.setAttribute('aria-label', this.running ? words.stop : words.run);
+    this.runButton.title = this.running ? 'Stop (Esc)' : 'Run (Ctrl+Enter)';
+  }
+
+  /** The first item of "＋ New ▾", in the current mode's words. */
+  private newItem(): NewItem {
+    return { label: this.mode.words.newTitle, title: this.mode.words.newAria, onSelect: () => void this.newSketch() };
   }
 
   /**
@@ -800,9 +808,7 @@ export class App {
 
     // Header words: what Run, Stop, New, Arduino IDE and Upload act on.
     this.updateRunLabel();
-    this.stopButton.setAttribute('aria-label', mode.words.stop);
-    this.newButton.setAttribute('aria-label', mode.words.newAria);
-    this.newButton.title = mode.words.newTitle;
+    this.examplesMenu.setNewItem(this.newItem());
     this.ideButton.setAttribute('aria-label', mode.words.ide);
     this.uploadSlot.setAttribute('aria-label', mode.words.upload);
 
@@ -1278,10 +1284,8 @@ export class App {
           </div>
           <div class="z1-mode" role="group" aria-label="Programming mode" data-slot="modes"></div>
           <nav class="z1-toolbar" aria-label="Sketch actions">
-            <button type="button" class="z1-btn" data-slot="new" aria-label="Start a new blank sketch" title="New blank sketch"><span aria-hidden="true">＋</span> New</button>
             <div data-slot="examples"></div>
-            <button type="button" class="z1-btn z1-btn-run" data-slot="run" aria-label="Run the sketch (Ctrl+Enter)" title="Run (Ctrl+Enter)"><span aria-hidden="true">▶</span> Run</button>
-            <button type="button" class="z1-btn z1-btn-stop" data-slot="stop" aria-label="Stop the sketch (Esc)" title="Stop (Esc)" disabled><span aria-hidden="true">■</span> Stop</button>
+            <button type="button" class="z1-btn z1-btn-run" data-slot="run" aria-label="Run the sketch (Ctrl+Enter)" title="Run (Ctrl+Enter)"><span aria-hidden="true" data-role="icon">▶</span> <span data-role="label">Run</span></button>
             <div data-slot="settings"></div>
             <div data-slot="share"></div>
             <button type="button" class="z1-btn" data-slot="ide" aria-label="Open this sketch in the Arduino IDE" title="Open in the Arduino IDE"><span aria-hidden="true">∞</span> <span class="z1-btn-label">Arduino IDE</span></button>
