@@ -154,7 +154,8 @@ Deleting an old release without files is harmless.
 2. `tools/fetch-toolchain.mjs`: the wasm tools from `$ZERO1_TOOLCHAIN_DIR`
    (a local build), `$ZERO1_TOOLCHAIN_URL` / `$ZERO1_TOOLCHAIN_TAG`, or the
    newest release; writes `public/toolchain/manifest.json`. Without a release
-   it removes the manifest and the build still succeeds.
+   or without the bundle of step 1 it removes the manifest and `tools/`, and
+   the build still succeeds (the site then has no compiler of its own).
 3. `tsc`, `vite build` (`public/toolchain/` is copied as is; `.gitignore`d),
    `scripts/check-bundle.mjs`.
 
@@ -162,6 +163,17 @@ Local development: `ZERO1_TOOLCHAIN_DIR=/path/to/toolchain/out npm run build`
 or `npm run toolchain:bundle && ZERO1_TOOLCHAIN_DIR=… npm run toolchain:fetch`
 once, then `npm run dev` (Vite serves `public/` directly; the feature works on
 `localhost`, a secure context).
+
+### Other hosts (Vercel)
+
+The repository is also deployed by Vercel, whose build machines have no
+`avr-gcc`: its builds have no bundle, hence no `toolchain/` of their own.
+`vercel.json` therefore proxies `/toolchain/*` to the GitHub Pages site
+(`https://ebechalani.github.io/zero1smartboard/toolchain/*`, an external
+rewrite: the browser still sees the Vercel address, so the worker's fetches
+stay same-origin). Upload to board then works on the Vercel address too, with
+the compiler built and tested by the GitHub deploy; nothing extra to publish.
+Before this, the Vercel copy never showed Upload (a teacher used that address).
 
 ### Tests
 

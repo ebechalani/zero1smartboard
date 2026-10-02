@@ -45,8 +45,12 @@ const sha256 = (buf) => createHash('sha256').update(buf).digest('hex');
 function giveUp(why) {
   console.error(`[toolchain] ${why}`);
   if (opt.strict) process.exit(1);
+  // No manifest, and no tools either: a site without its own compiler ships none (16 MB unused),
+  // and a host that proxies toolchain/ to a site that has one (vercel.json) gets every file from
+  // that one site, never a manifest from one release with tools from another.
   rmSync(MANIFEST, { force: true });
-  console.error('[toolchain] WARNING: public/toolchain/manifest.json removed; the site builds without "Upload to board".');
+  rmSync(TOOLS_DIR, { recursive: true, force: true });
+  console.error('[toolchain] WARNING: public/toolchain/manifest.json and tools/ removed; the site builds without its own "Upload to board" compiler.');
   process.exit(0);
 }
 
