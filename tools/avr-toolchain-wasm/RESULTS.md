@@ -80,3 +80,37 @@ binutils (as, ld, objcopy) was built twice from a wiped build tree with the fina
 (`strings | grep` of the work directory: 0 hits). GCC was built once with the final flags; its
 determinism across two runs is checked by the CI workflow (two independent Docker builds must
 produce the same `SHA256SUMS`) and is not demonstrated here.
+
+## Docker build (the CI environment, 2026-10-01)
+
+The first release run (`avr-toolchain-wasm-v1.0.0`) failed in `./build.sh gcc`:
+`build.sh` configures GCC with `--with-as=/usr/bin/avr-as --with-ld=/usr/bin/avr-ld`,
+and `gcc/configure` stops with `cannot execute: /usr/bin/avr-ld` when they are
+missing. The development machine had `binutils-avr`; the `debian:bookworm-slim`
+image did not. Reproduced on the development machine by pointing both options at
+missing files: the same error and `make` exit status 2 after the same ~2–3 minutes.
+The Dockerfile now uses `ubuntu:24.04` with `binutils-avr`
+(2.26.20160125+Atmel3.7.0-2, the same as the development machine).
+
+A full `docker build` of that Dockerfile on the development machine (only the
+sandbox's proxy certificate and https package sources added) passed every stage
+(gcc: 5 min 50 s; 17 min in total). Compared with the host build above:
+
+| file | Docker build SHA-256 | vs host build |
+|---|---|---|
+| avr-as / avr-ld / avr-objcopy (`.wasm` + `.mjs`) | as listed above | identical |
+| cc1.mjs, cc1plus.mjs | as listed above | identical |
+| cc1plus.wasm | `6474a632041fc8f5890ad4f4b3c7d7ccb570db60a5d1af011d5559cf0730201d` | 16 bytes differ |
+| cc1.wasm | `d09a6503d6e0fc908679da5295c08a91f4c08f25b4df96b0d2204ba6f0c50ace` | 16 bytes differ |
+
+The 16 bytes are GCC's `executable_checksum` (used only to validate precompiled
+headers and printed by `-version`). `genchecksum` hashes the object files together
+with `gcc/checksum-options`, the link command line, which contains the build
+directories (`-ffile-prefix-map=$WORK=/w`, `--pre-js $HERE/emscripten-pre.js`).
+Re-running `genchecksum` on the host build's objects with only those two paths
+changed to the Docker ones gives exactly the Docker values, so every object file
+(all generated code) is identical. Two builds at the same paths, such as the two
+CI builds in `/build`, produce identical files; builds at other paths differ in
+these 16 bytes only. With the Docker-built tools, `npm run test:hardware-sim`
+(90 tests, `ZERO1_REQUIRE_TOOLCHAIN=1`), `tests/upload-toolchain-node.test.ts`
+and `test/smoke.mjs` pass.

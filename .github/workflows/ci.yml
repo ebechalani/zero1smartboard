@@ -13,7 +13,7 @@ concurrency:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04 # its gcc-avr is 7.3.0, the GCC of cc1plus.wasm; a newer Ubuntu ships another
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

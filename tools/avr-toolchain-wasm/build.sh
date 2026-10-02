@@ -12,8 +12,8 @@
 #   EMSDK_VERSION  Emscripten release to install (default below; also in Dockerfile)
 #
 # Outputs (WORK/out/): cc1plus.mjs+wasm, avr-as.mjs+wasm, avr-ld.mjs+wasm,
-# avr-objcopy.mjs+wasm, SHA256SUMS, SOURCES.txt, VERSIONS.json.
-set -euo pipefail
+# avr-objcopy.mjs+wasm, cc1.mjs+wasm, SHA256SUMS, SOURCES.txt.
+set -Eeuo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORK="${WORK:-$HERE/work}"
@@ -71,13 +71,32 @@ EM_STACK_BINUTILS=-sSTACK_SIZE=8MB
 C_COMPAT="-Wno-error=implicit-function-declaration -Wno-error=implicit-int -Wno-error=int-conversion -Wno-error=incompatible-function-pointer-types -Wno-error=incompatible-pointer-types"
 
 log() { printf '\n[%s] %s\n' "$(date +%H:%M:%S)" "$*" >&2; }
+# The stages send the tools' output to $LOGS/*.log; when a step fails, show the
+# end of the newest log and any configure error, or CI only says "exit code 2".
+show_logs_on_error() {
+  local newest
+  newest="$(ls -t "$LOGS"/*.log 2>/dev/null | head -1)" || true
+  [ -n "$newest" ] || return 0
+  { echo "---- last 40 lines of $newest ----"; tail -n 40 "$newest"
+    echo "---- configure errors in $LOGS ----"; grep -h "configure: error" "$LOGS"/*.log || echo "(none)"; } >&2
+}
+trap show_logs_on_error ERR
 sha_check() { echo "$2  $1" | sha256sum -c - >/dev/null || { echo "SHA-256 mismatch for $1" >&2; exit 1; }; }
-fetch_tar() { local url="$1" name="$2" sha="$3"; [ -f "$SRC/$name" ] || curl -sSfL -o "$SRC/$name" "$url"; sha_check "$SRC/$name" "$sha"; }
+fetch_tar() { local url="$1" name="$2" sha="$3"; [ -f "$SRC/$name" ] || curl -sSfL --retry 5 --retry-all-errors --retry-delay 10 -o "$SRC/$name" "$url"; sha_check "$SRC/$name" "$sha"; }
+# git clone <args...> <dest>, up to 3 tries: the GCC clone is ~800 MB and CI fetches it twice
+clone_retry() {
+  local dest="${!#}" i
+  for i in 1 2 3; do
+    git clone "$@" && return 0
+    rm -rf "$dest"; log "git clone failed (try $i of 3)"; [ "$i" = 3 ] || sleep 20
+  done
+  return 1
+}
 
 stage_fetch() {
   log "fetch sources"
   export GIT_TERMINAL_PROMPT=0
-  if [ ! -d "$SRC/gcc/.git" ]; then git clone --depth 1 --branch "$GCC_TAG" "$GCC_REPO" "$SRC/gcc"; fi
+  if [ ! -d "$SRC/gcc/.git" ]; then clone_retry --depth 1 --branch "$GCC_TAG" "$GCC_REPO" "$SRC/gcc"; fi
   local got; got="$(git -C "$SRC/gcc" rev-parse HEAD)"
   [ "$got" = "$GCC_COMMIT" ] || { echo "gcc checkout is $got, expected $GCC_COMMIT" >&2; exit 1; }
   fetch_tar "$BINUTILS_URL" "$BINUTILS_TAR" "$BINUTILS_SHA"
@@ -122,8 +141,13 @@ stage_patch() {
 stage_emsdk() {
   log "emsdk $EMSDK_VERSION"
   export GIT_TERMINAL_PROMPT=0
-  [ -d "$WORK/emsdk/.git" ] || git clone --depth 1 "$EMSDK_REPO" "$WORK/emsdk"
-  ( cd "$WORK/emsdk" && ./emsdk install "$EMSDK_VERSION" && ./emsdk activate "$EMSDK_VERSION" ) >"$LOGS/emsdk.log" 2>&1
+  [ -d "$WORK/emsdk/.git" ] || clone_retry --depth 1 "$EMSDK_REPO" "$WORK/emsdk"
+  local i   # the toolchain download (~330 MB) gets 3 tries too
+  for i in 1 2 3; do
+    ( cd "$WORK/emsdk" && ./emsdk install "$EMSDK_VERSION" && ./emsdk activate "$EMSDK_VERSION" ) >"$LOGS/emsdk.log" 2>&1 && break
+    [ "$i" = 3 ] && { echo "emsdk install failed 3 times" >&2; tail -n 20 "$LOGS/emsdk.log" >&2; exit 1; }
+    log "emsdk install failed (try $i of 3)"; sleep 20
+  done
 }
 
 em_env() {
@@ -211,6 +235,10 @@ stage_binutils_package() {
 stage_gcc() {
   em_env
   log "gcc configure"
+  # gcc/configure (run by 'make all-gcc') probes these for assembler features.
+  for t in /usr/bin/avr-as /usr/bin/avr-ld; do
+    [ -x "$t" ] || { echo "$t not found: install binutils-avr (GCC's configure needs it, see Dockerfile)" >&2; exit 1; }
+  done
   mkdir -p "$WORK/build-gcc" && cd "$WORK/build-gcc"
   [ -f config.status ] || "$SRC/gcc/configure" --build="$BUILD" --host="$HOST" --target=avr --prefix="$PREFIX" \
       --with-gmp="$DEPS" --with-mpfr="$DEPS" --with-mpc="$DEPS" --without-isl \

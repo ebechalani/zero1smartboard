@@ -109,17 +109,32 @@ notices page `public/THIRD_PARTY_NOTICES.md` linked from the dialog).
 
 ### Publish a toolchain release (once, and after every toolchain change)
 
-1. Copy `tools/avr-toolchain-wasm/.github-workflow.yml` to
-   `.github/workflows/avr-toolchain-wasm.yml` (kept out of the workflow folder
-   so the toolchain folder is self-contained).
-2. Tag: `git tag avr-toolchain-wasm-v1.0.0 && git push origin avr-toolchain-wasm-v1.0.0`.
-   The workflow builds twice in Docker (about 15 minutes each), checks both
-   builds are byte-identical, smoke-tests the modules and attaches
-   `*.wasm`, `*.mjs`, `SHA256SUMS` and `SOURCES.txt` to a GitHub release with
-   that tag.
-3. The next site build picks up the newest `avr-toolchain-wasm-v*` release
-   automatically (`tools/fetch-toolchain.mjs`), verifies `SHA256SUMS` and
-   records the tag in `public/toolchain/manifest.json` (`release`).
+The workflow is `.github/workflows/avr-toolchain-wasm.yml` (a copy is kept in
+`tools/avr-toolchain-wasm/.github-workflow.yml`; keep the two identical). It runs
+when a tag `avr-toolchain-wasm-v…` is pushed, and a release published from the
+GitHub website creates and pushes its tag. Use a new version number each time
+(v1.0.1, v1.0.2, …): a tag made before a fix still points at the old code.
+
+1. On GitHub: **Releases → Draft a new release → Choose a tag**, type the new tag
+   exactly (for example `avr-toolchain-wasm-v1.0.1`), choose **Create new tag on
+   publish**, leave the target on `main`, give it a title, and click **Publish
+   release** (not *Save draft*: a draft creates no tag, so nothing runs).
+2. **Actions → avr-toolchain-wasm** shows a run for that tag. It builds twice in
+   Docker (about 20 minutes), checks that both builds are byte-identical, compiles
+   a C++ and a C function through all five tools (`tools/avr-toolchain-wasm/test/smoke.mjs`),
+   then attaches `*.wasm`, `*.mjs`, `SHA256SUMS` and `SOURCES.txt` to the release
+   (it also replaces the release description with its own text).
+3. When that run succeeds, **Build, test and deploy to GitHub Pages** starts by
+   itself (`workflow_run`), picks up the newest `avr-toolchain-wasm-v*` release
+   (`tools/fetch-toolchain.mjs`), verifies `SHA256SUMS`, records the tag in
+   `public/toolchain/manifest.json` (`release`) and deploys. Its *Toolchain status*
+   step prints `Upload feature ON: <tag>`; a deploy started this way fails instead
+   of deploying without the compiler. A deploy started any other way (a push to
+   `main`, *Run workflow*) only warns when no usable release exists.
+
+Never turn a release that has its files back into a draft and publish it again:
+the newest published release wins, so an empty one would switch Upload off again.
+Deleting an old release without files is harmless.
 
 ### The site build
 
