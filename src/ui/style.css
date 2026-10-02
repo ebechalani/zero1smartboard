@@ -325,12 +325,17 @@ p {
   border-color: var(--accent-strong);
 }
 
-/* Upload to board: tinted so that it stands out next to the plain actions. */
+/* Upload to board: tinted so that it stands out next to the plain actions
+   (its resting tint is their hover look, so its own hover is a shade darker). */
 .z1-btn-upload {
   background: var(--accent-tint);
   border-color: var(--accent);
   color: var(--accent-strong);
   font-weight: 600;
+}
+.z1-btn-upload:hover:not(:disabled) {
+  background: #ddd3fb;
+  border-color: var(--accent-strong);
 }
 
 .z1-btn-stop:not(:disabled) {

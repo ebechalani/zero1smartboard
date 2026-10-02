@@ -157,6 +157,11 @@ describe('review mode', () => {
     expect(slot(root, 'upload').hidden).toBe(true); // no upload from a hand-in
     expect(slot(root, 'copy-to-code').hidden).toBe(true); // a copy would write z1.code
     expect(Array.from(root.querySelectorAll('[data-slot="settings"] [role="menuitem"]'), (b) => b.textContent)).toEqual(['Reset the board', 'Board settings…', 'About…']);
+    // About stays, without a link: the sandbox has no allow-popups (a link would do nothing)
+    const about = root.querySelector<HTMLDialogElement>('dialog.z1-about')!;
+    expect(about.querySelector('a')).toBeNull();
+    expect(about.textContent).toContain('THIRD_PARTY_NOTICES.md');
+    expect(about.textContent).toContain('All rights reserved.');
     expect(location.hash).toBe('#review'); // the hash is not a share link and stays
   });
 

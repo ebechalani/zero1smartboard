@@ -318,7 +318,7 @@ export class App {
     });
 
     this.ideDialog = createArduinoIdeDialog(root);
-    this.aboutDialog = createAboutDialog(root);
+    this.aboutDialog = createAboutDialog(root, { links: !review }); // review frame: a sandbox without popups
     this.uploadButton = installUploadButton({
       button: this.uploadSlot,
       parent: root,

@@ -1,8 +1,9 @@
 /**
  * Settings ▾ → About: who made the ZERO1 Smart Board and this simulator, and the rights.
- * The open-source tools the site ships (the AVR compiler for "Upload to board", Blockly,
- * CodeMirror, ...) keep their own licences: the dialog links to their notices
- * (public/THIRD_PARTY_NOTICES.md), as the GPL requires for the compiler.
+ * "Upload to board" ships open-source software under its own licences (the GPL-3.0 AVR
+ * compiler, the Arduino core and libraries): the dialog links to their notices
+ * (public/THIRD_PARTY_NOTICES.md), as the GPL requires. In the teacher's review frame
+ * (a sandbox without popups, and no Upload there) the address is plain text.
  */
 
 export interface AboutDialog {
@@ -18,8 +19,9 @@ export const ABOUT_TEXT = {
   rights: '© 2026 ZERO1 Education. All rights reserved.',
   board: 'The ZERO1 Smart Board was created by Wissam Daccache.',
   simulator: 'The simulator was made by Eddy Bachaalany.',
-  notices: 'This site also uses open-source software, each part under its own licence:',
+  notices: 'Upload to board uses open-source software (the AVR compiler, the Arduino core and libraries) under their own licences:',
   noticesLink: 'licences and source code',
+  noticesPlain: 'see THIRD_PARTY_NOTICES.md on the simulator site',
 } as const;
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, className?: string, text?: string): HTMLElementTagNameMap[K] {
@@ -30,7 +32,7 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, className?: string, t
 }
 
 /** Create the About `<dialog>` (closed) and append it to `parent` (the app root). */
-export function createAboutDialog(parent: HTMLElement, options: { noticesUrl?: string } = {}): AboutDialog {
+export function createAboutDialog(parent: HTMLElement, options: { noticesUrl?: string; links?: boolean } = {}): AboutDialog {
   const dialog = el('dialog', 'z1-dialog z1-about');
   dialog.setAttribute('aria-labelledby', 'z1-about-title');
   const form = el('form', 'z1-dialog-form');
@@ -42,11 +44,15 @@ export function createAboutDialog(parent: HTMLElement, options: { noticesUrl?: s
   const credits = el('ul', 'z1-about-credits');
   credits.append(el('li', undefined, ABOUT_TEXT.board), el('li', undefined, ABOUT_TEXT.simulator));
   const notices = el('p', 'z1-about-notices', `${ABOUT_TEXT.notices} `);
-  const link = el('a', undefined, ABOUT_TEXT.noticesLink);
-  link.href = options.noticesUrl ?? 'THIRD_PARTY_NOTICES.md';
-  link.target = '_blank';
-  link.rel = 'noopener';
-  notices.append(link, '.');
+  if (options.links === false) {
+    notices.append(`${ABOUT_TEXT.noticesPlain}.`);
+  } else {
+    const link = el('a', undefined, ABOUT_TEXT.noticesLink);
+    link.href = options.noticesUrl ?? 'THIRD_PARTY_NOTICES.md';
+    link.target = '_blank';
+    link.rel = 'noopener';
+    notices.append(link, '.');
+  }
   const actions = el('div', 'z1-dialog-actions');
   actions.appendChild(el('span', 'z1-spacer'));
   const close = el('button', 'z1-btn z1-btn-primary', 'Close');

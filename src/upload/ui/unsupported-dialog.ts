@@ -19,7 +19,7 @@ export const UNSUPPORTED_ADVICE: Record<UnsupportedReason, string[]> = {
     'Use Google Chrome or Microsoft Edge on a Windows, Mac or Linux computer, or on a Chromebook.',
     'Phones, tablets, Firefox and Safari cannot send a program to the board.',
   ],
-  'insecure-context': ['Open the page from its https:// address.'],
+  'insecure-context': ['Open the page from its https:// address, in Google Chrome or Microsoft Edge on a computer.'],
   'no-wasm': ['Turn WebAssembly back on, or use another computer.'],
   'no-module-worker': ['Update Chrome or Edge, then reload this page.'],
   'no-toolchain': ['Open the ZERO1 Simulator from the address your teacher gave you.'],

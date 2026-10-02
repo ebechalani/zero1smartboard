@@ -91,8 +91,10 @@ export function supportsModuleWorkers(): boolean {
 /** The synchronous part of feature detection (everything but the manifest). */
 export function browserSupportsUpload(serial: WebSerialLike | null = getWebSerial()): UploadSupport {
   const fail = (reason: UnsupportedReason): UploadSupport => ({ ok: false, reason, message: UNSUPPORTED_TEXT[reason] });
-  if (!serial) return fail('no-serial');
+  // First: Chrome and Edge expose navigator.serial only on secure pages, so on a plain http:// copy
+  // the missing serial would otherwise send a Chrome user off to "use Chrome or Edge".
   if ((globalThis as { isSecureContext?: boolean }).isSecureContext === false) return fail('insecure-context');
+  if (!serial) return fail('no-serial');
   if (typeof WebAssembly === 'undefined' || typeof WebAssembly.instantiate !== 'function') return fail('no-wasm');
   if (!supportsModuleWorkers()) return fail('no-module-worker');
   return { ok: true, message: '' };

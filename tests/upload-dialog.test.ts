@@ -9,7 +9,7 @@
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createUploadDialog, HELP_TEXT, sizeText, type UploadDialog } from '../src/upload/ui/upload-dialog';
-import { installUploadButton, UNSUPPORTED_ADVICE, UNSUPPORTED_FALLBACK, UNSUPPORTED_TEXT } from '../src/upload';
+import { browserSupportsUpload, installUploadButton, UNSUPPORTED_ADVICE, UNSUPPORTED_FALLBACK, UNSUPPORTED_TEXT } from '../src/upload';
 import type { ConsoleMessage } from '../src/types';
 import { FAILED_BUILD, FakeUploadService, OK_BUILD, type FakeUploadServiceOptions } from './fakes/upload/fake-upload-service';
 
@@ -385,6 +385,20 @@ describe('installUploadButton', () => {
     installed.dispose();
     expect(button.hidden).toBe(true);
     expect(parent.querySelector('dialog')).toBeNull();
+  });
+
+  it('an http:// page is "insecure-context", not "use Chrome": Chrome and Edge expose no navigator.serial there', () => {
+    const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'isSecureContext');
+    Object.defineProperty(globalThis, 'isSecureContext', { value: false, configurable: true });
+    try {
+      // Chromium on http://192.168.1.20:4173: no navigator.serial at all
+      expect(browserSupportsUpload(null)).toMatchObject({ ok: false, reason: 'insecure-context', message: UNSUPPORTED_TEXT['insecure-context'] });
+      expect(UNSUPPORTED_ADVICE['insecure-context'][0]).toContain('https://');
+    } finally {
+      if (descriptor) Object.defineProperty(globalThis, 'isSecureContext', descriptor);
+      else delete (globalThis as { isSecureContext?: boolean }).isSecureContext;
+    }
+    expect(browserSupportsUpload(null).reason).toBe('no-serial'); // a secure page without Web Serial: Firefox, Safari
   });
 
   it('a site without the compiler (no toolchain/manifest.json) says so on click', async () => {
