@@ -4,7 +4,8 @@ The **Upload to board** feature of the ZERO1 Smart Board simulator compiles the
 student's sketch inside the browser and sends it to the board. To do that the
 site ships, under `toolchain/`, programs and libraries written by others. This
 page lists them, with their licences, and says where to get their source code.
-The simulator itself is MIT-licensed (see the repository).
+The simulator itself is © 2026 ZERO1 Education, all rights reserved; the two
+ZERO1 editions of Arduino libraries below are MIT-licensed.
 
 ## 1. The compiler: GCC 7.3.0 and GNU binutils 2.42 as WebAssembly (GPL-3.0-or-later)
 

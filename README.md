@@ -156,4 +156,12 @@ every push to `main`. One-time setup in the GitHub repository:
 
 ## Licence
 
-MIT.
+© 2026 ZERO1 Education. All rights reserved.
+The ZERO1 Smart Board was created by Wissam Daccache; the simulator was made by Eddy Bachaalany.
+
+Parts written by others keep their own licences and are listed, with where to
+get their source code, in [`public/THIRD_PARTY_NOTICES.md`](public/THIRD_PARTY_NOTICES.md):
+among them the "Upload to board" compiler (GCC and binutils, GPL-3.0-or-later;
+its build is in `tools/avr-toolchain-wasm/`). The two Arduino libraries in
+`tools/arduino-libs/` (LiquidCrystal_I2C and NewPing, ZERO1 editions), which are
+compiled into the students' programs, stay under the MIT licence in their folders.

@@ -13,6 +13,10 @@ import { RealtimeSimSerialPort } from './fakes/upload/realtime-webserial';
 import { newOptibootUno, compareFlash, readText, fixture } from './fakes/upload/scenario';
 import type { UploadProgress } from '../src/upload/serial/uploader';
 
+// Real-time emulation of a whole upload (about 2-3 s alone, several times that under a full
+// parallel test run): the first test bounds itself at 20 s, so give both well over the 5 s default.
+const EMULATED_UPLOAD_TIMEOUT_MS = 60_000;
+
 test('real-time upload through the Web Serial adapter to Optiboot in the emulator', async () => {
   const sim = newOptibootUno();
   sim.runForMs(200);
@@ -32,7 +36,7 @@ test('real-time upload through the Web Serial adapter to Optiboot in the emulato
   } finally {
     port.stop();
   }
-});
+}, EMULATED_UPLOAD_TIMEOUT_MS);
 
 test('port held by another program → PORT error naming the Serial Monitor', async () => {
   const sim = newOptibootUno();
@@ -79,7 +83,7 @@ test('cable pulled mid-upload → PORT "Lost the connection"', async () => {
   } finally {
     port.stop();
   }
-});
+}, EMULATED_UPLOAD_TIMEOUT_MS);
 
 /** Minimal scripted SerialPort for adapter-level behaviour. */
 function scriptedPort(chunks: (Uint8Array | Error)[]): WebSerialPortLike & { closed: boolean } {

@@ -39,6 +39,10 @@ The teacher's decisions this spec builds on (fixed):
 
 ### 0.1 Upload to board is not live yet (prerequisite, not a Python task)
 
+**Update 2026-10-02: done.** The release `avr-toolchain-wasm-v1.0.1` (the v1.0.0 run failed: the
+Docker image lacked `binutils-avr`, fixed in PR #8) built the compiler, and the deploy that followed
+logged `Upload feature ON: avr-toolchain-wasm-v1.0.1`. The text below is the state before.
+
 Checked on 2026-09-28 with the GitHub API: `ebechalani/zero1smartboard` has **no releases and no
 tags**, and the `avr-toolchain-wasm` workflow has **0 runs**. The latest Pages deploy
 ([run 36460925696](https://github.com/ebechalani/zero1smartboard/actions/runs/36460925696),
@@ -2435,7 +2439,7 @@ Both take `exportWork()` (fresh translation). With errors: the same toast; nothi
   source `'python'`, and the C++ hints replaced by the X-sketch-error text (except "sketch too
   big", shown as is). Success in Python mode: "Done — the program is running on the board. Its
   print() output: open the Arduino IDE Serial Monitor at 9600 baud."
-- Reminder: the Upload button is hidden on the live site until §0.1 is done.
+- Upload to board is live since 2026-10-02 (§0.1).
 
 ### 7.13 Review mode (teacher replay)
 

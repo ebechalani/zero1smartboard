@@ -797,7 +797,9 @@ WCAG AA on its background). Responsive grid:
 ┌─────────────────────────────────────────────────────────────────────┐
 │ header: ZERO1 Simulator · [Code|Blocks] · [＋ New] [Examples ▾] [▶ Run] │
 │   [■ Stop] [⚙ Settings ▾] [🔗 Share · Ali K… ▾] [∞ Arduino IDE]        │
-│   · run status        Settings ▾: Reset the board · Board settings…     │
+│   [⬆ Upload] · run status                                              │
+│                       Settings ▾: Reset the board · Board settings… ·   │
+│                                   About…                                │
 │                       Share ▾: Hand in to my teacher · Copy link ·      │
 │                                Download .ino                            │
 ├───────────────────────────────┬─────────────────────────────────────┤
@@ -818,7 +820,10 @@ move to rows of their own under the brand, the mode switch and the status.
 Below 1536 px the brand reads "ZERO1 Simulator" (`.z1-title-short`); the full
 name stays in `<title>` and in visually hidden text. Settings and Share are
 dropdown menus (fewer header buttons, by teacher request): **Settings ▾** holds
-Reset the board and Board settings…, **Share ▾** holds Hand in to my teacher,
+Reset the board, Board settings… and About… (`about-dialog.ts`: © 2026 ZERO1
+Education, all rights reserved; the board by Wissam Daccache, the simulator by
+Eddy Bachaalany; a link to `THIRD_PARTY_NOTICES.md`, plain text in the review
+frame, whose sandbox has no popups), **Share ▾** holds Hand in to my teacher,
 Copy link and Download .ino. The Hand in item exists only when the class
 platform is configured (`isClassroomConfigured()`, docs/CLASSROOM.md §1.1);
 while a name is remembered the Share button reads "Share · Ali Khoury" (the
@@ -925,7 +930,8 @@ export function createBoardView(container: HTMLElement, board: Zero1Board): Boar
   items, Esc closes it and refocuses the trigger, Tab or a pointer down
   outside closes it, an item click closes it then runs its action). Three
   header menus are built on it: Examples (`examples-menu.ts`), **Settings ▾**
-  (Reset the board = `App.reset()`; Board settings… = the settings dialog)
+  (Reset the board = `App.reset()`; Board settings… = the settings dialog;
+  About… = the About dialog)
   and **Share ▾**. The Share menu acts at once, without a dialog: **Copy
   link** puts the `#code=` / `#blocks=` / `#python=` link on the clipboard and toasts
   "Link copied" (when the clipboard refuses or is missing: a toast and a
@@ -1039,15 +1045,20 @@ export function createBoardView(container: HTMLElement, board: Zero1Board): Boar
   `buzzer.state.freq` (start on first user gesture; gain 0.05; mute toggle).
 - Examples menu (`examples-menu.ts`, on `menu.ts`): grouped list from `src/examples/index.ts`.
 - Keyboard: `Ctrl/Cmd+Enter` run, `Esc` stop — both ignored while the
-  Settings, Hand in, Arduino IDE, Upload or What works dialog is open (Esc then closes the
+  Settings, Hand in, Arduino IDE, Upload, "cannot upload here", About or What works dialog
+  is open (Esc then closes the
   dialog), and Esc is ignored while a header menu is open (it closes the menu).
 - Header (docs/PYTHON.md §7.14): at 1366–1439 px the Settings and Arduino IDE
   buttons show their icons only (`aria-label` and tooltip unchanged), so
   brand, mode switch, the seven actions and the run status stay on one row.
-  While Upload to board is shown, Upload and Arduino IDE show their icons only
-  from 1366 to 1759 px (`.z1-toolbar:has(…upload:not([hidden]))`), which keeps
-  one row with "Share · <name>" and "Error at 12345 ms" (measured in Chromium
-  at 1366, 1440, 1536 and 1600 px); below 1366 px the
+  Upload to board is always shown, except in the review frame (where uploading
+  cannot work, a click opens `src/upload/ui/unsupported-dialog.ts`: why, and what
+  to do). While it is shown, from 1366 to 1759 px it reads "⬆ Upload" (tinted,
+  `.z1-btn-upload`) and Arduino IDE and Settings show their icons only
+  (`.z1-toolbar:has(…upload:not([hidden]))`), and at 1366–1439 px the name after
+  "Share" is cut at 8ch; this keeps one row with "Share · <name>" and
+  "Running · 1234567 ms" (measured in Chromium at 1366, 1400, 1439, 1440, 1536,
+  1600 and 1759 px). A bare ⬆ was too easy to miss. Below 1366 px the
   actions get a row of their own. Entering a mode toasts its name ("Python
   mode").
 - Upload to board (`src/upload`): `getSketch()` gives an `UploadPayload`

@@ -28,6 +28,7 @@ import { createSettingsDialog, type SettingsDialog } from './settings';
 import { createMenu, type Menu, type MenuGroup } from './menu';
 import { downloadTextFile, sketchFileName } from './sketch-file';
 import { createArduinoIdeDialog, type ArduinoIdeDialog } from './arduino-ide-dialog';
+import { createAboutDialog, type AboutDialog } from './about-dialog';
 import { createHandinDialog, type HandinDialog, type HandinWork } from './handin-dialog';
 import { createExamplesMenu, type ExamplesMenu, type MenuExample } from './examples-menu';
 import { createBuzzerAudio, loadMuted, saveMuted, type BuzzerAudio } from './audio';
@@ -150,6 +151,7 @@ export class App {
   /** Header "Settings ▾": Reset the board, Board settings…. */
   private readonly settingsMenu: Menu;
   private readonly ideDialog: ArduinoIdeDialog;
+  private readonly aboutDialog: AboutDialog;
   /** "Upload to board" (shown only in browsers with Web Serial and when the toolchain is deployed). */
   private readonly uploadButton: InstalledUploadButton;
   /** The Hand in dialog of the class platform; null while it is not configured (no menu item either). */
@@ -316,6 +318,7 @@ export class App {
     });
 
     this.ideDialog = createArduinoIdeDialog(root);
+    this.aboutDialog = createAboutDialog(root, { links: !review }); // review frame: a sandbox without popups
     this.uploadButton = installUploadButton({
       button: this.uploadSlot,
       parent: root,
@@ -337,12 +340,13 @@ export class App {
 
     this.settingsMenu = createMenu(
       this.slot('settings'),
-      { icon: '⚙', label: 'Settings', ariaLabel: 'Open the settings menu', title: 'Settings: reset the board, board settings', listLabel: 'Settings', compact: true },
+      { icon: '⚙', label: 'Settings', ariaLabel: 'Open the settings menu', title: 'Settings: reset the board, board settings, about', listLabel: 'Settings', compact: true },
       [
         {
           items: [
             { label: 'Reset the board', title: 'Stop and reset the board: all pins and peripherals back to their power-on state', onSelect: () => void this.reset() },
             { label: 'Board settings…', title: 'How the real board is wired', onSelect: () => this.settings.open() },
+            { label: 'About…', title: 'Who made the ZERO1 board and this simulator', onSelect: () => this.aboutDialog.open() },
           ],
         },
       ],
@@ -1281,7 +1285,7 @@ export class App {
             <div data-slot="settings"></div>
             <div data-slot="share"></div>
             <button type="button" class="z1-btn" data-slot="ide" aria-label="Open this sketch in the Arduino IDE" title="Open in the Arduino IDE"><span aria-hidden="true">∞</span> <span class="z1-btn-label">Arduino IDE</span></button>
-            <button type="button" class="z1-btn" data-slot="upload" aria-label="Upload this sketch to the ZERO1 board" title="Compile in the browser and upload to the board over USB" hidden><span aria-hidden="true">⬆</span> <span class="z1-btn-label">Upload to board</span></button>
+            <button type="button" class="z1-btn z1-btn-upload" data-slot="upload" aria-label="Upload this sketch to the ZERO1 board" title="Compile in the browser and upload to the board over USB" hidden><span aria-hidden="true">⬆</span> <span class="z1-btn-label">Upload<span class="z1-btn-label-more"> to board</span></span></button>
           </nav>
           <div class="z1-run-status" data-slot="status" data-status="idle" role="status" aria-live="polite">
             <span class="z1-run-dot" aria-hidden="true"></span>

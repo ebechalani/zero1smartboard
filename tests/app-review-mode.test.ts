@@ -152,10 +152,16 @@ describe('review mode', () => {
     for (const name of ['new', 'examples', 'share', 'ide']) expect(slot(root, name).hidden, name).toBe(true);
     expect(root.querySelector('dialog.z1-handin')).toBeNull();
     expect(Array.from(root.querySelectorAll('[data-slot="share"] [role="menuitem"]'), (b) => b.textContent)).toEqual(['Copy link', 'Download .ino']);
-    // The Settings menu (Reset the board, Board settings…) stays: the teacher may reset and rewire the board.
+    // The Settings menu (Reset the board, Board settings…, About…) stays: the teacher may reset and rewire the board.
     for (const name of ['run', 'stop', 'settings', 'mode-code', 'mode-blocks', 'mode-python']) expect(slot(root, name).hidden, name).toBe(false);
+    expect(slot(root, 'upload').hidden).toBe(true); // no upload from a hand-in
     expect(slot(root, 'copy-to-code').hidden).toBe(true); // a copy would write z1.code
-    expect(Array.from(root.querySelectorAll('[data-slot="settings"] [role="menuitem"]'), (b) => b.textContent)).toEqual(['Reset the board', 'Board settings…']);
+    expect(Array.from(root.querySelectorAll('[data-slot="settings"] [role="menuitem"]'), (b) => b.textContent)).toEqual(['Reset the board', 'Board settings…', 'About…']);
+    // About stays, without a link: the sandbox has no allow-popups (a link would do nothing)
+    const about = root.querySelector<HTMLDialogElement>('dialog.z1-about')!;
+    expect(about.querySelector('a')).toBeNull();
+    expect(about.textContent).toContain('THIRD_PARTY_NOTICES.md');
+    expect(about.textContent).toContain('All rights reserved.');
     expect(location.hash).toBe('#review'); // the hash is not a share link and stays
   });
 
