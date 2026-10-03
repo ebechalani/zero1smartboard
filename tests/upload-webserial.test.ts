@@ -9,6 +9,7 @@ import assert from 'node:assert/strict';
 import { uploadWithWebSerial, WebSerialUploadPort, requestBoardPort, UNO_USB_FILTERS } from '../src/upload/serial/webserial';
 import type { WebSerialPortLike } from '../src/upload/serial/webserial';
 import { UploadError } from '../src/upload/serial/errors';
+import { UploadService } from '../src/upload/service';
 import { RealtimeSimSerialPort } from './fakes/upload/realtime-webserial';
 import { newOptibootUno, compareFlash, readText, fixture } from './fakes/upload/scenario';
 import type { UploadProgress } from '../src/upload/serial/uploader';
@@ -156,4 +157,30 @@ test('requestBoardPort: unsupported browser / chooser cancelled / filters', asyn
   const ok = { requestPort: async (o?: unknown) => ((seen = o), scriptedPort([])), getPorts: async () => [] };
   await requestBoardPort(ok);
   assert.deepEqual(seen, { filters: UNO_USB_FILTERS });
+  await requestBoardPort(ok, null); // "Show every serial port"
+  assert.deepEqual(seen, {});
+});
+
+test('the chooser lists the ZERO1 CH340 and the other usual UNO-type USB chips', () => {
+  const listed = (vid: number, pid: number) =>
+    UNO_USB_FILTERS.some((f) => f.usbVendorId === vid && ('usbProductId' in f ? f.usbProductId === pid : true));
+  for (const [vid, pid, chip] of [
+    [0x1a86, 0x7523, 'CH340 (ZERO1)'],
+    [0x1a86, 0x5523, 'CH341'],
+    [0x1a86, 0x55d3, 'CH343'],
+    [0x1a86, 0x55d4, 'CH9102'],
+    [0x2341, 0x0043, 'Arduino UNO R3'],
+    [0x2341, 0x0243, 'Arduino UNO R3 (newer)'],
+    [0x0403, 0x6001, 'FTDI FT232R'],
+    [0x10c4, 0xea60, 'CP2102'],
+  ] as const) assert.ok(listed(vid, pid), chip);
+});
+
+test('UploadService.requestPort: the usual chips by default, every serial port with anyPort', async () => {
+  const seen: unknown[] = [];
+  const serial = { requestPort: async (o?: unknown) => (seen.push(o), scriptedPort([])), getPorts: async () => [] };
+  const service = new UploadService({ serial, createWorker: () => ({}) as Worker });
+  await service.requestPort();
+  await service.requestPort({ anyPort: true });
+  assert.deepEqual(seen, [{ filters: UNO_USB_FILTERS }, {}]);
 });

@@ -15,7 +15,7 @@
  */
 import type { BuildOutput, DownloadProgress, WorkerRequest, WorkerResponse } from './toolchain/protocol';
 import type { ToolchainManifest } from './toolchain/types';
-import { getWebSerial, requestBoardPort, uploadWithWebSerial, type WebSerialLike, type WebSerialPortLike } from './serial/webserial';
+import { UNO_USB_FILTERS, getWebSerial, requestBoardPort, uploadWithWebSerial, type WebSerialLike, type WebSerialPortLike } from './serial/webserial';
 import type { UploadProgress, UploadResult } from './serial/uploader';
 import type { TraceFn } from './serial/stk500';
 import { UploadError } from './serial/errors';
@@ -59,8 +59,12 @@ export interface UploadServiceLike {
   prepare(onProgress?: (p: DownloadProgress) => void): Promise<void>;
   /** Compile a sketch to Intel HEX. Never rejects for compile errors (ok: false); rejects when the worker itself fails. */
   build(source: string, fileName?: string): Promise<BuildOutput>;
-  /** Show the browser's port chooser. Must be called from a click handler. */
-  requestPort(): Promise<WebSerialPortLike>;
+  /**
+   * Show the browser's port chooser. Must be called from a click handler. By default it lists
+   * the usual USB-serial chips of UNO-type boards; `anyPort` lists every serial port (a board
+   * with another chip, "My board is not in the list").
+   */
+  requestPort(options?: { anyPort?: boolean }): Promise<WebSerialPortLike>;
   /** Flash the HEX to the board (reset, sync, write, verify, run). */
   upload(hex: string, options?: UploadOptions): Promise<UploadResult>;
   /** Total download size of the toolchain, for the "about 6 MB" text (bytes on the wire are smaller: gzip). */
@@ -138,12 +142,8 @@ export interface UploadServiceOptions {
   fetch?: typeof fetch;
 }
 
-const CHOOSER_FILTERS = [
-  { usbVendorId: 0x1a86, usbProductId: 0x7523 }, // WCH CH340: the ZERO1 board
-  { usbVendorId: 0x1a86, usbProductId: 0x55d4 }, // WCH CH9102
-  { usbVendorId: 0x2341, usbProductId: 0x0043 }, // Arduino UNO R3
-  { usbVendorId: 0x2341, usbProductId: 0x0001 }, // Arduino UNO
-];
+/** The chooser's list: the USB-serial chips of the ZERO1 board and UNO-type boards (one list, webserial.ts). */
+const CHOOSER_FILTERS = UNO_USB_FILTERS;
 
 function defaultCreateWorker(): Worker {
   return new Worker(new URL('./toolchain/worker.ts', import.meta.url), { type: 'module', name: 'zero1-toolchain' });
@@ -242,9 +242,9 @@ export class UploadService implements UploadServiceLike {
     return r.result;
   }
 
-  requestPort(): Promise<WebSerialPortLike> {
+  requestPort(options: { anyPort?: boolean } = {}): Promise<WebSerialPortLike> {
     if (!this.serial) return Promise.reject(new UploadError('UNSUPPORTED', UNSUPPORTED_TEXT['no-serial']));
-    return requestBoardPort(this.serial, CHOOSER_FILTERS);
+    return requestBoardPort(this.serial, options.anyPort ? null : CHOOSER_FILTERS);
   }
 
   async upload(hex: string, options: UploadOptions = {}): Promise<UploadResult> {

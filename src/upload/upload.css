@@ -114,6 +114,28 @@
   color: var(--muted);
   font-size: 13px;
 }
+/* "My board is not in the list": the usual causes, then every serial port */
+.z1-upload-notlisted {
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+  font-size: 13px;
+}
+.z1-upload-notlisted summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--accent-strong);
+}
+.z1-upload-notlisted ul {
+  margin: 8px 0;
+  padding-left: 20px;
+  color: var(--muted);
+}
+.z1-upload-notlisted li + li {
+  margin-top: 4px;
+}
+.z1-upload-notlisted a {
+  color: var(--accent-strong);
+}
 
 /* errors: the message, a help line, then the diagnostics list */
 .z1-upload-error {
@@ -188,4 +210,11 @@
 }
 .z1-upload-note a {
   color: var(--accent-soft);
+}
+.z1-upload-notlisted a.z1-upload-driver {
+  display: inline-flex;
+  margin: 6px 0;
+  color: var(--accent-strong);
+  text-decoration: none;
+  font-weight: 600;
 }

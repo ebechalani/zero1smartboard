@@ -60,11 +60,22 @@ The ZERO1 board uses a WCH CH340 chip (USB id `1A86:7523`).
 
 | OS | Driver |
 |---|---|
-| Windows 10 / 11 | built in (installed by Windows Update on first plug-in; the port appears as *USB-SERIAL CH340 (COMx)*) |
+| Windows 10 / 11 | usually installed by Windows Update on first plug-in (the port appears as *USB-SERIAL CH340 (COMx)*); otherwise WCH's CH341SER.EXE from <https://www.wch-ic.com/downloads/CH341SER_EXE.html> (needs administrator rights: on school computers, the IT team) |
 | macOS 13 or newer | built in |
 | macOS 12 and older | WCH driver from <https://www.wch-ic.com/downloads/CH341SER_MAC_ZIP.html> |
 | Linux | in the kernel (`ch341`); the user must be in the `dialout` group (`sudo usermod -aG dialout $USER`, then log out and in), and `brltty` must be removed on Ubuntu (it grabs CH340 ports) |
 | ChromeOS | built in |
+
+The board chooser lists the usual USB-serial chips of UNO-type boards (every WCH
+chip, Arduino, FTDI, CP2102: `UNO_USB_FILTERS` in `src/upload/serial/webserial.ts`).
+When it closes without a board, the Upload dialog opens **My board is not in the
+list**: use a data cable and another USB port, close the Arduino IDE, the driver
+line for this computer (Windows: a *Download the CH340 driver for Windows* button;
+macOS 13+, ChromeOS, Linux: no driver needed), and **Show every serial port…**,
+which opens the chooser with no filter. A web page can neither install a driver
+nor see whether one is installed (on Windows, without the driver the board has
+no COM port and Web Serial lists nothing): it can only put the download one
+click away, on the system the browser reports.
 
 ## 3. What the student sees
 

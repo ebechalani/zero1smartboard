@@ -8,7 +8,7 @@
  * payload (note, Python lines, X-sketch-error, success note).
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createUploadDialog, HELP_TEXT, sizeText, type UploadDialog } from '../src/upload/ui/upload-dialog';
+import { CH340_DRIVER, NO_BOARD_TEXT, createUploadDialog, detectOs, HELP_TEXT, sizeText, type ClientOs, type UploadDialog } from '../src/upload/ui/upload-dialog';
 import { browserSupportsUpload, installUploadButton, UNSUPPORTED_ADVICE, UNSUPPORTED_FALLBACK, UNSUPPORTED_TEXT } from '../src/upload';
 import type { ConsoleMessage } from '../src/types';
 import { FAILED_BUILD, FakeUploadService, OK_BUILD, type FakeUploadServiceOptions } from './fakes/upload/fake-upload-service';
@@ -31,12 +31,12 @@ interface Mounted {
   button(action: string): HTMLButtonElement;
 }
 
-function mount(options: FakeUploadServiceOptions = {}): Mounted {
+function mount(options: FakeUploadServiceOptions = {}, os: ClientOs = 'other'): Mounted {
   const parent = document.createElement('div');
   document.body.appendChild(parent);
   const service = new FakeUploadService(options);
   const consoleMessages: ConsoleMessage[] = [];
-  const dialog = createUploadDialog(parent, { service, onConsole: (m) => consoleMessages.push(m) });
+  const dialog = createUploadDialog(parent, { service, onConsole: (m) => consoleMessages.push(m), os });
   const el = dialog.element;
   return {
     dialog,
@@ -269,8 +269,60 @@ describe('upload errors', () => {
     m.click('choose');
     for (let i = 0; i < 5; i++) await turn();
     expect(m.dialog.stage()).toBe('choose');
-    expect(m.stageText()).toContain('No board chosen');
+    expect(m.stageText()).toBe(NO_BOARD_TEXT);
     expect(m.button('choose').disabled).toBe(false);
+  });
+
+  it('"My board is not in the list" opens after an empty chooser: the usual causes, the CH340 driver, every serial port', async () => {
+    const m = mount({ portError: 'ABORTED' });
+    m.dialog.open({ code: SKETCH, kind: 'code' });
+    await until(m, 'choose');
+    const tips = m.role('not-listed') as HTMLDetailsElement;
+    expect(tips.open).toBe(false); // closed at first: most boards are in the list
+    m.click('choose');
+    for (let i = 0; i < 5; i++) await turn();
+    expect(tips.open).toBe(true);
+    expect(tips.textContent).toContain('data cable');
+    expect(tips.textContent).toContain('Close the Arduino IDE');
+    const links = Array.from(tips.querySelectorAll('a'), (a) => [a.getAttribute('href'), a.target]);
+    expect(links).toEqual([
+      [CH340_DRIVER.windows, '_blank'],
+      [CH340_DRIVER.mac, '_blank'],
+    ]);
+    // the board has another USB chip: every serial port this time, and the upload goes on
+    m.service.o.portError = undefined;
+    m.click('choose-any');
+    for (let i = 0; i < 200 && m.dialog.stage() !== 'done'; i++) await turn();
+    expect(m.service.calls.filter((c) => c.startsWith('requestPort'))).toEqual(['requestPort', 'requestPort:any']);
+    expect(m.dialog.stage()).toBe('done');
+  });
+
+  it('the driver tip fits the computer: a download button on Windows, none needed on a Chromebook or Linux', () => {
+    const tip = (os: ClientOs) => mount({}, os).role('not-listed').querySelector('.z1-upload-driver-tip')!;
+    const windows = tip('windows');
+    const button = windows.querySelector<HTMLAnchorElement>('a.z1-upload-driver')!;
+    expect(button.textContent).toBe('⬇ Download the CH340 driver for Windows');
+    expect(button.getAttribute('href')).toBe(CH340_DRIVER.windows);
+    expect(button.target).toBe('_blank');
+    expect(windows.textContent).toContain('administrator rights');
+    const mac = tip('mac');
+    expect(mac.textContent).toContain('macOS 13 or newer needs no driver');
+    expect(mac.querySelector('a')!.getAttribute('href')).toBe(CH340_DRIVER.mac);
+    expect(tip('chromeos').textContent).toContain('needs no driver');
+    expect(tip('chromeos').querySelector('a')).toBeNull();
+    expect(tip('linux').textContent).toContain('dialout');
+    expect(tip('linux').querySelector('a')).toBeNull();
+  });
+
+  it('detectOs reads Chrome\'s client hints, else the user agent', () => {
+    expect(detectOs({ userAgentData: { platform: 'Windows' } })).toBe('windows');
+    expect(detectOs({ userAgentData: { platform: 'macOS' } })).toBe('mac');
+    expect(detectOs({ userAgentData: { platform: 'Chrome OS' } })).toBe('chromeos');
+    expect(detectOs({ userAgentData: { platform: 'Linux' } })).toBe('linux');
+    expect(detectOs({ userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/141.0 Safari/537.36' })).toBe('windows');
+    expect(detectOs({ userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 Safari/605.1.15' })).toBe('mac');
+    expect(detectOs({ userAgent: 'Mozilla/5.0 (X11; CrOS x86_64 14541.0.0) AppleWebKit/537.36 Chrome/141.0 Safari/537.36' })).toBe('chromeos');
+    expect(detectOs({ userAgent: 'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/141.0 Mobile Safari/537.36' })).toBe('other');
   });
 
   it('"Try again" after an upload error goes back to the board chooser without recompiling', async () => {
