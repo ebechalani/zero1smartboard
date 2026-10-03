@@ -32,6 +32,9 @@ export const MESSAGES = {
     `The board answered, but not like an Arduino bootloader (it sent ${seen}). The automatic reset probably did not work: ` +
     'press the RESET button on the board right after clicking Upload, or unplug and replug the USB cable.',
   aborted: 'Upload cancelled. The board may now hold an incomplete program — upload again before using it.',
+  openTimeout:
+    'The port did not open: it is probably not the board (a Bluetooth port, for example). ' +
+    'Choose the board\'s port: the same COM port as in the Arduino IDE.',
   tooLarge: (size: number, max: number) =>
     `The program is too big: ${size} bytes, but this board only has room for ${max} bytes (the rest holds the bootloader).`,
   signature: (got: string, want: string) =>

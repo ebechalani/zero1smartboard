@@ -80,6 +80,9 @@ export async function requestBoardPort(
   }
 }
 
+/** How long a port may take to open before it is given up ("Show every serial port…" lists ports that never open). */
+export const OPEN_TIMEOUT_MS = 10_000;
+
 export function mapOpenError(e: unknown): UploadError {
   const name = (e as { name?: string })?.name;
   const msg = (e as Error)?.message ?? String(e);
@@ -111,17 +114,41 @@ export class WebSerialUploadPort implements UploadPort {
 
   constructor(readonly port: WebSerialPortLike) {}
 
-  static async open(port: WebSerialPortLike, baud = 115200): Promise<WebSerialUploadPort> {
+  static async open(port: WebSerialPortLike, baud = 115200, signal?: AbortSignal): Promise<WebSerialUploadPort> {
     const p = new WebSerialUploadPort(port);
-    await p.open(baud);
+    await p.open(baud, signal);
     return p;
   }
 
-  async open(baud: number): Promise<void> {
+  /**
+   * Open the port. A port that never answers the open (an absent Bluetooth device picked from
+   * "Show every serial port…") is given up after OPEN_TIMEOUT_MS, or at once on `signal`; if it
+   * opens later it is closed again, so it does not stay held by the page.
+   */
+  async open(baud: number, signal?: AbortSignal): Promise<void> {
+    if (signal?.aborted) throw new UploadError('ABORTED', 'Upload cancelled.');
+    const opening = this.port.open({ baudRate: baud, dataBits: 8, stopBits: 1, parity: 'none', flowControl: 'none', bufferSize: 4096 });
+    let gaveUp = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let onAbort: (() => void) | undefined;
+    const giveUp = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new UploadError('PORT', MESSAGES.openTimeout)), OPEN_TIMEOUT_MS);
+      onAbort = () => reject(new UploadError('ABORTED', 'Upload cancelled.'));
+      signal?.addEventListener('abort', onAbort, { once: true });
+    });
     try {
-      await this.port.open({ baudRate: baud, dataBits: 8, stopBits: 1, parity: 'none', flowControl: 'none', bufferSize: 4096 });
+      await Promise.race([opening, giveUp]);
     } catch (e) {
+      if (e instanceof UploadError) {
+        gaveUp = true;
+        opening.then(() => this.port.close().catch(() => undefined), () => undefined);
+        throw e;
+      }
       throw mapOpenError(e);
+    } finally {
+      clearTimeout(timer);
+      if (onAbort) signal?.removeEventListener('abort', onAbort);
+      if (!gaveUp) giveUp.catch(() => undefined);
     }
     this.baud = baud;
     this.opened = true;
@@ -271,7 +298,7 @@ export async function uploadWithWebSerial(hexText: string, opts: WebUploadOption
   const max = opts.maxSize ?? 32256;
   if (hex.maxAddress > max) throw new UploadError('TOO_LARGE', MESSAGES.tooLarge(hex.maxAddress, max), { size: hex.maxAddress, max });
   const bauds = opts.baudRates ?? [115200, 57600];
-  const up = await WebSerialUploadPort.open(opts.port, bauds[0]);
+  const up = await WebSerialUploadPort.open(opts.port, bauds[0], opts.signal);
   try {
     return await uploadParsed(up, hex, { ...opts, baudRates: bauds, timing: { ...DEFAULT_TIMING, ...opts.timing } });
   } finally {

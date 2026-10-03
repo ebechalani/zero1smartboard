@@ -4,9 +4,9 @@
  * avr8js emulator (fake SerialPort), plus open/unplug/framing-error/requestPort
  * error mapping. From the feasibility spike.
  */
-import { test } from 'vitest';
+import { test, vi } from 'vitest';
 import assert from 'node:assert/strict';
-import { uploadWithWebSerial, WebSerialUploadPort, requestBoardPort, UNO_USB_FILTERS } from '../src/upload/serial/webserial';
+import { uploadWithWebSerial, WebSerialUploadPort, requestBoardPort, UNO_USB_FILTERS, OPEN_TIMEOUT_MS } from '../src/upload/serial/webserial';
 import type { WebSerialPortLike } from '../src/upload/serial/webserial';
 import { UploadError } from '../src/upload/serial/errors';
 import { UploadService } from '../src/upload/service';
@@ -183,4 +183,28 @@ test('UploadService.requestPort: the usual chips by default, every serial port w
   await service.requestPort();
   await service.requestPort({ anyPort: true });
   assert.deepEqual(seen, [{ filters: UNO_USB_FILTERS }, {}]);
+});
+
+test('a port that never opens (a Bluetooth port picked from every serial port) is given up, and closed if it opens late', async () => {
+  vi.useFakeTimers();
+  try {
+    let resolveOpen!: () => void;
+    let closed = 0;
+    const hanging = { open: () => new Promise<void>((r) => (resolveOpen = r)), close: async () => void closed++, readable: null, writable: null, setSignals: async () => {} };
+    const timedOut = WebSerialUploadPort.open(hanging as unknown as WebSerialPortLike, 115200).catch((e) => e);
+    await vi.advanceTimersByTimeAsync(OPEN_TIMEOUT_MS);
+    const err = (await timedOut) as UploadError;
+    assert.equal(err.code, 'PORT');
+    assert.match(err.message, /did not open: it is probably not the board/);
+    resolveOpen(); // the device answers after all: the page must not keep it
+    await vi.advanceTimersByTimeAsync(0);
+    assert.equal(closed, 1);
+
+    const abort = new AbortController();
+    const cancelled = WebSerialUploadPort.open({ ...hanging, open: () => new Promise<void>(() => {}) } as unknown as WebSerialPortLike, 115200, abort.signal).catch((e) => e);
+    abort.abort(); // Cancel / Esc during "Connecting to the board…"
+    assert.equal(((await cancelled) as UploadError).code, 'ABORTED');
+  } finally {
+    vi.useRealTimers();
+  }
 });

@@ -92,13 +92,18 @@ export function supportsModuleWorkers(): boolean {
   return supported;
 }
 
+/** Android: Chrome there has navigator.serial, but for Bluetooth only, never a USB board. */
+export function isAndroid(nav: { userAgent?: string; userAgentData?: { platform?: string } } = globalThis.navigator ?? {}): boolean {
+  return nav.userAgentData?.platform === 'Android' || /\bAndroid\b/.test(nav.userAgent ?? '');
+}
+
 /** The synchronous part of feature detection (everything but the manifest). */
-export function browserSupportsUpload(serial: WebSerialLike | null = getWebSerial()): UploadSupport {
+export function browserSupportsUpload(serial: WebSerialLike | null = getWebSerial(), android = isAndroid()): UploadSupport {
   const fail = (reason: UnsupportedReason): UploadSupport => ({ ok: false, reason, message: UNSUPPORTED_TEXT[reason] });
   // First: Chrome and Edge expose navigator.serial only on secure pages, so on a plain http:// copy
   // the missing serial would otherwise send a Chrome user off to "use Chrome or Edge".
   if ((globalThis as { isSecureContext?: boolean }).isSecureContext === false) return fail('insecure-context');
-  if (!serial) return fail('no-serial');
+  if (!serial || android) return fail('no-serial');
   if (typeof WebAssembly === 'undefined' || typeof WebAssembly.instantiate !== 'function') return fail('no-wasm');
   if (!supportsModuleWorkers()) return fail('no-module-worker');
   return { ok: true, message: '' };

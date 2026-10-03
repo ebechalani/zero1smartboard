@@ -8,8 +8,8 @@
  * payload (note, Python lines, X-sketch-error, success note).
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { CH340_DRIVER, FTDI_DRIVER, NO_BOARD_TEXT, createUploadDialog, detectOs, HELP_TEXT, sizeText, type ClientOs, type UploadDialog } from '../src/upload/ui/upload-dialog';
-import { browserSupportsUpload, installUploadButton, UNSUPPORTED_ADVICE, UNSUPPORTED_FALLBACK, UNSUPPORTED_TEXT } from '../src/upload';
+import { BLOCKED_TEXT, CH340_DRIVER, FTDI_DRIVER, LINUX_PORT_HINT, NO_BOARD_TEXT, createUploadDialog, detectOs, HELP_TEXT, sizeText, type ClientOs, type UploadDialog } from '../src/upload/ui/upload-dialog';
+import { browserSupportsUpload, installUploadButton, isAndroid, UNSUPPORTED_ADVICE, UNSUPPORTED_FALLBACK, UNSUPPORTED_TEXT } from '../src/upload';
 import type { ConsoleMessage } from '../src/types';
 import { FAILED_BUILD, FakeUploadService, OK_BUILD, type FakeUploadServiceOptions } from './fakes/upload/fake-upload-service';
 
@@ -31,12 +31,18 @@ interface Mounted {
   button(action: string): HTMLButtonElement;
 }
 
-function mount(options: FakeUploadServiceOptions = {}, os: ClientOs = 'other'): Mounted {
+/** A person's pace: each reading of the clock is a second later, so a dismissed chooser reads as closed by hand. */
+function humanClock(): () => number {
+  let t = 0;
+  return () => (t += 1000);
+}
+
+function mount(options: FakeUploadServiceOptions = {}, os: ClientOs = 'other', now: () => number = humanClock()): Mounted {
   const parent = document.createElement('div');
   document.body.appendChild(parent);
   const service = new FakeUploadService(options);
   const consoleMessages: ConsoleMessage[] = [];
-  const dialog = createUploadDialog(parent, { service, onConsole: (m) => consoleMessages.push(m), os });
+  const dialog = createUploadDialog(parent, { service, onConsole: (m) => consoleMessages.push(m), os, now });
   const el = dialog.element;
   return {
     dialog,
@@ -283,7 +289,8 @@ describe('upload errors', () => {
     for (let i = 0; i < 5; i++) await turn();
     expect(tips.open).toBe(true);
     expect(tips.textContent).toContain('data cable');
-    expect(tips.textContent).toContain('Close the Arduino IDE');
+    expect(tips.textContent).not.toContain('Close the Arduino IDE'); // an open port is still listed: not a reason
+    expect(tips.textContent).toContain('Site settings → Serial ports → Ask (default)'); // no list at all: the site's serial ports are blocked
     const links = Array.from(tips.querySelectorAll('a'), (a) => [a.getAttribute('href'), a.target]);
     expect(links).toEqual([
       [CH340_DRIVER.windows, '_blank'],
@@ -297,6 +304,67 @@ describe('upload errors', () => {
     for (let i = 0; i < 200 && m.dialog.stage() !== 'done'; i++) await turn();
     expect(m.service.calls.filter((c) => c.startsWith('requestPort'))).toEqual(['requestPort', 'requestPort:any']);
     expect(m.dialog.stage()).toBe('done');
+    // a new upload starts with the tips closed again
+    m.dialog.open({ code: SKETCH, kind: 'code' });
+    expect(tips.open).toBe(false);
+  });
+
+  it('after an empty chooser the keyboard focus goes to the tips that opened, then back to the button used', async () => {
+    const m = mount({ portError: 'ABORTED' });
+    m.dialog.open({ code: SKETCH, kind: 'code' });
+    await until(m, 'choose');
+    const tips = m.role('not-listed') as HTMLDetailsElement;
+    m.click('choose');
+    for (let i = 0; i < 5 && !tips.open; i++) await turn();
+    expect(document.activeElement).toBe(tips.querySelector('summary'));
+    m.click('choose-any');
+    for (let i = 0; i < 5 && m.button('choose-any').disabled !== false; i++) await turn();
+    await turn();
+    expect(document.activeElement).toBe(m.button('choose-any'));
+  });
+
+  it('a chooser refused at once (serial ports blocked for the site) says so, without the board tips', async () => {
+    const m = mount({ portError: 'ABORTED' }, 'windows', () => 0); // no time passes: no list was shown
+    m.dialog.open({ code: SKETCH, kind: 'code' });
+    await until(m, 'choose');
+    m.click('choose');
+    for (let i = 0; i < 5; i++) await turn();
+    expect(m.dialog.stage()).toBe('choose');
+    expect(m.stageText()).toBe(BLOCKED_TEXT);
+    expect(m.role('stage').dataset.tone).toBe('error');
+    expect((m.role('not-listed') as HTMLDetailsElement).open).toBe(false);
+    expect(m.button('choose').disabled).toBe(false);
+  });
+
+  it('a port that does not open on Linux adds the dialout group to the help', async () => {
+    const linux = mount({ uploadError: 'PORT' }, 'linux');
+    linux.dialog.open({ code: SKETCH, kind: 'code' });
+    await until(linux, 'choose');
+    linux.click('choose');
+    await until(linux, 'error');
+    expect(linux.role('help').textContent).toBe(`${HELP_TEXT.PORT} ${LINUX_PORT_HINT}`);
+    const windows = mount({ uploadError: 'PORT' }, 'windows');
+    windows.dialog.open({ code: SKETCH, kind: 'code' });
+    await until(windows, 'choose');
+    windows.click('choose');
+    await until(windows, 'error');
+    expect(windows.role('help').textContent).toBe(HELP_TEXT.PORT);
+  });
+
+  it('without an os option the dialog reads the system from the browser (the Windows teacher gets the Windows drivers)', () => {
+    const nav = navigator as Navigator & { userAgentData?: unknown };
+    const own = Object.getOwnPropertyDescriptor(nav, 'userAgentData');
+    Object.defineProperty(nav, 'userAgentData', { value: { platform: 'Windows' }, configurable: true });
+    try {
+      const parent = document.createElement('div');
+      document.body.appendChild(parent);
+      const dialog = createUploadDialog(parent, { service: new FakeUploadService({}) });
+      const first = dialog.element.querySelector<HTMLAnchorElement>('[data-role="not-listed"] .z1-upload-driver-tip a.z1-upload-driver');
+      expect(first?.getAttribute('href')).toBe(CH340_DRIVER.windows);
+    } finally {
+      if (own) Object.defineProperty(nav, 'userAgentData', own);
+      else delete (nav as { userAgentData?: unknown }).userAgentData;
+    }
   });
 
   it('the driver tip fits the computer: a download button on Windows, none needed on a Chromebook or Linux', () => {
@@ -315,7 +383,8 @@ describe('upload errors', () => {
     expect(mac.querySelector('a')!.getAttribute('href')).toBe(CH340_DRIVER.mac);
     expect(tip('chromeos').textContent).toContain('needs no driver');
     expect(tip('chromeos').querySelector('a')).toBeNull();
-    expect(tip('linux').textContent).toContain('dialout');
+    expect(tip('linux').textContent).toContain('brltty'); // what hides a CH340 on Ubuntu
+    expect(tip('linux').textContent).not.toContain('dialout'); // it does not hide a board: it is in the help of a port that does not open
     expect(tip('linux').querySelector('a')).toBeNull();
   });
 
@@ -339,6 +408,8 @@ describe('upload errors', () => {
     m.click('retry');
     expect(m.dialog.stage()).toBe('choose');
     expect(m.service.calls.filter((c) => c === 'build')).toHaveLength(1);
+    expect(m.button('choose').disabled).toBe(false);
+    expect(m.button('choose-any').disabled).toBe(false); // both ways to the board are open again
   });
 
   it('Cancel during the upload aborts it (ABORTED help text) instead of closing the dialog', async () => {
@@ -456,6 +527,14 @@ describe('installUploadButton', () => {
       else delete (globalThis as { isSecureContext?: boolean }).isSecureContext;
     }
     expect(browserSupportsUpload(null).reason).toBe('no-serial'); // a secure page without Web Serial: Firefox, Safari
+  });
+
+  it('Android counts as "no USB serial": Chrome there has navigator.serial for Bluetooth only', () => {
+    const serial = { requestPort: async () => ({}) as never, getPorts: async () => [] };
+    expect(isAndroid({ userAgentData: { platform: 'Android' } })).toBe(true);
+    expect(isAndroid({ userAgent: 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 Chrome/141.0 Mobile Safari/537.36' })).toBe(true);
+    expect(isAndroid({ userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/141.0 Safari/537.36' })).toBe(false);
+    expect(browserSupportsUpload(serial, true).reason).toBe('no-serial');
   });
 
   it('a site without the compiler (no toolchain/manifest.json) says so on click', async () => {

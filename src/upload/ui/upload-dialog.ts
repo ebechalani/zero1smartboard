@@ -50,6 +50,8 @@ export interface UploadDialogOptions {
   noticesUrl?: string;
   /** The computer's system, for the driver tip (default: detectOs(); tests). */
   os?: ClientOs;
+  /** Milliseconds, to tell a chooser the browser refused at once from one the user closed (default performance.now(); tests). */
+  now?: () => number;
 }
 
 export type ClientOs = 'windows' | 'mac' | 'chromeos' | 'linux' | 'other';
@@ -83,7 +85,7 @@ function driverTip(os: ClientOs): string {
     case 'chromeos':
       return `<li class="z1-upload-driver-tip">A Chromebook needs no driver: unplug and replug the board.</li>`;
     case 'linux':
-      return `<li class="z1-upload-driver-tip">Linux needs no driver, but your user must be in the <code>dialout</code> group (<code>sudo usermod -aG dialout $USER</code>, then log out and in).</li>`;
+      return `<li class="z1-upload-driver-tip">Linux needs no driver. On Ubuntu, the <code>brltty</code> package can take the board: remove it (<code>sudo apt remove brltty</code>), then unplug and replug the board.</li>`;
     default:
       return `<li class="z1-upload-driver-tip">${seen} <b>Windows:</b> install the driver of the board's USB chip (<a href="${CH340_DRIVER.windows}" target="_blank" rel="noopener" data-role="driver">CH340</a> or <a href="${FTDI_DRIVER.windows}" target="_blank" rel="noopener" data-role="driver">FTDI</a>), then unplug and replug the board. <b>macOS 12 or older:</b> ${mac}.</li>`;
   }
@@ -136,6 +138,17 @@ export const FTDI_DRIVER = {
   windows: 'https://ftdichip.com/drivers/vcp-drivers/',
 } as const;
 
+/** The chooser was refused at once, without a list: serial ports are blocked for this site (setting or school policy). */
+export const BLOCKED_TEXT =
+  'The browser did not open the list of ports: serial ports are blocked for this site. Click the icon left of the address, ' +
+  'then Site settings → Serial ports → Ask (default), and try again. On a school computer, ask the IT team.';
+
+/** A chooser closed faster than this was not closed by a person: the browser refused it (Chrome: about 10 ms). */
+export const BLOCKED_MS = 250;
+
+/** Linux: a port that does not open may be one the user has no right to use. */
+export const LINUX_PORT_HINT = 'On Linux, also add yourself to the dialout group (sudo usermod -aG dialout $USER), then log out and in.';
+
 /** After the chooser closed without a board: most often the board was not in the list. */
 export const NO_BOARD_TEXT = 'No board chosen. Board not in the list? See the tips below.';
 
@@ -168,6 +181,8 @@ export function describeError(err: unknown): { code: UploadErrorCode | 'INTERNAL
 export function createUploadDialog(parent: HTMLElement, options: UploadDialogOptions): UploadDialog {
   const { service } = options;
   const fileName = options.fileName ?? 'sketch.ino';
+  const os = options.os ?? detectOs();
+  const now = options.now ?? (() => performance.now());
   const noticesUrl = options.noticesUrl ?? 'THIRD_PARTY_NOTICES.md';
   const mb = service.downloadBytes ? Math.max(1, Math.round(service.downloadBytes / 1_000_000)) : 6;
 
@@ -197,9 +212,9 @@ export function createUploadDialog(parent: HTMLElement, options: UploadDialogOpt
           <summary>My board is not in the list</summary>
           <ul>
             <li>Use a USB <b>data</b> cable (some cables only charge) and try another USB port.</li>
-            <li>Close the Arduino IDE: its Serial Monitor keeps the board busy.</li>
-            ${driverTip(options.os ?? detectOs())}
-            <li>Still nothing? List every serial port of this computer and pick the board there:</li>
+            <li>No list opened at all? Chrome blocks serial ports for this site: click the icon left of the address, then <b>Site settings</b> → <b>Serial ports</b> → <b>Ask (default)</b> (on a school computer, ask the IT team).</li>
+            ${driverTip(os)}
+            <li>Still not there? List every serial port of this computer, then unplug and replug the board: its entry is the one that appears (the same port as in the Arduino IDE, not a "Bluetooth" or "Communications Port" entry). No new entry? Then the driver or the cable is the problem.</li>
           </ul>
           <button type="button" class="z1-btn" data-action="choose-any">Show every serial port…</button>
         </details>
@@ -394,6 +409,7 @@ export function createUploadDialog(parent: HTMLElement, options: UploadDialogOpt
     chooseButton.disabled = true;
     chooseAnyButton.disabled = true;
     let port;
+    const asked = now();
     try {
       port = await service.requestPort(chooser.anyPort ? { anyPort: true } : undefined); // the chooser: still inside the click's user activation
     } catch (err) {
@@ -401,9 +417,19 @@ export function createUploadDialog(parent: HTMLElement, options: UploadDialogOpt
       chooseButton.disabled = false;
       chooseAnyButton.disabled = false;
       const d = describeError(err);
+      // Disabling the clicked button took the focus from it: give it back, or the keyboard is lost.
+      if (d.code === 'ABORTED' && now() - asked < BLOCKED_MS) {
+        setStage('choose', BLOCKED_TEXT, 'error'); // no list was shown: the board tips would not help
+        (chooser.anyPort ? chooseAnyButton : chooseButton).focus();
+        return;
+      }
       if (d.code === 'ABORTED') {
         setStage('choose', NO_BOARD_TEXT, 'idle');
+        const opening = !notListedEl.open;
         notListedEl.open = true; // the usual reason: the board was not in the list
+        if (opening) notListedEl.querySelector('summary')!.focus();
+        else (chooser.anyPort ? chooseAnyButton : chooseButton).focus();
+        chooseAnyButton.scrollIntoView?.({ block: 'nearest' }); // the tips and their last button in view
         return;
       }
       fail(d.message, d.help, [], 'Could not open the board');
@@ -441,7 +467,8 @@ export function createUploadDialog(parent: HTMLElement, options: UploadDialogOpt
       const d = describeError(err);
       showDetails(log);
       consoleMessage({ level: 'error', text: `Upload failed (${d.code}): ${d.message}` });
-      fail(d.message, d.help, [], d.code === 'ABORTED' ? 'Upload cancelled' : 'Upload failed');
+      const help = d.code === 'PORT' && os === 'linux' ? `${d.help} ${LINUX_PORT_HINT}` : d.help;
+      fail(d.message, help, [], d.code === 'ABORTED' ? 'Upload cancelled' : 'Upload failed');
     } finally {
       abort = null;
     }
@@ -489,6 +516,7 @@ export function createUploadDialog(parent: HTMLElement, options: UploadDialogOpt
     open(next) {
       session++;
       payload = next;
+      notListedEl.open = false; // the tips open again only after an empty chooser
       const note = role('note');
       note.textContent = next.note ?? '';
       note.hidden = !next.note;
