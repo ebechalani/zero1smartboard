@@ -54,9 +54,14 @@ Managed school Chromebooks: the administrator may have to allow Web Serial
 for the site with vendor `0x1A86` product `0x7523`). An iframe embedding the
 simulator needs `allow="serial"`.
 
-### CH340 USB-serial drivers
+### USB-serial drivers
 
-The ZERO1 board uses a WCH CH340 chip (USB id `1A86:7523`).
+Most ZERO1 boards use a WCH CH340 chip (USB id `1A86:7523`); some have an FTDI
+FT232R (`0403:6001`; on Windows its hardware id reads `FTDIBUS\COMPORT&VID_0403&PID_6001`
+and the port *USB Serial Port (COMx)*). FTDI drivers are built into Windows
+(Windows Update), macOS and Linux; the Windows package is at
+<https://ftdichip.com/drivers/vcp-drivers/>. If the Arduino IDE sees the board,
+its driver is installed. The table is for the CH340:
 
 | OS | Driver |
 |---|---|
@@ -68,9 +73,13 @@ The ZERO1 board uses a WCH CH340 chip (USB id `1A86:7523`).
 
 The board chooser lists the usual USB-serial chips of UNO-type boards (every WCH
 chip, Arduino, FTDI, CP2102: `UNO_USB_FILTERS` in `src/upload/serial/webserial.ts`).
+Before this list, the chooser listed only CH340 `1A86:7523`, CH9102 and two
+Arduino ids, and an FTDI ZERO1 board (`0403:6001`) never appeared, although the
+Arduino IDE saw it.
 When it closes without a board, the Upload dialog opens **My board is not in the
 list**: use a data cable and another USB port, close the Arduino IDE, the driver
-line for this computer (Windows: a *Download the CH340 driver for Windows* button;
+line for this computer (Windows: "If the Arduino IDE sees the board, its driver
+is installed", then *CH340 driver for Windows* and *FTDI driver for Windows* buttons;
 macOS 13+, ChromeOS, Linux: no driver needed), and **Show every serial port…**,
 which opens the chooser with no filter. A web page can neither install a driver
 nor see whether one is installed (on Windows, without the driver the board has

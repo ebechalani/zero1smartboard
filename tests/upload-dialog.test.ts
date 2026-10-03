@@ -8,7 +8,7 @@
  * payload (note, Python lines, X-sketch-error, success note).
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { CH340_DRIVER, NO_BOARD_TEXT, createUploadDialog, detectOs, HELP_TEXT, sizeText, type ClientOs, type UploadDialog } from '../src/upload/ui/upload-dialog';
+import { CH340_DRIVER, FTDI_DRIVER, NO_BOARD_TEXT, createUploadDialog, detectOs, HELP_TEXT, sizeText, type ClientOs, type UploadDialog } from '../src/upload/ui/upload-dialog';
 import { browserSupportsUpload, installUploadButton, UNSUPPORTED_ADVICE, UNSUPPORTED_FALLBACK, UNSUPPORTED_TEXT } from '../src/upload';
 import type { ConsoleMessage } from '../src/types';
 import { FAILED_BUILD, FakeUploadService, OK_BUILD, type FakeUploadServiceOptions } from './fakes/upload/fake-upload-service';
@@ -236,7 +236,7 @@ describe('upload errors', () => {
     ['NO_ANSWER', 'Is the Arduino IDE Serial Monitor open?'],
     ['NOT_IN_SYNC', 'Press the RESET button on the board now'],
     ['PORT', 'Check that the USB cable is plugged in'],
-    ['SIGNATURE_MISMATCH', 'USB-SERIAL CH340'],
+    ['SIGNATURE_MISMATCH', 'the same COM port as in the Arduino IDE'],
     ['VERIFY_FAILED', 'Try again.'],
     ['PROTOCOL', 'Unplug and replug the board'],
   ] as const)('%s shows the uploader message and the help text, and logs to the console', async (code, help) => {
@@ -287,8 +287,10 @@ describe('upload errors', () => {
     const links = Array.from(tips.querySelectorAll('a'), (a) => [a.getAttribute('href'), a.target]);
     expect(links).toEqual([
       [CH340_DRIVER.windows, '_blank'],
+      [FTDI_DRIVER.windows, '_blank'],
       [CH340_DRIVER.mac, '_blank'],
     ]);
+    expect(tips.textContent).toContain('If the Arduino IDE sees the board, its driver is installed');
     // the board has another USB chip: every serial port this time, and the upload goes on
     m.service.o.portError = undefined;
     m.click('choose-any');
@@ -300,10 +302,13 @@ describe('upload errors', () => {
   it('the driver tip fits the computer: a download button on Windows, none needed on a Chromebook or Linux', () => {
     const tip = (os: ClientOs) => mount({}, os).role('not-listed').querySelector('.z1-upload-driver-tip')!;
     const windows = tip('windows');
-    const button = windows.querySelector<HTMLAnchorElement>('a.z1-upload-driver')!;
-    expect(button.textContent).toBe('⬇ Download the CH340 driver for Windows');
-    expect(button.getAttribute('href')).toBe(CH340_DRIVER.windows);
-    expect(button.target).toBe('_blank');
+    // the ZERO1 boards have a CH340 or an FTDI FT232R USB chip: both drivers, one click each
+    const buttons = Array.from(windows.querySelectorAll<HTMLAnchorElement>('a.z1-upload-driver'), (a) => [a.textContent, a.getAttribute('href'), a.target]);
+    expect(buttons).toEqual([
+      ['⬇ CH340 driver for Windows', CH340_DRIVER.windows, '_blank'],
+      ['⬇ FTDI driver for Windows', FTDI_DRIVER.windows, '_blank'],
+    ]);
+    expect(windows.textContent).toContain('If the Arduino IDE sees the board, its driver is installed');
     expect(windows.textContent).toContain('administrator rights');
     const mac = tip('mac');
     expect(mac.textContent).toContain('macOS 13 or newer needs no driver');
