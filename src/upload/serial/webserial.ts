@@ -40,11 +40,10 @@ export interface WebSerialLike {
 
 /** USB IDs of UNO-compatible boards. Used as chooser filters (the user can still see only these). */
 export const UNO_USB_FILTERS = [
-  { usbVendorId: 0x1a86, usbProductId: 0x7523 }, // WCH CH340 — ZERO1 board and most UNO clones
-  { usbVendorId: 0x1a86, usbProductId: 0x55d4 }, // WCH CH9102 (newer clones)
+  { usbVendorId: 0x1a86 }, // WCH: CH340 (1A86:7523, most ZERO1 boards and UNO clones), CH341, CH343, CH9102…
   { usbVendorId: 0x2341 }, // Arduino SA (UNO R3 ATmega16U2: PID 0x0043/0x0001/0x0243)
   { usbVendorId: 0x2a03 }, // Arduino Srl
-  { usbVendorId: 0x0403, usbProductId: 0x6001 }, // FTDI FT232R
+  { usbVendorId: 0x0403 }, // FTDI: FT232R (0403:6001, some ZERO1 boards) and others
   { usbVendorId: 0x10c4, usbProductId: 0xea60 }, // Silicon Labs CP210x
 ];
 

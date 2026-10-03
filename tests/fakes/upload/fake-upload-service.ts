@@ -116,8 +116,8 @@ export class FakeUploadService implements UploadServiceLike {
     return typeof b === 'function' ? b(source) : b;
   }
 
-  async requestPort(): Promise<WebSerialPortLike> {
-    this.calls.push('requestPort');
+  async requestPort(options: { anyPort?: boolean } = {}): Promise<WebSerialPortLike> {
+    this.calls.push(options.anyPort ? 'requestPort:any' : 'requestPort');
     await tick();
     if (this.o.portError) throw new UploadError(this.o.portError, this.o.portError === 'ABORTED' ? 'No board selected.' : MESSAGES[this.o.portError]);
     return { open: async () => {}, close: async () => {}, readable: null, writable: null, setSignals: async () => {} };

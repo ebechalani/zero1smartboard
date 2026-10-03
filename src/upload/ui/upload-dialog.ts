@@ -48,6 +48,45 @@ export interface UploadDialogOptions {
   fileName?: string;
   /** Link to the third-party notices page (default THIRD_PARTY_NOTICES.md next to the page). */
   noticesUrl?: string;
+  /** The computer's system, for the driver tip (default: detectOs(); tests). */
+  os?: ClientOs;
+}
+
+export type ClientOs = 'windows' | 'mac' | 'chromeos' | 'linux' | 'other';
+
+/** The computer's system, from the browser (User-Agent Client Hints in Chrome and Edge, else the user agent). */
+export function detectOs(nav: { userAgent?: string; userAgentData?: { platform?: string } } = globalThis.navigator ?? {}): ClientOs {
+  const platform = (nav.userAgentData?.platform ?? '').toLowerCase();
+  const ua = (nav.userAgent ?? '').toLowerCase();
+  if (platform === 'windows' || (!platform && ua.includes('windows'))) return 'windows';
+  if (platform === 'chrome os' || platform === 'chromeos' || ua.includes('cros')) return 'chromeos';
+  if (platform === 'macos' || (!platform && ua.includes('mac os x'))) return 'mac';
+  if (platform === 'linux' || (!platform && ua.includes('linux') && !ua.includes('android'))) return 'linux';
+  return 'other';
+}
+
+/**
+ * The driver line of "My board is not in the list", for this computer. A web page can neither
+ * install a driver nor see whether one is installed: it can only put the right download one
+ * click away (WCH's pages; installing needs administrator rights, on school computers the IT).
+ */
+function driverTip(os: ClientOs): string {
+  const button = (href: string, text: string) => `<a class="z1-btn z1-upload-driver" href="${href}" target="_blank" rel="noopener" data-role="driver">${text}</a>`;
+  const win = `${button(CH340_DRIVER.windows, '⬇ CH340 driver for Windows')} ${button(FTDI_DRIVER.windows, '⬇ FTDI driver for Windows')}`;
+  const mac = `<a href="${CH340_DRIVER.mac}" target="_blank" rel="noopener" data-role="driver">CH340 driver for Mac</a>`;
+  const seen = 'If the Arduino IDE sees the board, its driver is installed: click <b>Show every serial port…</b> below and pick the same COM port.';
+  switch (os) {
+    case 'windows':
+      return `<li class="z1-upload-driver-tip">${seen} Otherwise install the driver of the board's USB chip (CH340 or FTDI; Windows usually does it by itself):<br>${win}<br>Run it, then unplug and replug the board. On a school computer, ask the IT team (it needs administrator rights).</li>`;
+    case 'mac':
+      return `<li class="z1-upload-driver-tip">macOS 13 or newer needs no driver (CH340 and FTDI are built in). On macOS 12 or older, a CH340 board needs the ${mac}; then unplug and replug the board.</li>`;
+    case 'chromeos':
+      return `<li class="z1-upload-driver-tip">A Chromebook needs no driver: unplug and replug the board.</li>`;
+    case 'linux':
+      return `<li class="z1-upload-driver-tip">Linux needs no driver, but your user must be in the <code>dialout</code> group (<code>sudo usermod -aG dialout $USER</code>, then log out and in).</li>`;
+    default:
+      return `<li class="z1-upload-driver-tip">${seen} <b>Windows:</b> install the driver of the board's USB chip (<a href="${CH340_DRIVER.windows}" target="_blank" rel="noopener" data-role="driver">CH340</a> or <a href="${FTDI_DRIVER.windows}" target="_blank" rel="noopener" data-role="driver">FTDI</a>), then unplug and replug the board. <b>macOS 12 or older:</b> ${mac}.</li>`;
+  }
 }
 
 export type UploadStage = 'download' | 'compile' | 'choose' | 'upload' | 'done' | 'error';
@@ -68,7 +107,7 @@ export const HELP_TEXT: Record<UploadErrorCode, string> = {
   PORT: 'Check that the USB cable is plugged in, close the Arduino IDE Serial Monitor and other programs using the board, then try again.',
   UNSUPPORTED: 'Uploading works in Chrome or Edge on a computer.',
   TOO_LARGE: 'Make the sketch smaller: remove code or libraries you do not use.',
-  SIGNATURE_MISMATCH: 'Choose the port of the ZERO1 board (USB-SERIAL CH340) in the chooser.',
+  SIGNATURE_MISMATCH: 'Choose the port of the ZERO1 board in the chooser: the same COM port as in the Arduino IDE.',
   VERIFY_FAILED: 'Try again. If it keeps failing, try another USB cable or port.',
   PROTOCOL: 'Unplug and replug the board, then try again.',
   ABORTED: 'The board may hold an incomplete program: upload again before using it.',
@@ -84,6 +123,21 @@ const STAGE_TEXT: Record<UploadStage, string> = {
   done: 'Done — the sketch is running on the board',
   error: 'Something went wrong',
 };
+
+/**
+ * The USB-serial chips of ZERO1 boards: a WCH CH340 (1A86:7523) on most, an FTDI FT232R
+ * (0403:6001) on some. Their makers' driver pages (CH340: Windows, macOS 12 and older; FTDI: Windows).
+ */
+export const CH340_DRIVER = {
+  windows: 'https://www.wch-ic.com/downloads/CH341SER_EXE.html',
+  mac: 'https://www.wch-ic.com/downloads/CH341SER_MAC_ZIP.html',
+} as const;
+export const FTDI_DRIVER = {
+  windows: 'https://ftdichip.com/drivers/vcp-drivers/',
+} as const;
+
+/** After the chooser closed without a board: most often the board was not in the list. */
+export const NO_BOARD_TEXT = 'No board chosen. Board not in the list? See the tips below.';
 
 const PAGE_SIZE = 128;
 
@@ -137,8 +191,18 @@ export function createUploadDialog(parent: HTMLElement, options: UploadDialogOpt
         <button type="button" class="z1-btn z1-btn-primary" data-action="choose">Choose the board…</button>
         <ol>
           <li>Plug the ZERO1 board into a USB port.</li>
-          <li>In the list that opens, pick <b>USB-SERIAL CH340</b> (or "Arduino Uno") and click <b>Connect</b>.</li>
+          <li>In the list that opens, pick the board's port (<b>USB-SERIAL CH340</b>, <b>USB Serial Port</b> or "Arduino Uno": the same COM number as in the Arduino IDE) and click <b>Connect</b>.</li>
         </ol>
+        <details class="z1-upload-notlisted" data-role="not-listed">
+          <summary>My board is not in the list</summary>
+          <ul>
+            <li>Use a USB <b>data</b> cable (some cables only charge) and try another USB port.</li>
+            <li>Close the Arduino IDE: its Serial Monitor keeps the board busy.</li>
+            ${driverTip(options.os ?? detectOs())}
+            <li>Still nothing? List every serial port of this computer and pick the board there:</li>
+          </ul>
+          <button type="button" class="z1-btn" data-action="choose-any">Show every serial port…</button>
+        </details>
       </div>
 
       <div class="z1-upload-error" data-role="error" hidden>
@@ -178,6 +242,8 @@ export function createUploadDialog(parent: HTMLElement, options: UploadDialogOpt
   const detailsEl = role<HTMLDetailsElement>('details');
   const rawEl = role('raw');
   const chooseButton = action('choose');
+  const chooseAnyButton = action('choose-any');
+  const notListedEl = role<HTMLDetailsElement>('not-listed');
   const retryButton = action('retry');
   const cancelButton = action('cancel');
   const closeButton = action('close');
@@ -311,6 +377,7 @@ export function createUploadDialog(parent: HTMLElement, options: UploadDialogOpt
       }
       setStage('choose', STAGE_TEXT.choose, 'idle');
       chooseButton.disabled = false;
+      chooseAnyButton.disabled = false;
       chooseButton.focus();
     } catch (err) {
       if (current !== session) return;
@@ -320,20 +387,23 @@ export function createUploadDialog(parent: HTMLElement, options: UploadDialogOpt
     }
   };
 
-  /** Stage 3 + 4: the chooser (from the click), then the upload. */
-  const chooseAndUpload = async (): Promise<void> => {
+  /** Stage 3 + 4: the chooser (from the click), then the upload. `anyPort`: every serial port, not only the usual board chips. */
+  const chooseAndUpload = async (chooser: { anyPort?: boolean } = {}): Promise<void> => {
     if (!build?.hex) return;
     const current = session;
     chooseButton.disabled = true;
+    chooseAnyButton.disabled = true;
     let port;
     try {
-      port = await service.requestPort(); // the chooser: still inside the click's user activation
+      port = await service.requestPort(chooser.anyPort ? { anyPort: true } : undefined); // the chooser: still inside the click's user activation
     } catch (err) {
       if (current !== session) return;
       chooseButton.disabled = false;
+      chooseAnyButton.disabled = false;
       const d = describeError(err);
       if (d.code === 'ABORTED') {
-        setStage('choose', 'No board chosen — click the button to try again', 'idle');
+        setStage('choose', NO_BOARD_TEXT, 'idle');
+        notListedEl.open = true; // the usual reason: the board was not in the list
         return;
       }
       fail(d.message, d.help, [], 'Could not open the board');
@@ -389,11 +459,13 @@ export function createUploadDialog(parent: HTMLElement, options: UploadDialogOpt
   // Nothing in this form is submitted: Enter must not close the dialog.
   form.addEventListener('submit', (e) => e.preventDefault());
   chooseButton.addEventListener('click', () => void chooseAndUpload());
+  chooseAnyButton.addEventListener('click', () => void chooseAndUpload({ anyPort: true }));
   retryButton.addEventListener('click', () => {
     session++;
     if (build?.hex) {
       setStage('choose', STAGE_TEXT.choose, 'idle');
       chooseButton.disabled = false;
+      chooseAnyButton.disabled = false;
       chooseButton.focus();
     } else void compile();
   });
