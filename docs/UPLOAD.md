@@ -46,12 +46,16 @@ find it at all.
 
 | | Chrome / Edge / Opera (desktop, ChromeOS) | Firefox | Safari | Phones and tablets |
 |---|---|---|---|---|
-| Upload to board | **yes** (Chrome ≥ 89) | no (no Web Serial) | no | no (Android Chrome has Web Serial for Bluetooth only) |
+| Upload to board | **yes** (Chrome ≥ 89) | no (no Web Serial) | no | no (Android Chrome has Web Serial for Bluetooth only: the Upload button says so) |
 | Simulator | yes | yes | yes | yes |
 
-Managed school Chromebooks: the administrator may have to allow Web Serial
-(Chrome policy `DefaultSerialGuardSetting` = 1, or `SerialAllowUsbDevicesForUrls`
-for the site with vendor `0x1A86` product `0x7523`). An iframe embedding the
+Managed school computers and Chromebooks: the administrator may have to allow Web Serial
+(Chrome policy `DefaultSerialGuardSetting` = 3, "ask"; 2 blocks it), or
+`SerialAllowUsbDevicesForUrls` for the site with the board's ids (`1A86:7523`,
+`0403:6001`). A user can block serial ports for one site (Site settings → Serial
+ports → Block); Chrome then refuses the chooser at once, without showing it, and
+the Upload dialog says *serial ports are blocked for this site* (a chooser closed
+in under 250 ms cannot have been closed by a person). An iframe embedding the
 simulator needs `allow="serial"`.
 
 ### USB-serial drivers
@@ -68,7 +72,7 @@ its driver is installed. The table is for the CH340:
 | Windows 10 / 11 | usually installed by Windows Update on first plug-in (the port appears as *USB-SERIAL CH340 (COMx)*); otherwise WCH's CH341SER.EXE from <https://www.wch-ic.com/downloads/CH341SER_EXE.html> (needs administrator rights: on school computers, the IT team) |
 | macOS 13 or newer | built in |
 | macOS 12 and older | WCH driver from <https://www.wch-ic.com/downloads/CH341SER_MAC_ZIP.html> |
-| Linux | in the kernel (`ch341`); the user must be in the `dialout` group (`sudo usermod -aG dialout $USER`, then log out and in), and `brltty` must be removed on Ubuntu (it grabs CH340 ports) |
+| Linux | in the kernel (`ch341`). On Ubuntu, remove `brltty`: it grabs CH340 and FT232R ports, and the board then is in no list. To open the port, the user must be in the `dialout` group (`sudo usermod -aG dialout $USER`, then log out and in): the board is listed without it, but does not open (the dialog adds this to the help on Linux) |
 | ChromeOS | built in |
 
 The board chooser lists the usual USB-serial chips of UNO-type boards (every WCH
@@ -77,11 +81,18 @@ Before this list, the chooser listed only CH340 `1A86:7523`, CH9102 and two
 Arduino ids, and an FTDI ZERO1 board (`0403:6001`) never appeared, although the
 Arduino IDE saw it.
 When it closes without a board, the Upload dialog opens **My board is not in the
-list**: use a data cable and another USB port, close the Arduino IDE, the driver
-line for this computer (Windows: "If the Arduino IDE sees the board, its driver
-is installed", then *CH340 driver for Windows* and *FTDI driver for Windows* buttons;
-macOS 13+, ChromeOS, Linux: no driver needed), and **Show every serial port…**,
-which opens the chooser with no filter. A web page can neither install a driver
+list**: use a data cable and another USB port, what to do when no list opened at
+all (serial ports blocked for the site), the driver line for this computer
+(Windows: "If the Arduino IDE sees the board, its driver is installed", then
+*CH340* and *FTDI* driver links; macOS 13+, ChromeOS: no driver needed; Linux:
+remove `brltty`), and **Show every serial port…**, which opens the chooser with
+no filter: with the list open, unplug and replug the board, and its entry is the
+one that appears (Chrome updates the list live); no new entry means a driver or
+cable problem. After an empty chooser the keyboard focus goes to the tips. An open
+Arduino IDE does not hide the board (the port is listed, but busy). A port that
+does not open within 10 s (a Bluetooth link to an absent device, for example) is
+given up with *The port did not open: it is probably not the board*, and Cancel
+works while it opens. A web page can neither install a driver
 nor see whether one is installed (on Windows, without the driver the board has
 no COM port and Web Serial lists nothing): it can only put the download one
 click away, on the system the browser reports.
@@ -220,10 +231,12 @@ which replace the unlicensed / no-derivatives originals with the same API.
 | *The compiler could not start* | The `.wasm` files were not deployed, or an ad-blocker/extension blocks workers | Check `toolchain/tools/cc1plus.wasm` loads; try an incognito window |
 | Compile error the simulator did not show | GCC is stricter than the simulator: missing `#include`, `"text" + 5`, `Serial.printf`, 4-argument `tone()` | Follow the hint under the error; fix the sketch |
 | *The sketch is too big* | More than 32,256 bytes without LTO | Remove unused libraries or code |
-| No port in the chooser | Driver missing (macOS < 13, Linux `dialout`), bad cable (charge-only), board not powered | §2; try another cable/port; on Linux check `dmesg` for `ch341-uart` |
+| No port in the chooser | Driver missing (Windows, macOS < 13), `brltty` (Ubuntu), bad cable (charge-only), board not powered, a USB chip not in the list | §2; try another cable/port; **Show every serial port…**; on Linux check `dmesg` for `ch341-uart` / `ftdi_sio` |
+| *The browser did not open the list of ports* | Serial ports blocked for the site (Site settings or school policy) | Site settings → Serial ports → Ask (default); on a managed computer, the IT team (§2) |
+| *The port did not open: it is probably not the board* (PORT) | A port from **Show every serial port…** that never opens (Bluetooth) | Choose the board's port: the same as in the Arduino IDE |
 | *No answer from the board* (NO_ANSWER) | The Arduino IDE Serial Monitor or another tab holds the port; wrong port; the auto-reset did not work | Close the monitor and other tabs; pick *USB-SERIAL CH340*; press RESET on the board while *Connecting…* shows |
 | *The board answered, but not like an Arduino bootloader* (NOT_IN_SYNC) | The running sketch prints on Serial and the reset did not happen (DTR not wired) | Press RESET right after clicking *Choose the board*; unplug/replug |
-| *…is being used by another program* (PORT, Windows) | Another program has the COM port open | Close the Arduino IDE (Serial Monitor/Plotter), other browsers, PuTTY… |
+| *…is being used by another program* (PORT) | Another program has the COM port open; on Linux, also a user outside the `dialout` group | Close the Arduino IDE (Serial Monitor/Plotter), other browsers, PuTTY…; on Linux, `sudo usermod -aG dialout $USER` |
 | *Lost the connection to the board* (PORT) | Cable pulled, USB hub reset | Replug and upload again (the board holds an incomplete program until then) |
 | *This board does not look like an Arduino UNO* (SIGNATURE_MISMATCH) | Another board was chosen | Choose the CH340 port |
 | *Verification failed* (VERIFY_FAILED) | Flash write failed, damaged board, bad cable | Retry; another cable; the Arduino IDE gives the same |

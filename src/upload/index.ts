@@ -23,7 +23,7 @@ import { UploadService, detectUploadSupport, type UploadServiceLike, type Upload
 import { createUnsupportedDialog, type UnsupportedDialog } from './ui/unsupported-dialog';
 import type { ConsoleMessage } from '../types';
 
-export { UploadService, detectUploadSupport, browserSupportsUpload, supportsModuleWorkers, UNSUPPORTED_TEXT, BOARD_USB_FILTERS } from './service';
+export { UploadService, detectUploadSupport, browserSupportsUpload, isAndroid, supportsModuleWorkers, UNSUPPORTED_TEXT, BOARD_USB_FILTERS } from './service';
 export type { UploadServiceLike, UploadSupport, UnsupportedReason, UploadOptions, BuildOutput, DownloadProgress, UploadProgress, UploadResult } from './service';
 export { createUploadDialog, HELP_TEXT, sizeText, describeError } from './ui/upload-dialog';
 export { createUnsupportedDialog, UNSUPPORTED_ADVICE, UNSUPPORTED_FALLBACK } from './ui/unsupported-dialog';
