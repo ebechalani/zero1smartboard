@@ -18,8 +18,8 @@ export const ABOUT_TEXT = {
   tagline: 'ICT & Robotics for STEAM Education',
   description: 'Write, simulate and upload Arduino, Blocks and Python programs for the ZERO1 Smart Board, directly in the browser.',
   credits: [
-    ['Hardware design', 'Wissam Daccache'],
-    ['Software development', 'Eddy Bachaalany'],
+    ['Board Design & Development', 'Wissam Daccache'],
+    ['Simulation Development', 'Eddy Bachaalany'],
   ],
   rights: '© 2026 ZERO1 Education. All rights reserved.',
   notices:

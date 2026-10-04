@@ -493,8 +493,8 @@ describe('Settings ▾ → About', () => {
     expect(dialog.getAttribute('aria-labelledby')).toBe('z1-about-title');
     const credits = Array.from(dialog.querySelectorAll('.z1-about-credits dt'), (dt) => [dt.textContent, dt.nextElementSibling?.textContent]);
     expect(credits).toEqual([
-      ['Hardware design', 'Wissam Daccache'],
-      ['Software development', 'Eddy Bachaalany'],
+      ['Board Design & Development', 'Wissam Daccache'],
+      ['Simulation Development', 'Eddy Bachaalany'],
     ]);
     expect(dialog.querySelector('.z1-about-rights')!.textContent).toBe('© 2026 ZERO1 Education. All rights reserved.');
     // the open-source parts (the GPL compiler of Upload to board, ...) keep their own licences
