@@ -795,9 +795,8 @@ WCAG AA on its background). Responsive grid:
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│ header: ZERO1 Simulator · [Code|Blocks|Python] · [＋ New ▾]          │
+│ header: ZERO1 Simulator · [Code|Blocks|Python] · [＋ New] [Examples ▾]  │
 │   [▶ Run ⇄ ■ Stop] [⚙ Settings ▾] [🔗 Share · Ali K… ▾] [∞ Arduino IDE] │
-│                       ＋ New ▾: New blank sketch · the examples by topic │
 │   [⬆ Upload] · run status                                              │
 │                       Settings ▾: Reset the board · Board settings… ·   │
 │                                   About…                                │
@@ -818,8 +817,8 @@ Code | Blocks switch, the actions, run status) is one row from 1366 px wide
 (up to 1439 px the Settings button shows only its ⚙; the run status texts
 stay short, e.g. "2 errors", "Error at 1523 ms"); narrower, the actions
 move to rows of their own under the brand, the mode switch and the status.
-**＋ New ▾** holds "New blank sketch" (the mode's words) and then the examples
-by topic (`examples-menu.ts`, one menu by teacher request); **Run** is one
+**＋ New** and **Examples ▾** are two separate buttons (one function each, by
+teacher request; `examples-menu.ts` lists the examples by topic); **Run** is one
 button that reads "▶ Run" while idle and a red "■ Stop" (`.is-stop`) while a
 sketch runs, a click then stops it (Ctrl+Enter still restarts, Esc stops).
 Below 1536 px the brand reads "ZERO1 Simulator" (`.z1-title-short`); the full

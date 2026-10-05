@@ -300,12 +300,6 @@ function pick(root: HTMLElement, slot: string, label: string): void {
   item!.click();
 }
 
-/** "＋ New ▾" → its first item, the blank sketch / program (New and Examples are one menu). */
-function pickNew(root: HTMLElement): void {
-  menuButton(root, 'examples').click();
-  root.querySelector<HTMLButtonElement>('[data-slot="examples"] .z1-menu-item')!.click();
-}
-
 /** Open the Examples menu and pick `title`. */
 function pickExample(root: HTMLElement, title: string): void {
   pick(root, 'examples', title);
@@ -508,20 +502,18 @@ describe('Settings ▾ → About', () => {
 });
 
 describe('header toolbar', () => {
-  it('starts with "＋ New ▾" (a blank sketch, then the examples), has one Run/Stop button and no GitHub link', () => {
+  it('starts with New and Examples, each its own button, has one Run/Stop button and no GitHub link', () => {
     const root = start();
     const toolbar = root.querySelector('.z1-toolbar')!;
     const first = toolbar.firstElementChild as HTMLElement;
-    expect(first.dataset.slot).toBe('examples');
-    const newMenu = menuButton(root, 'examples');
-    expect(newMenu.textContent!.replace(/\s+/g, ' ').trim()).toBe('＋ New ▾');
-    expect(newMenu.getAttribute('aria-label')).toBe('New: a blank sketch or an example');
-    const items = menuItems(root, 'examples');
-    expect(items[0]).toBe('New blank sketch'); // then the examples, by topic
-    expect(items.slice(1)).toEqual(EXAMPLES.map((e) => e.title));
-    expect(root.querySelector('[data-slot="examples"] .z1-menu-item')!.getAttribute('title')).toBe('Start a new blank sketch');
-    expect(root.querySelector('[data-slot="new"], [data-slot="stop"]')).toBeNull();
+    expect(first.dataset.slot).toBe('new');
+    expect(first.textContent!.trim().endsWith('New')).toBe(true);
+    expect(first.getAttribute('aria-label')).toBe('Start a new blank sketch');
+    expect(menuButton(root, 'examples').textContent!.replace(/\s+/g, ' ').trim()).toBe('Examples ▾');
+    expect(menuItems(root, 'examples')).toEqual(EXAMPLES.map((e) => e.title)); // only examples: New is its own button
+    expect(root.querySelector('[data-slot="stop"]')).toBeNull();
     expect(Array.from(toolbar.children, (el) => (el as HTMLElement).dataset.slot)).toEqual([
+      'new',
       'examples',
       'run',
       'settings',
@@ -566,6 +558,7 @@ describe('header toolbar', () => {
     expect(menuButton(root, 'share').title).toBe('Share: copy the link or download an .ino file');
     expect(menuButton(root, 'share').querySelector('.z1-handin-name')).toBeNull();
     expect(Array.from(root.querySelectorAll('.z1-toolbar > *'), (el) => (el as HTMLElement).dataset.slot)).toEqual([
+      'new',
       'examples',
       'run',
       'settings',
@@ -598,7 +591,7 @@ describe('New', () => {
     expect(editorText(root)).toBe(MY_SKETCH);
 
     const refuse = stubConfirm(false);
-    pickNew(root);
+    button(root, 'new').click();
     await Promise.resolve();
     expect(refuse).toHaveBeenCalledTimes(1);
     expect(refuse.mock.calls[0][0]).toBe('Start a new blank sketch?\nYour current code will be lost.');
@@ -608,7 +601,7 @@ describe('New', () => {
     expect(button(root, 'tab-code').getAttribute('aria-selected')).toBe('false');
 
     const accept = stubConfirm(true);
-    pickNew(root);
+    button(root, 'new').click();
     await Promise.resolve();
     expect(accept).toHaveBeenCalledTimes(1);
     expect(editorText(root)).toBe(BLANK_SKETCH);
@@ -622,7 +615,7 @@ describe('New', () => {
     const root = start();
     expect(editorText(root)).toBe(EXAMPLES[0].source);
     const confirm = stubConfirm(false);
-    pickNew(root);
+    button(root, 'new').click();
     await Promise.resolve();
     expect(editorText(root)).toBe(BLANK_SKETCH);
 
@@ -632,7 +625,7 @@ describe('New', () => {
     document.body.innerHTML = '';
     const again = start(BLANK_SKETCH);
     expect(editorText(again)).toBe(BLANK_SKETCH);
-    pickNew(again);
+    button(again, 'new').click();
     await Promise.resolve();
     expect(confirm).not.toHaveBeenCalled();
     expect(editorText(again)).toBe(BLANK_SKETCH);
@@ -742,7 +735,7 @@ describe('Hand in', () => {
     expect(fake.handinOpens[1].work.unchanged).toEqual({ kind: 'example', title: EXAMPLES[0].title });
     expect(fake.handinOpens[1].work.errorCount).toBe(0);
     dialog.close();
-    pickNew(root);
+    button(root, 'new').click();
     await Promise.resolve();
     pick(root, 'share', 'Hand in to my teacher');
     expect(fake.handinOpens[2].work.unchanged).toEqual({ kind: 'blank' });
@@ -1087,20 +1080,20 @@ describe('Blocks mode', () => {
   it('New asks only when the blocks differ from the empty program or the last loaded example', async () => {
     const root = await startBlocks();
     const quiet = stubConfirm(false);
-    pickNew(root);
+    button(root, 'new').click();
     await settle();
     expect(quiet).not.toHaveBeenCalled(); // the empty program: nothing to lose
     expect(toastText(root)).toBe('New blank program');
 
     panel().edit(MY_WS);
-    pickNew(root);
+    button(root, 'new').click();
     await settle();
     expect(quiet).toHaveBeenCalledTimes(1);
     expect(quiet.mock.calls[0][0]).toBe('Start a new blank program?\nYour current blocks will be lost.');
     expect(fingerprint(panel().getWorkspaceJson())).toBe(fingerprint(MY_WS));
 
     const accept = stubConfirm(true);
-    pickNew(root);
+    button(root, 'new').click();
     await settle();
     expect(accept).toHaveBeenCalledTimes(1);
     expect(fingerprint(panel().getWorkspaceJson())).toBe(fingerprint(DEFAULT_WS));
@@ -1111,7 +1104,7 @@ describe('Blocks mode', () => {
     await settle();
     expect(fingerprint(panel().getWorkspaceJson())).toBe(fingerprint(BLINK_WS));
     const again = stubConfirm(false);
-    pickNew(root);
+    button(root, 'new').click();
     await settle();
     expect(again).not.toHaveBeenCalled();
     expect(fingerprint(panel().getWorkspaceJson())).toBe(fingerprint(DEFAULT_WS));
@@ -1126,7 +1119,7 @@ describe('Blocks mode', () => {
     root = await reload();
     expect(fingerprint(panel().getWorkspaceJson())).toBe(fingerprint(BLINK_WS)); // restored from z1.blocks
     const confirm = stubConfirm(false);
-    pickNew(root);
+    button(root, 'new').click();
     await settle();
     expect(confirm).not.toHaveBeenCalled();
     expect(fingerprint(panel().getWorkspaceJson())).toBe(fingerprint(DEFAULT_WS));
