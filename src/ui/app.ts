@@ -30,7 +30,7 @@ import { downloadTextFile, sketchFileName } from './sketch-file';
 import { createArduinoIdeDialog, type ArduinoIdeDialog } from './arduino-ide-dialog';
 import { createAboutDialog, type AboutDialog } from './about-dialog';
 import { createHandinDialog, type HandinDialog, type HandinWork } from './handin-dialog';
-import { createExamplesMenu, type ExamplesMenu, type MenuExample, type NewItem } from './examples-menu';
+import { createExamplesMenu, type ExamplesMenu, type MenuExample } from './examples-menu';
 import { createBuzzerAudio, loadMuted, saveMuted, type BuzzerAudio } from './audio';
 import { isClassroomConfigured } from '../classroom/firebase';
 import { STUDENT_ERROR_TEXT } from '../classroom/errors';
@@ -167,6 +167,7 @@ export class App {
   private readonly mirror: Editor;
 
   private readonly runButton: HTMLButtonElement;
+  private readonly newButton: HTMLButtonElement;
   private readonly ideButton: HTMLButtonElement;
   private readonly uploadSlot: HTMLButtonElement;
   private readonly statusBox: HTMLElement;
@@ -220,6 +221,7 @@ export class App {
     root.innerHTML = this.template();
 
     this.runButton = this.slot<HTMLButtonElement>('run');
+    this.newButton = this.slot<HTMLButtonElement>('new');
     this.ideButton = this.slot<HTMLButtonElement>('ide');
     this.uploadSlot = this.slot<HTMLButtonElement>('upload');
     this.statusBox = this.slot('status');
@@ -332,13 +334,7 @@ export class App {
         : null;
 
     // The menu lists the current mode's examples; a pick goes to that mode (never decided by the example's shape).
-    // "＋ New ▾": a blank sketch first, then the examples (one menu, by teacher request)
-    this.examplesMenu = createExamplesMenu<MenuExample>(
-      this.slot('examples'),
-      this.mode.examples(),
-      (example) => void this.mode.loadExample(example),
-      this.newItem(),
-    );
+    this.examplesMenu = createExamplesMenu<MenuExample>(this.slot('examples'), this.mode.examples(), (example) => void this.mode.loadExample(example));
 
     this.settingsMenu = createMenu(
       this.slot('settings'),
@@ -361,6 +357,7 @@ export class App {
 
     // --- header actions ---------------------------------------------------
     this.createModeButtons();
+    this.newButton.addEventListener('click', () => void this.newSketch());
     // One button: Run while idle, Stop while a sketch runs (Ctrl+Enter still restarts, Esc stops).
     this.runButton.addEventListener('click', () => void (this.running ? this.stop() : this.run()));
     this.ideButton.addEventListener('click', () => this.openInIde());
@@ -369,7 +366,7 @@ export class App {
     this.slot('reload').addEventListener('click', () => location.reload());
     if (review) {
       // The teacher reviews one hand-in: no new work, no examples, no links out of the sandbox.
-      for (const slot of ['examples', 'share', 'ide']) this.slot(slot).hidden = true;
+      for (const slot of ['new', 'examples', 'share', 'ide']) this.slot(slot).hidden = true;
       this.uploadButton.dispose(); // review mode: no upload from a hand-in
     }
 
@@ -636,11 +633,6 @@ export class App {
     this.runButton.title = this.running ? 'Stop (Esc)' : 'Run (Ctrl+Enter)';
   }
 
-  /** The first item of "＋ New ▾", in the current mode's words. */
-  private newItem(): NewItem {
-    return { label: this.mode.words.newTitle, title: this.mode.words.newAria, onSelect: () => void this.newSketch() };
-  }
-
   /**
    * The run status in the header. Keep the texts short ("2 errors", "Error at
    * 1523 ms") so the header stays on one row at 1366-1536 px; the console
@@ -808,7 +800,8 @@ export class App {
 
     // Header words: what Run, Stop, New, Arduino IDE and Upload act on.
     this.updateRunLabel();
-    this.examplesMenu.setNewItem(this.newItem());
+    this.newButton.setAttribute('aria-label', mode.words.newAria);
+    this.newButton.title = mode.words.newTitle;
     this.ideButton.setAttribute('aria-label', mode.words.ide);
     this.uploadSlot.setAttribute('aria-label', mode.words.upload);
 
@@ -1284,6 +1277,7 @@ export class App {
           </div>
           <div class="z1-mode" role="group" aria-label="Programming mode" data-slot="modes"></div>
           <nav class="z1-toolbar" aria-label="Sketch actions">
+            <button type="button" class="z1-btn" data-slot="new" aria-label="Start a new blank sketch" title="New blank sketch"><span aria-hidden="true">＋</span> New</button>
             <div data-slot="examples"></div>
             <button type="button" class="z1-btn z1-btn-run" data-slot="run" aria-label="Run the sketch (Ctrl+Enter)" title="Run (Ctrl+Enter)"><span aria-hidden="true" data-role="icon">▶</span> <span data-role="label">Run</span></button>
             <div data-slot="settings"></div>
