@@ -14,6 +14,7 @@ interface BlockItem {
   type: string;
   fields?: Record<string, unknown>;
   inputs?: Inputs;
+  extraState?: Record<string, unknown>;
 }
 
 function num(n: number): { shadow: { type: string; fields: Record<string, unknown> } } {
@@ -80,6 +81,8 @@ export const TOOLBOX: Blockly.utils.toolbox.ToolboxDefinition = {
     ]),
     category('Logic', BLOCK_COLOURS.logic, [
       block('controls_if'),
+      // the same block, already with an else: "+ else if" / "+ else" on the block add more
+      { kind: 'block', type: 'controls_if', extraState: { hasElse: true } },
       block('logic_compare'),
       block('logic_operation'),
       block('logic_negate'),
