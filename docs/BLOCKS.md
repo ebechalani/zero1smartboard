@@ -116,9 +116,16 @@ branches, so the buttons are on the block:
 - **＋ else if** (always) and **＋ else** (while there is none) sit on its bottom
   row; a new else if goes before the else;
 - a red **−** at the end of each "else if" and "else" row removes that branch.
-  Its blocks stay loose on the workspace (not in the sketch), and the other
-  branches keep theirs;
-- each click is one undo step (Ctrl+Z puts the branch and its blocks back);
+  Its blocks are not deleted: they are put next to the if block (to its right,
+  one under the other), loose (not in the sketch); the other branches keep
+  theirs;
+- each click is one undo step (Ctrl+Z puts the branch and its blocks back:
+  `updateShape_` plugs the children of the inputs that stay back in, as
+  Blockly's `rebuildShape_` does, so an undo / redo / paste keeps them);
+- a second click within 300 ms of a reshape is ignored (`DOUBLE_CLICK_MS`):
+  the rows move under the pointer, so a double-click would hit another button;
+- a collapsed if block reads "if ? do ? else if …" without the buttons' alt
+  texts (`toTokens`);
 - in the toolbox the buttons are only a picture, and on a read-only workspace
   they do nothing.
 

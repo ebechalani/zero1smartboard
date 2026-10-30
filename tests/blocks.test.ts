@@ -6,7 +6,7 @@
  * hand-built workspaces.
  */
 import * as Blockly from 'blockly';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   BLOCK_EXAMPLES,
   DEFAULT_WORKSPACE,
@@ -18,6 +18,7 @@ import {
   workspaceToArduino,
 } from '../src/blocks';
 import { BLOCK_COLOURS, Z1_BLOCK_TYPES } from '../src/blocks/blocks';
+import { DOUBLE_CLICK_MS } from '../src/blocks/if-block';
 import { EXAMPLE_GROUPS } from '../src/examples';
 import { transpile } from '../src/transpiler';
 import { runSketch, type RunOptions } from './helpers';
@@ -987,9 +988,11 @@ describe('the if block: "+ else if", "+ else" and "−" on the block, no gear', 
   });
 
   it('a click on "+ else if" / "+ else" adds the branch; "+ else" goes once there is an else', () => {
+    vi.useFakeTimers();
     const ws = load(ifWith(undefined, { IF0: v(bool(true)), DO0: v(led('RED', 'ON')) }));
     const block = ifOf(ws);
     const click = (input: string, alt: string) => {
+      vi.advanceTimersByTime(DOUBLE_CLICK_MS + 1); // a person's next click, not the second half of a double-click
       const field = block.getInput(input)!.fieldRow.find((f) => f instanceof Blockly.FieldImage && f.getText() === alt) as Blockly.FieldImage;
       field.showEditor();
     };
@@ -1003,6 +1006,14 @@ describe('the if block: "+ else if", "+ else" and "−" on the block, no gear', 
     expect(childType(block, 'IF0')).toBe('logic_boolean'); // the first branch kept its blocks
     expect(ledOf(block, 'DO0')).toBe('RED');
     expect(workspaceToArduino(ws)).toContain('  if (true) {\n    digitalWrite(LED_RED, HIGH);\n  } else if (false) {\n  } else {\n  }\n');
+    // the rows move under the pointer after a click: the second click of a double-click is ignored
+    vi.advanceTimersByTime(DOUBLE_CLICK_MS - 50);
+    (block.getInput('ELSE_ROW')!.fieldRow.find((f) => f instanceof Blockly.FieldImage) as Blockly.FieldImage).showEditor();
+    expect(rows(block)).toContain('ELSE');
+    vi.advanceTimersByTime(DOUBLE_CLICK_MS + 1);
+    (block.getInput('ELSE_ROW')!.fieldRow.find((f) => f instanceof Blockly.FieldImage) as Blockly.FieldImage).showEditor();
+    expect(rows(block)).not.toContain('ELSE');
+    vi.useRealTimers();
     ws.dispose();
   });
 
@@ -1031,6 +1042,12 @@ describe('the if block: "+ else if", "+ else" and "−" on the block, no gear', 
     expect(ledOf(block, 'DO1')).toBe('BUILTIN');
     expect(block.getInputTargetBlock('ELSE')!.getFieldValue('STATE')).toBe('OFF');
     expect(ws.getTopBlocks(false).length).toBe(top + 2); // the removed condition and LED block, loose
+    // … put next to the if block (to its right, one under the other), not left under it
+    const at = block.getRelativeToSurfaceXY();
+    const loose = ws.getTopBlocks(false).filter((b) => b.type === 'logic_compare' || b.type === 'z1_led_set');
+    expect(loose.map((b) => b.type).sort()).toEqual(['logic_compare', 'z1_led_set']);
+    for (const b of loose) expect(b.getRelativeToSurfaceXY().x).toBe(at.x + 24);
+    expect(loose[0]!.getRelativeToSurfaceXY().y).toBe(at.y);
     const code = workspaceToArduino(ws);
     expect(code).toContain('  if (1 > 0) {\n    digitalWrite(LED_RED, HIGH);\n  } else if (1 < 2) {\n    digitalWrite(LED_BUILTIN, HIGH);\n  } else {\n    digitalWrite(LED_RED, LOW);\n  }\n');
     expect(code).not.toContain('LED_GREEN'); // loose blocks are not in the sketch
@@ -1074,6 +1091,16 @@ describe('the if block: "+ else if", "+ else" and "−" on the block, no gear', 
     const fromXml = ws.getBlocksByType('controls_if', false).find((b) => b !== block) as IfBlock;
     expect(rows(fromXml)).toEqual(['IF0', 'DO0', 'IF1', 'REMOVE1', 'DO1', 'ELSE_ROW', 'ELSE', 'ADD']);
     expect(Blockly.Xml.domToText(Blockly.Xml.blockToDom(fromXml))).toContain('<mutation elseif="1" else="1"></mutation>');
+    ws.dispose();
+  });
+
+  it('a collapsed if block reads its words without the buttons', () => {
+    const ws = load(ifWith({ elseIfCount: 1, hasElse: true }, { IF0: v(bool(true)), DO0: v(led('RED', 'ON')) }));
+    const block = ifOf(ws);
+    const text = block.toString();
+    expect(text).toContain('if true do');
+    expect(text).toContain('else if');
+    expect(text).not.toMatch(/Add else|Remove this/);
     ws.dispose();
   });
 

@@ -16,6 +16,9 @@
  */
 import * as Blockly from 'blockly';
 
+/** A second button click this soon after a reshape is the second half of a double-click on a button that moved: ignored. */
+export const DOUBLE_CLICK_MS = 300;
+
 /** Names of the inputs the buttons sit in (not saved: only connections and extraState are). */
 const ADD_ROW = 'ADD';
 const ELSE_ROW = 'ELSE_ROW';
@@ -37,7 +40,8 @@ export const IF_BUTTON_TEXT = {
   addElseTooltip: 'Add an "else": what to do when no condition above is true.',
   removeElseIfAlt: 'Remove this else if',
   removeElseAlt: 'Remove this else',
-  removeTooltip: 'Remove this part. The blocks inside it stay on the workspace.',
+  removeElseIfTooltip: 'Remove this "else if". Its condition and its blocks are not deleted: they are put next to the block.',
+  removeElseTooltip: 'Remove the "else". Its blocks are not deleted: they are put next to the block.',
   blockTooltip: 'If the condition is true, do the blocks inside. Use "+ else if" and "+ else" to test more cases.',
 } as const;
 
@@ -83,10 +87,15 @@ interface Branches {
   otherwise: Blockly.Connection | null | undefined;
 }
 
+/** The button alt texts: what a collapsed block must not read out. */
+const BUTTON_ALTS: ReadonlySet<string> = new Set([IF_BUTTON_TEXT.addElseIfAlt, IF_BUTTON_TEXT.addElseAlt, IF_BUTTON_TEXT.removeElseIfAlt, IF_BUTTON_TEXT.removeElseAlt]);
+
 /** The fields and methods this file adds to a `controls_if` block. */
 export interface IfBlock extends Blockly.BlockSvg {
   elseifCount_: number;
   elseCount_: number;
+  /** When a button last changed the shape (Date.now()), for the double-click guard. */
+  lastReshapeAt_?: number;
   updateShape_(): void;
   /** Add an else-if branch (before the else, if any). */
   addElseIf(): void;
@@ -99,9 +108,36 @@ export interface IfBlock extends Blockly.BlockSvg {
 }
 
 function button(src: string, width: number, height: number, alt: string, tooltip: string, onClick: (block: IfBlock) => void): Blockly.FieldImage {
-  const field = new Blockly.FieldImage(src, width, height, alt, (f) => onClick(f.getSourceBlock() as IfBlock));
+  const field = new Blockly.FieldImage(src, width, height, alt, (f) => {
+    const block = f.getSourceBlock() as IfBlock;
+    // After a click the rows move: the second click of a double-click would hit another button.
+    if (Date.now() - (block.lastReshapeAt_ ?? 0) < DOUBLE_CLICK_MS) return;
+    onClick(block);
+  });
   field.setTooltip(tooltip);
   return field;
+}
+
+/** The x/y and size of a block (size 0 in a headless workspace, where blocks are not drawn). */
+function bounds(block: Blockly.Block): { x: number; y: number; width: number; height: number } {
+  const xy = block.getRelativeToSurfaceXY();
+  const size = (block as unknown as { getHeightWidth?(): { height: number; width: number } }).getHeightWidth?.() ?? { height: 0, width: 0 };
+  return { x: xy.x, y: xy.y, width: size.width, height: size.height };
+}
+
+/**
+ * The blocks of a removed branch are not deleted: put them next to the if block (to its right,
+ * one under the other), where they are seen, instead of leaving them under the smaller block.
+ */
+function putAside(block: IfBlock, orphans: Blockly.Block[]): void {
+  const home = bounds(block);
+  let y = home.y;
+  for (const orphan of orphans) {
+    if (orphan.getParent() || orphan.isDeadOrDying()) continue;
+    const at = bounds(orphan);
+    orphan.moveBy(home.x + home.width + 24 - at.x, y - at.y, ['if-branch-removed']);
+    y += at.height + 12;
+  }
 }
 
 /** The saved form of the shape, as Blockly's change events carry it ('' = plain if). */
@@ -123,20 +159,29 @@ function reshape(block: IfBlock, edit: (branches: Branches) => void): void {
     branches.bodies.push(block.getInput(`DO${n}`)?.connection?.targetConnection ?? null);
   }
   if (block.elseCount_) branches.otherwise = block.getInput('ELSE')?.connection?.targetConnection ?? null;
+  const children = [...branches.conditions, ...branches.bodies, branches.otherwise ?? null];
 
   const existingGroup = Blockly.Events.getGroup();
   if (!existingGroup) Blockly.Events.setGroup(true);
   try {
     const before = shapeState(block);
     edit(branches);
+    const kept = new Set([...branches.conditions, ...branches.bodies, branches.otherwise ?? null]);
+    const orphans = children.filter((c): c is Blockly.Connection => c !== null && !kept.has(c));
+    for (const c of orphans) c.disconnect(); // out before the rebuild, so that no slot that moves up takes them
     block.elseifCount_ = branches.conditions.length;
     block.elseCount_ = branches.otherwise === undefined ? 0 : 1;
     block.updateShape_();
     branches.conditions.forEach((c, i) => c?.reconnect(block, `IF${i + 1}`));
     branches.bodies.forEach((c, i) => c?.reconnect(block, `DO${i + 1}`));
     branches.otherwise?.reconnect(block, 'ELSE');
+    putAside(
+      block,
+      orphans.map((c) => c.getSourceBlock()),
+    );
     const after = shapeState(block);
     if (before !== after) Blockly.Events.fire(new Blockly.Events.BlockChange(block, 'mutation', null, before, after));
+    block.lastReshapeAt_ = Date.now();
   } finally {
     if (!existingGroup) Blockly.Events.setGroup(false);
   }
@@ -192,23 +237,31 @@ const IF_BLOCK_MIXIN = {
     this.updateShape_();
   },
 
-  /** Rebuild every input after IF0 / DO0 from the counts (children are reconnected by reshape()). */
+  /**
+   * Rebuild every input after IF0 / DO0 from the counts. The blocks in an input that exists
+   * before and after (the else, an else-if below the new one) are plugged back in, so that an
+   * undo / redo (loadExtraState) and a paste keep them; reshape() moves the others.
+   */
   updateShape_(this: IfBlock): void {
+    const kept = new Map<string, Blockly.Connection>();
     for (const input of [...this.inputList]) {
-      if (input.name !== 'IF0' && input.name !== 'DO0') this.removeInput(input.name);
+      if (input.name === 'IF0' || input.name === 'DO0') continue;
+      const child = input.connection?.targetConnection;
+      if (child && /^(IF|DO)\d+$|^ELSE$/.test(input.name)) kept.set(input.name, child);
+      this.removeInput(input.name);
     }
     for (let n = 1; n <= this.elseifCount_; n++) {
       this.appendValueInput(`IF${n}`).setCheck('Boolean').appendField(Blockly.Msg['CONTROLS_IF_MSG_ELSEIF'] ?? 'else if');
       const branch = n;
       this.appendDummyInput(removeRow(n)).appendField(
-        button(REMOVE_SRC, REMOVE_SIZE, REMOVE_SIZE, IF_BUTTON_TEXT.removeElseIfAlt, IF_BUTTON_TEXT.removeTooltip, (b) => b.removeElseIf(branch)),
+        button(REMOVE_SRC, REMOVE_SIZE, REMOVE_SIZE, IF_BUTTON_TEXT.removeElseIfAlt, IF_BUTTON_TEXT.removeElseIfTooltip, (b) => b.removeElseIf(branch)),
       );
       this.appendStatementInput(`DO${n}`).appendField(Blockly.Msg['CONTROLS_IF_MSG_THEN'] ?? 'do');
     }
     if (this.elseCount_) {
       this.appendDummyInput(ELSE_ROW)
         .appendField(Blockly.Msg['CONTROLS_IF_MSG_ELSE'] ?? 'else')
-        .appendField(button(REMOVE_SRC, REMOVE_SIZE, REMOVE_SIZE, IF_BUTTON_TEXT.removeElseAlt, IF_BUTTON_TEXT.removeTooltip, (b) => b.removeElse()));
+        .appendField(button(REMOVE_SRC, REMOVE_SIZE, REMOVE_SIZE, IF_BUTTON_TEXT.removeElseAlt, IF_BUTTON_TEXT.removeElseTooltip, (b) => b.removeElse()));
       this.appendStatementInput('ELSE');
     }
     const add = this.appendDummyInput(ADD_ROW);
@@ -216,6 +269,13 @@ const IF_BLOCK_MIXIN = {
     if (!this.elseCount_) {
       add.appendField(button(ADD_ELSE_SRC, ADD_ELSE_WIDTH, BUTTON_HEIGHT, IF_BUTTON_TEXT.addElseAlt, IF_BUTTON_TEXT.addElseTooltip, (b) => b.addElse()));
     }
+    for (const [name, child] of kept) if (this.getInput(name)) child.reconnect(this, name);
+  },
+
+  /** The words of a collapsed block ("if ? do ? …", Blockly's toString): without the buttons' alt texts. */
+  toTokens(this: IfBlock, emptyToken?: string): string[] {
+    const base = Blockly.Block.prototype as unknown as { toTokens(emptyToken?: string): string[] };
+    return base.toTokens.call(this, emptyToken).filter((token) => !BUTTON_ALTS.has(token));
   },
 
   addElseIf(this: IfBlock): void {
