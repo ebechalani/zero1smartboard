@@ -502,18 +502,28 @@ describe('Settings ▾ → About', () => {
 });
 
 describe('header toolbar', () => {
-  it('starts with New and Examples, each its own button, has one Run/Stop button and no GitHub link', () => {
+  it('starts with New, Load and Examples, each its own button, has one Run/Stop button and no GitHub link', () => {
     const root = start();
     const toolbar = root.querySelector('.z1-toolbar')!;
     const first = toolbar.firstElementChild as HTMLElement;
     expect(first.dataset.slot).toBe('new');
     expect(first.textContent!.trim().endsWith('New')).toBe(true);
     expect(first.getAttribute('aria-label')).toBe('Start a new blank sketch');
+    const load = button(root, 'load');
+    expect(load.textContent!.replace(/\s+/g, ' ').trim()).toBe('📂 Load');
+    expect(load.getAttribute('aria-label')).toBe('Load a program saved as a file');
+    expect(load.title).toBe('Load a saved file (.ino sketch, .py program or .json blocks)');
+    const chooser = root.querySelector<HTMLInputElement>('[data-slot="load-file"]')!;
+    expect(chooser.type).toBe('file');
+    expect(chooser.hidden).toBe(true);
+    expect(chooser.accept).toBe('.ino,.pde,.txt,.c,.cpp,.h,.py,.json');
+    expect(toolbar.contains(chooser)).toBe(false); // not one of the actions (it is hidden)
     expect(menuButton(root, 'examples').textContent!.replace(/\s+/g, ' ').trim()).toBe('Examples ▾');
     expect(menuItems(root, 'examples')).toEqual(EXAMPLES.map((e) => e.title)); // only examples: New is its own button
     expect(root.querySelector('[data-slot="stop"]')).toBeNull();
     expect(Array.from(toolbar.children, (el) => (el as HTMLElement).dataset.slot)).toEqual([
       'new',
+      'load',
       'examples',
       'run',
       'settings',
@@ -559,6 +569,7 @@ describe('header toolbar', () => {
     expect(menuButton(root, 'share').querySelector('.z1-handin-name')).toBeNull();
     expect(Array.from(root.querySelectorAll('.z1-toolbar > *'), (el) => (el as HTMLElement).dataset.slot)).toEqual([
       'new',
+      'load',
       'examples',
       'run',
       'settings',
@@ -792,6 +803,70 @@ describe('Arduino IDE', () => {
     expect(file.name).toMatch(SKETCH_FILE);
     expect(file.text).toBe(MY_SKETCH);
     expect(dialog.querySelector('[data-role="steps"]')!.textContent).toContain(file.name);
+  });
+});
+
+describe('Load (a saved file)', () => {
+  const file = (name: string, text: string | object, type = 'text/plain') => new File([typeof text === 'string' ? text : JSON.stringify(text, null, 2)], name, { type });
+
+  it('loads a .ino file into the Code editor, says which file, and shows the Code tab', async () => {
+    const root = start();
+    button(root, 'tab-serial').click();
+    await app!.loadFile(file('blink.ino', MY_SKETCH));
+    expect(editorText(root)).toBe(MY_SKETCH);
+    expect(toastText(root)).toBe('Loaded blink.ino');
+    expect(button(root, 'tab-code').getAttribute('aria-selected')).toBe('true');
+  });
+
+  it('asks before replacing hand-written code, naming the file; refused, the code stays', async () => {
+    const root = start(MY_SKETCH);
+    const refuse = stubConfirm(false);
+    await app!.loadFile(file('other.ino', BLANK_SKETCH));
+    expect(refuse).toHaveBeenCalledTimes(1);
+    expect(refuse.mock.calls[0][0]).toBe('Load the sketch from other.ino?\nYour current code will be lost.');
+    expect(editorText(root)).toBe(MY_SKETCH);
+    const accept = stubConfirm(true);
+    await app!.loadFile(file('other.ino', BLANK_SKETCH));
+    expect(accept).toHaveBeenCalledTimes(1);
+    expect(editorText(root)).toBe(BLANK_SKETCH);
+  });
+
+  it('a blocks file (what Download blocks saves) opens in Blocks mode', async () => {
+    fake.examples = [BLINK_EXAMPLE];
+    const root = start();
+    await app!.loadFile(file('zero1_ali_1030_101500.blocks.json', BLINK_WS, 'application/json'));
+    await settle();
+    expect(document.body.dataset.mode).toBe('blocks');
+    expect(fingerprint(panel().getWorkspaceJson())).toBe(fingerprint(BLINK_WS));
+    expect(toastText(root)).toBe('Loaded zero1_ali_1030_101500.blocks.json');
+    expect(button(root, 'tab-blocks').getAttribute('aria-selected')).toBe('true');
+  });
+
+  it('refuses what is not a program, with a toast and no change', async () => {
+    const root = start(MY_SKETCH);
+    const confirm = stubConfirm(true);
+    await app!.loadFile(file('photo.png', 'PNG\0\0', 'image/png'));
+    expect(toastText(root)).toBe('photo.png is not a text file. Choose a .ino sketch, a .py program or a .json blocks file.');
+    await app!.loadFile(file('data.json', { a: 1 }, 'application/json'));
+    expect(toastText(root)).toBe('data.json is not a ZERO1 blocks file. Share ▾ → Download blocks saves one.');
+    await app!.loadFile(file('big.ino', 'x'.repeat(1_000_001)));
+    expect(toastText(root)).toBe('big.ino is too big to be a program (more than 1 MB).');
+    expect(confirm).not.toHaveBeenCalled();
+    expect(editorText(root)).toBe(MY_SKETCH);
+    expect(document.body.dataset.mode).toBe('code');
+  });
+
+  it('the Load button opens the file chooser, and a chosen file is loaded (the chooser is reset for the next one)', async () => {
+    const root = start();
+    const chooser = root.querySelector<HTMLInputElement>('[data-slot="load-file"]')!;
+    const open = vi.spyOn(chooser, 'click').mockImplementation(() => undefined);
+    button(root, 'load').click();
+    expect(open).toHaveBeenCalledTimes(1);
+    Object.defineProperty(chooser, 'files', { value: [file('blink.ino', MY_SKETCH)], configurable: true });
+    chooser.dispatchEvent(new Event('change'));
+    await vi.waitFor(() => expect(editorText(root)).toBe(MY_SKETCH));
+    expect(toastText(root)).toBe('Loaded blink.ino');
+    expect(chooser.value).toBe('');
   });
 });
 

@@ -14,8 +14,8 @@ WHAT IT TEACHES
     direction.
 
 PARTS AND PINS
-  - Button 1 (A) ....... D6  (BUTTON_1)
-  - Button 2 (B) ....... D7  (BUTTON_2)
+  - Button 1 (A) ....... D7  (BUTTON_1)
+  - Button 2 (B) ....... D6  (BUTTON_2)
   - Motor driver IN1 ... A0  (MOTOR; motor on the green "MOTOR" screw
                               terminal)
 

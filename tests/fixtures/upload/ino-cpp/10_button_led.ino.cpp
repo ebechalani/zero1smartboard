@@ -10,8 +10,8 @@
       resistor next to each button). Not pressed = LOW.
 
   PARTS AND PINS
-    - Button 1 (A) ....... D6
-    - Button 2 (B) ....... D7
+    - Button 1 (A) ....... D7
+    - Button 2 (B) ....... D6
     - Red LED ............ A1
     - Green LED .......... A2
 
@@ -25,8 +25,8 @@
     - Light the red LED only when BOTH buttons are pressed (use &&).
 */
 
-const int BUTTON_A = 6;
-const int BUTTON_B = 7;
+const int BUTTON_A = 7;
+const int BUTTON_B = 6;
 const int LED_RED = A1;
 const int LED_GREEN = A2;
 

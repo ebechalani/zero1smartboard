@@ -657,7 +657,7 @@ pins this way: pyboard-D `LED_RED`, Pico `"LED"`).
 |---|---|---|---|
 | `LED_RED`, `LED_GREEN` | A1, A2 | `BUZZER` | 8 |
 | `LED_BUILTIN` | 13 (Arduino's own, no declaration) | `DHT_PIN` | 5 |
-| `BUTTON_1`, `BUTTON_2` | 6, 7 | `TRIG_PIN`, `ECHO_PIN` | 3, 2 |
+| `BUTTON_1`, `BUTTON_2` | 7, 6 | `TRIG_PIN`, `ECHO_PIN` | 3, 2 |
 | `POT_LDR` | A3 | `RGB_PIN` | 9 |
 | `MOTOR` | A0 | `SEG_DATA`, `SEG_LATCH`, `SEG_CLOCK` | 12, 11, 10 |
 | `SERVO_PIN` | 4 | `A0` … `A5` | 14 … 19 (Arduino's own) |
@@ -1807,7 +1807,7 @@ while True:
 ```
 
 ```cpp
-const int BUTTON_1 = 6;        // button 1
+const int BUTTON_1 = 7;        // button 1
 const int BUZZER = 8;          // buzzer
 
 const int button = BUTTON_1;
@@ -2418,7 +2418,10 @@ current mode. Link text: "Go to line {N} in the Python program" / "… in the sk
 ### 7.11 Share ▾ and downloads
 
 Python mode items: **Hand in to my teacher · Copy link · Download .py · Download .ino**
-(`menu.setItems()` on mode change).
+(`menu.setItems()` on mode change). Blocks mode has **Download blocks (.json)** in the
+same place (`BLOCKS_FILE` in blocks-mode.ts: the workspace, pretty-printed, as
+`zero1_ali_khoury_0928_143210.blocks.json`); Code mode has no file of its own besides the
+.ino. The header's **📂 Load** opens any of these files again (docs/ARCHITECTURE.md §8).
 
 - Copy link → `#python=<base64url UTF-8>` (`encodeSharePython`, owner C) — works with errors.
 - Download .py → `pythonFileName(student, date)` = `zero1_ali_khoury_0928_143210.py`

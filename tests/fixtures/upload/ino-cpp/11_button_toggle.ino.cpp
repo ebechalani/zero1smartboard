@@ -13,7 +13,7 @@
     - Remembering things between two runs of loop() with global variables.
 
   PARTS AND PINS
-    - Button 1 (A) ....... D6  (pressed = HIGH on the ZERO1 board)
+    - Button 1 (A) ....... D7  (pressed = HIGH on the ZERO1 board)
     - Red LED ............ A1
 
   EXPECTED BEHAVIOUR
@@ -30,7 +30,7 @@
     - Use Button 2 to reset pressCount to 0.
 */
 
-const int BUTTON_A = 6;
+const int BUTTON_A = 7;
 const int LED_RED = A1;
 const unsigned long DEBOUNCE_TIME = 50;   // ms during which the reading must stay stable
 

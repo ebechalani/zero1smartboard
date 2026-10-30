@@ -17,8 +17,8 @@ export interface PinMapRow {
 export const PIN_MAP_ROWS: readonly PinMapRow[] = [
   { no: 1, part: 'Potentiometer', description: 'POT', pinLabel: 'A3', pin: 17 },
   { no: 2, part: 'LDR sensor', description: 'LDR', pinLabel: 'A3', pin: 17 },
-  { no: 3, part: 'Push button', description: 'A (Button 1)', pinLabel: 'D6', pin: 6 },
-  { no: 4, part: 'Push button', description: 'B (Button 2)', pinLabel: 'D7', pin: 7 },
+  { no: 3, part: 'Push button', description: 'B (Button 2)', pinLabel: 'D6', pin: 6 },
+  { no: 4, part: 'Push button', description: 'A (Button 1)', pinLabel: 'D7', pin: 7 },
   { no: 5, part: 'Driver', description: 'IN1 (DC motor)', pinLabel: 'A0', pin: 14 },
   { no: 6, part: 'Servo motor', description: 'Servo', pinLabel: 'D4', pin: 4 },
   { no: 7, part: 'LCD', description: 'SDA', pinLabel: 'A4', pin: 18 },

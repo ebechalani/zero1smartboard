@@ -6,8 +6,8 @@ WHAT IT TEACHES
   - if / elif / else: three cases, only one of them runs.
 
 PARTS AND PINS
-  - Button 1 (A) ....... D6  (BUTTON_1)
-  - Button 2 (B) ....... D7  (BUTTON_2)
+  - Button 1 (A) ....... D7  (BUTTON_1)
+  - Button 2 (B) ....... D6  (BUTTON_2)
   - RGB LED (NeoPixel) . D9  (RGB_PIN)
 
 EXPECTED BEHAVIOUR

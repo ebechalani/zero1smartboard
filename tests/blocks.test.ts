@@ -6,7 +6,7 @@
  * hand-built workspaces.
  */
 import * as Blockly from 'blockly';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   BLOCK_EXAMPLES,
   DEFAULT_WORKSPACE,
@@ -18,6 +18,7 @@ import {
   workspaceToArduino,
 } from '../src/blocks';
 import { BLOCK_COLOURS, Z1_BLOCK_TYPES } from '../src/blocks/blocks';
+import { DOUBLE_CLICK_MS } from '../src/blocks/if-block';
 import { EXAMPLE_GROUPS } from '../src/examples';
 import { transpile } from '../src/transpiler';
 import { runSketch, type RunOptions } from './helpers';
@@ -959,6 +960,165 @@ describe('generator: procedures', () => {
     expect(code.indexOf('int first(int x)')).toBeLessThan(code.indexOf('void setup()'));
     expect(code).toContain('int first(int x) {\n  if (x < 0) {\n    return 0;\n  }\n  return x;\n}');
     expect(transpile(code).ok).toBe(true);
+  });
+});
+
+describe('the if block: "+ else if", "+ else" and "−" on the block, no gear', () => {
+  type IfBlock = import('../src/blocks/if-block').IfBlock;
+  const imageAlts = (block: Blockly.Block, input: string): string[] =>
+    (block.getInput(input)?.fieldRow ?? []).filter((f) => f instanceof Blockly.FieldImage).map((f) => (f as Blockly.FieldImage).getText());
+  const rows = (block: Blockly.Block): string[] => block.inputList.map((i) => i.name);
+  const ifWith = (extraState: object | undefined, inputs: Record<string, { block: BlockJson }>): object =>
+    workspaceJson({ loop: [{ type: 'controls_if', ...(extraState ? { extraState } : {}), inputs }] });
+  const ifOf = (ws: Blockly.Workspace): IfBlock => ws.getBlocksByType('controls_if', false)[0] as IfBlock;
+  const childType = (block: Blockly.Block, input: string): string | null => block.getInputTargetBlock(input)?.type ?? null;
+  const ledOf = (block: Blockly.Block, input: string): string | null => block.getInputTargetBlock(input)?.getFieldValue('LED') ?? null;
+  const tick = () => new Promise((r) => setTimeout(r, 0));
+
+  it('has no gear pop-up: a plain if shows "+ else if" and "+ else" under its branch', () => {
+    registerZero1Blocks();
+    expect((Blockly.Blocks['controls_if'] as { decompose?: unknown }).decompose).toBeUndefined();
+    const ws = load(ifWith(undefined, {}));
+    const block = ifOf(ws);
+    expect(rows(block)).toEqual(['IF0', 'DO0', 'ADD']);
+    expect(imageAlts(block, 'ADD')).toEqual(['Add else if', 'Add else']);
+    expect(Blockly.serialization.blocks.save(block)).not.toHaveProperty('extraState');
+    expect(Blockly.serialization.blocks.save(block)).not.toHaveProperty('inline'); // inline is the block's default, not saved
+    ws.dispose();
+  });
+
+  it('a click on "+ else if" / "+ else" adds the branch; "+ else" goes once there is an else', () => {
+    vi.useFakeTimers();
+    const ws = load(ifWith(undefined, { IF0: v(bool(true)), DO0: v(led('RED', 'ON')) }));
+    const block = ifOf(ws);
+    const click = (input: string, alt: string) => {
+      vi.advanceTimersByTime(DOUBLE_CLICK_MS + 1); // a person's next click, not the second half of a double-click
+      const field = block.getInput(input)!.fieldRow.find((f) => f instanceof Blockly.FieldImage && f.getText() === alt) as Blockly.FieldImage;
+      field.showEditor();
+    };
+    click('ADD', 'Add else');
+    expect(rows(block)).toEqual(['IF0', 'DO0', 'ELSE_ROW', 'ELSE', 'ADD']);
+    expect(imageAlts(block, 'ADD')).toEqual(['Add else if']);
+    expect(imageAlts(block, 'ELSE_ROW')).toEqual(['Remove this else']);
+    click('ADD', 'Add else if'); // goes before the else
+    expect(rows(block)).toEqual(['IF0', 'DO0', 'IF1', 'REMOVE1', 'DO1', 'ELSE_ROW', 'ELSE', 'ADD']);
+    expect(Blockly.serialization.blocks.save(block)).toMatchObject({ extraState: { elseIfCount: 1, hasElse: true } });
+    expect(childType(block, 'IF0')).toBe('logic_boolean'); // the first branch kept its blocks
+    expect(ledOf(block, 'DO0')).toBe('RED');
+    expect(workspaceToArduino(ws)).toContain('  if (true) {\n    digitalWrite(LED_RED, HIGH);\n  } else if (false) {\n  } else {\n  }\n');
+    // the rows move under the pointer after a click: the second click of a double-click is ignored
+    vi.advanceTimersByTime(DOUBLE_CLICK_MS - 50);
+    (block.getInput('ELSE_ROW')!.fieldRow.find((f) => f instanceof Blockly.FieldImage) as Blockly.FieldImage).showEditor();
+    expect(rows(block)).toContain('ELSE');
+    vi.advanceTimersByTime(DOUBLE_CLICK_MS + 1);
+    (block.getInput('ELSE_ROW')!.fieldRow.find((f) => f instanceof Blockly.FieldImage) as Blockly.FieldImage).showEditor();
+    expect(rows(block)).not.toContain('ELSE');
+    vi.useRealTimers();
+    ws.dispose();
+  });
+
+  it('"−" removes one branch: the others keep their blocks, the removed blocks stay on the workspace', () => {
+    const ws = load(
+      ifWith(
+        { elseIfCount: 2, hasElse: true },
+        {
+          IF0: v(compare('GT', num(1), num(0))),
+          DO0: v(led('RED', 'ON')),
+          IF1: v(compare('EQ', num(1), num(1))),
+          DO1: v(led('GREEN', 'ON')),
+          IF2: v(compare('LT', num(1), num(2))),
+          DO2: v(led('BUILTIN', 'ON')),
+          ELSE: v(led('RED', 'OFF')),
+        },
+      ),
+    );
+    const block = ifOf(ws);
+    const top = ws.getTopBlocks(false).length;
+    const minus = block.getInput('REMOVE1')!.fieldRow.find((f) => f instanceof Blockly.FieldImage) as Blockly.FieldImage;
+    expect(minus.getText()).toBe('Remove this else if');
+    minus.showEditor();
+    expect(rows(block)).toEqual(['IF0', 'DO0', 'IF1', 'REMOVE1', 'DO1', 'ELSE_ROW', 'ELSE', 'ADD']);
+    expect(block.getInputTargetBlock('IF1')!.getFieldValue('OP')).toBe('LT'); // the second else if moved up with its blocks
+    expect(ledOf(block, 'DO1')).toBe('BUILTIN');
+    expect(block.getInputTargetBlock('ELSE')!.getFieldValue('STATE')).toBe('OFF');
+    expect(ws.getTopBlocks(false).length).toBe(top + 2); // the removed condition and LED block, loose
+    // … put next to the if block (to its right, one under the other), not left under it
+    const at = block.getRelativeToSurfaceXY();
+    const loose = ws.getTopBlocks(false).filter((b) => b.type === 'logic_compare' || b.type === 'z1_led_set');
+    expect(loose.map((b) => b.type).sort()).toEqual(['logic_compare', 'z1_led_set']);
+    for (const b of loose) expect(b.getRelativeToSurfaceXY().x).toBe(at.x + 24);
+    expect(loose[0]!.getRelativeToSurfaceXY().y).toBe(at.y);
+    const code = workspaceToArduino(ws);
+    expect(code).toContain('  if (1 > 0) {\n    digitalWrite(LED_RED, HIGH);\n  } else if (1 < 2) {\n    digitalWrite(LED_BUILTIN, HIGH);\n  } else {\n    digitalWrite(LED_RED, LOW);\n  }\n');
+    expect(code).not.toContain('LED_GREEN'); // loose blocks are not in the sketch
+
+    block.removeElse();
+    expect(rows(block)).toEqual(['IF0', 'DO0', 'IF1', 'REMOVE1', 'DO1', 'ADD']);
+    expect(imageAlts(block, 'ADD')).toEqual(['Add else if', 'Add else']);
+    expect(Blockly.serialization.blocks.save(block)).toMatchObject({ extraState: { elseIfCount: 1 } });
+    ws.dispose();
+  });
+
+  it('one undo puts a removed branch back with its blocks; redo removes it again', async () => {
+    const ws = load(
+      ifWith({ elseIfCount: 1, hasElse: true }, { IF0: v(bool(true)), DO0: v(led('RED', 'ON')), IF1: v(bool(false)), DO1: v(led('GREEN', 'ON')), ELSE: v(led('BUILTIN', 'ON')) }),
+    );
+    ws.clearUndo();
+    const block = ifOf(ws);
+    const before = JSON.stringify(Blockly.serialization.blocks.save(block, { addCoordinates: false }));
+    block.removeElseIf(1);
+    await tick();
+    expect(block.getInput('IF1')).toBeNull();
+    ws.undo(false);
+    await tick();
+    expect(JSON.stringify(Blockly.serialization.blocks.save(block, { addCoordinates: false }))).toBe(before);
+    ws.undo(true);
+    await tick();
+    expect(block.getInput('IF1')).toBeNull();
+    expect(ledOf(block, 'ELSE')).toBe('BUILTIN');
+    ws.dispose();
+  });
+
+  it('loads the saved forms of Blockly\'s own if block: JSON extraState and XML <mutation>', () => {
+    const ws = load(ifWith({ elseIfCount: 2, hasElse: true }, { IF2: v(bool(true)), DO2: v(led('GREEN', 'ON')), ELSE: v(led('RED', 'ON')) }));
+    const block = ifOf(ws);
+    expect(rows(block)).toEqual(['IF0', 'DO0', 'IF1', 'REMOVE1', 'DO1', 'IF2', 'REMOVE2', 'DO2', 'ELSE_ROW', 'ELSE', 'ADD']);
+    expect(ledOf(block, 'DO2')).toBe('GREEN');
+    const xml = Blockly.utils.xml.textToDom(
+      '<xml xmlns="https://developers.google.com/blockly/xml"><block type="controls_if" x="0" y="900"><mutation elseif="1" else="1"></mutation></block></xml>',
+    );
+    Blockly.Xml.domToWorkspace(xml, ws);
+    const fromXml = ws.getBlocksByType('controls_if', false).find((b) => b !== block) as IfBlock;
+    expect(rows(fromXml)).toEqual(['IF0', 'DO0', 'IF1', 'REMOVE1', 'DO1', 'ELSE_ROW', 'ELSE', 'ADD']);
+    expect(Blockly.Xml.domToText(Blockly.Xml.blockToDom(fromXml))).toContain('<mutation elseif="1" else="1"></mutation>');
+    ws.dispose();
+  });
+
+  it('a collapsed if block reads its words without the buttons', () => {
+    const ws = load(ifWith({ elseIfCount: 1, hasElse: true }, { IF0: v(bool(true)), DO0: v(led('RED', 'ON')) }));
+    const block = ifOf(ws);
+    const text = block.toString();
+    expect(text).toContain('if true do');
+    expect(text).toContain('else if');
+    expect(text).not.toMatch(/Add else|Remove this/);
+    ws.dispose();
+  });
+
+  it('does nothing on a read-only workspace', () => {
+    registerZero1Blocks();
+    const ws = new Blockly.Workspace(new Blockly.Options({ readOnly: true }));
+    Blockly.serialization.workspaces.load(ifWith(undefined, {}), ws);
+    const block = ifOf(ws);
+    block.addElse();
+    block.addElseIf();
+    expect(rows(block)).toEqual(['IF0', 'DO0', 'ADD']);
+    ws.dispose();
+  });
+
+  it('the Logic category offers the if block plain and already with an else', () => {
+    const logic = (TOOLBOX as { contents: Array<{ name: string; contents?: Array<{ type: string; extraState?: unknown }> }> }).contents.find((c) => c.name === 'Logic')!;
+    const ifs = logic.contents!.filter((i) => i.type === 'controls_if');
+    expect(ifs.map((i) => i.extraState ?? null)).toEqual([null, { hasElse: true }]);
   });
 });
 

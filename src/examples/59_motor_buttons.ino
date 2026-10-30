@@ -14,8 +14,8 @@
       direction.
 
   PARTS AND PINS
-    - Button 1 (A) ....... D6
-    - Button 2 (B) ....... D7
+    - Button 1 (A) ....... D7
+    - Button 2 (B) ....... D6
     - Motor driver IN1 ... A0  (motor on the green "MOTOR" screw terminal)
 
   EXPECTED BEHAVIOUR
@@ -32,8 +32,8 @@
     - Light the red LED while the motor runs.
 */
 
-const int BUTTON_A = 6;
-const int BUTTON_B = 7;
+const int BUTTON_A = 7;
+const int BUTTON_B = 6;
 const int MOTOR_PIN = A0;
 const int SHORT_TIME = 500;   // milliseconds: a short run, then a short stop
 const int LONG_TIME = 1000;   // milliseconds: a long run, then a long stop

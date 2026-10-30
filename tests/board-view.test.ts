@@ -120,8 +120,8 @@ function makeFakeBoard() {
     motor: { id: 'motor', pin: 14, state: { running: false, speed: 0, angle: 0 } as MotorState },
     servo,
     potLdr,
-    buttonA: button('button-a', 6),
-    buttonB: button('button-b', 7),
+    buttonA: button('button-a', 7),
+    buttonB: button('button-b', 6),
     dht,
     ultrasonic,
     lcd,
@@ -206,8 +206,8 @@ describe('board drawing', () => {
       }
     }
     for (const tip of [
-      'Button 1 — D6',
-      'Button 2 — D7',
+      'Button 1 — D7',
+      'Button 2 — D6',
       'Servo — D4',
       'TRIG D3, ECHO D2',
       'DHT22 temperature &amp; humidity — D5',

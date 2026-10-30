@@ -10,8 +10,8 @@ WHAT IT TEACHES
     line on the Serial Monitor), even if you keep the button held down.
 
 PARTS AND PINS
-  - Button 1 (A) ....... D6  (BUTTON_1)
-  - Button 2 (B) ....... D7  (BUTTON_2)
+  - Button 1 (A) ....... D7  (BUTTON_1)
+  - Button 2 (B) ....... D6  (BUTTON_2)
   - Servo (SG90) ....... D4  (SERVO_PIN; external "SERVO" header, keep it
                               plugged in)
 

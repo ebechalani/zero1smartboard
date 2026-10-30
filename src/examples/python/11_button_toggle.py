@@ -13,7 +13,7 @@ WHAT IT TEACHES
   - A choice inside an f-string: {'ON' if led_on else 'OFF'}.
 
 PARTS AND PINS
-  - Button 1 (A) ....... D6  (BUTTON_1; pressed = 1 on the ZERO1 board)
+  - Button 1 (A) ....... D7  (BUTTON_1; pressed = 1 on the ZERO1 board)
   - Red LED ............ A1  (LED_RED)
 
 EXPECTED BEHAVIOUR

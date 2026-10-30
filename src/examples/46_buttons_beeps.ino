@@ -10,8 +10,8 @@
       you keep the button held down.
 
   PARTS AND PINS
-    - Button 1 (A) ....... D6
-    - Button 2 (B) ....... D7
+    - Button 1 (A) ....... D7
+    - Button 2 (B) ....... D6
     - Buzzer ............. D8
 
   EXPECTED BEHAVIOUR
@@ -26,8 +26,8 @@
       three short.
 */
 
-const int BUTTON_A = 6;
-const int BUTTON_B = 7;
+const int BUTTON_A = 7;
+const int BUTTON_B = 6;
 const int BUZZER = 8;
 const int SHORT_BEEP = 100;   // milliseconds
 const int LONG_BEEP = 1000;   // milliseconds

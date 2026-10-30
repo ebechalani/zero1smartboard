@@ -229,7 +229,7 @@ export const BLOCK_EXAMPLES: BlockExample[] = [
     id: 'b10_button_led',
     title: 'Button and LED',
     group: 'Inputs',
-    description: 'The red LED (A1) is on while button 1 (D6) is pressed.',
+    description: 'The red LED (A1) is on while button 1 (D7) is pressed.',
     workspace: workspace([], [ifBlock([[buttonPressed('1'), [led('RED', 'ON')]]], [led('RED', 'OFF')])]),
   },
   {
@@ -388,7 +388,7 @@ export const BLOCK_EXAMPLES: BlockExample[] = [
     id: 'b45_buttons_leds',
     title: 'Buttons light the LEDs',
     group: 'Push Button',
-    description: 'The red LED (A1) is on while button 1 (D6) is held and the green LED (A2) while button 2 (D7) is held; a released button switches its LED off.',
+    description: 'The red LED (A1) is on while button 1 (D7) is held and the green LED (A2) while button 2 (D6) is held; a released button switches its LED off.',
     workspace: workspace(
       [],
       [

@@ -42,7 +42,7 @@ simple English; every block has a tooltip that names the pin(s) it uses.
 Pin constants generated (only when used):
 
 ```
-const int LED_RED = A1;   const int LED_GREEN = A2;   const int BUTTON_1 = 6;  const int BUTTON_2 = 7;
+const int LED_RED = A1;   const int LED_GREEN = A2;   const int BUTTON_1 = 7;  const int BUTTON_2 = 6;
 const int POT_LDR = A3;   const int MOTOR = A0;       const int SERVO_PIN = 4; const int BUZZER = 8;
 const int DHT_PIN = 5;    const int TRIG_PIN = 3;     const int ECHO_PIN = 2;  const int RGB_PIN = 9;
 const int SEG_DATA = 12;  const int SEG_LATCH = 11;   const int SEG_CLOCK = 10;
@@ -88,7 +88,7 @@ Custom blocks (`z1_*`) and the code each generates (statement blocks end with
 | `z1_serial_read_line` "line received from Serial" (String) | – | `readLine()` + helper |
 
 Standard Blockly blocks supported by the generator (all others are absent from
-the toolbox): `controls_if` (if / else if / else, mutator), `logic_compare`,
+the toolbox): `controls_if` (if / else if / else; see below), `logic_compare`,
 `logic_operation`, `logic_negate`, `logic_boolean`, `logic_ternary`,
 `controls_repeat_ext` (`for (int i = 0; i < n; i++)`; nested loops use `j`,
 `k`, … then `i2`), `controls_whileUntil` (`while (c)` / `while (!(c))`),
@@ -109,6 +109,32 @@ INFINITY), `math_number_property` (even `x % 2 == 0`, odd, whole
 `text_trim` (helper), `variables_get`, `variables_set`, `math_change`
 (`x += n;`), `procedures_defnoreturn`, `procedures_defreturn`,
 `procedures_callnoreturn`, `procedures_callreturn`, `procedures_ifreturn`.
+
+**The if block** (`src/blocks/if-block.ts`, by teacher request) replaces
+Blockly's `controls_if`. Students did not find the small gear pop-up that adds
+branches, so the buttons are on the block:
+- **＋ else if** (always) and **＋ else** (while there is none) sit on its bottom
+  row; a new else if goes before the else;
+- a red **−** at the end of each "else if" and "else" row removes that branch.
+  Its blocks are not deleted: they are put next to the if block (to its right,
+  one under the other), loose (not in the sketch); the other branches keep
+  theirs;
+- each click is one undo step (Ctrl+Z puts the branch and its blocks back:
+  `updateShape_` plugs the children of the inputs that stay back in, as
+  Blockly's `rebuildShape_` does, so an undo / redo / paste keeps them);
+- a second click within 300 ms of a reshape is ignored (`DOUBLE_CLICK_MS`):
+  the rows move under the pointer, so a double-click would hit another button;
+- a collapsed if block reads "if ? do ? else if …" without the buttons' alt
+  texts (`toTokens`);
+- in the toolbox the buttons are only a picture, and on a read-only workspace
+  they do nothing.
+
+It keeps Blockly's inputs (`IF0`/`DO0`, `IFn`/`DOn`, `ELSE`) and saved state
+(`extraState` `{ elseIfCount, hasElse }`, XML `<mutation elseif="n" else="1">`).
+Saved programs, links, hand-ins and examples therefore load unchanged, and the
+generator is the same. Its inputs are inline, so each − sits at the end of its
+row. The **Logic** category offers the block twice: plain, and already with an
+else.
 
 ## 11.3 Generator rules
 
@@ -302,7 +328,7 @@ Groups as the text examples. Each is a workspace JSON with the two hats:
 
 Then the part-by-part groups, one block program per text sketch 40–59 (same
 ids with a `b` prefix, same titles and behaviour; see docs/ARCHITECTURE.md
-§9). "Button 1" is D6 and "Button 2" is D7; when a sketch answers both
+§9). "Button 1" is D7 and "Button 2" is D6; when a sketch answers both
 buttons, both branches are in the one program:
 
 5. **LED** — `b40_led_blink_red` (red on 500 ms / off 500 ms),

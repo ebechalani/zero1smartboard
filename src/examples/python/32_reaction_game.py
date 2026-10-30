@@ -10,8 +10,8 @@ WHAT IT TEACHES
     the next round of the while True loop early with continue.
 
 PARTS AND PINS
-  - Button 1 (A) ....... D6  (BUTTON_1) START
-  - Button 2 (B) ....... D7  (BUTTON_2) REACT
+  - Button 1 (A) ....... D7  (BUTTON_1) START
+  - Button 2 (B) ....... D6  (BUTTON_2) REACT
   - 7-segment .......... DATA D12, LATCH D11, CLOCK D10
   - Buzzer ............. D8  (BUZZER)
   - Red LED ............ A1  (LED_RED)

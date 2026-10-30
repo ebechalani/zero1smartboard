@@ -3,8 +3,8 @@
 
 const int LED_RED = A1;        // red LED
 const int LED_GREEN = A2;      // green LED
-const int BUTTON_1 = 6;        // button 1
-const int BUTTON_2 = 7;        // button 2
+const int BUTTON_1 = 7;        // button 1
+const int BUTTON_2 = 6;        // button 2
 const int MOTOR = A0;          // DC motor driver
 
 const int leds[2] = {LED_RED, LED_GREEN};

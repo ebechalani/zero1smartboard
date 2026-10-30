@@ -9,7 +9,7 @@
 
 const int LED_RED = A1;        // red LED
 const int LED_GREEN = A2;      // green LED
-const int BUTTON_1 = 6;        // button 1
+const int BUTTON_1 = 7;        // button 1
 const int POT_LDR = A3;        // potentiometer / light sensor
 const int SERVO_PIN = 4;       // servo signal
 const int BUZZER = 8;          // buzzer

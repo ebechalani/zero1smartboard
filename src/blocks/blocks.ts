@@ -6,6 +6,7 @@
  * are shared with the code generator and the toolbox.
  */
 import * as Blockly from 'blockly';
+import { registerIfBlock } from './if-block';
 
 /** Colour of each toolbox category / block family (docs/BLOCKS.md §11.2). */
 export const BLOCK_COLOURS = {
@@ -394,6 +395,7 @@ export const Z1_BLOCK_TYPES: readonly string[] = BLOCK_DEFINITIONS.map((d) => d[
  * than once: the second call does nothing.
  */
 export function registerZero1Blocks(): void {
+  registerIfBlock(); // the if block with visible "+ else if" / "+ else" buttons (no gear)
   if (Blockly.Blocks['z1_setup_hat']) return;
 
   Blockly.Extensions.register(EXT.hatCap, function (this: Blockly.Block) {
@@ -418,8 +420,8 @@ export function registerZero1Blocks(): void {
   Blockly.Extensions.register(
     EXT.buttonTooltip,
     Blockly.Extensions.buildTooltipForDropdown('BUTTON', {
-      '1': 'True while push button 1 (pin 6) is held down.',
-      '2': 'True while push button 2 (pin 7) is held down.',
+      '1': 'True while push button 1 (pin 7) is held down.',
+      '2': 'True while push button 2 (pin 6) is held down.',
     }),
   );
   Blockly.Extensions.register(

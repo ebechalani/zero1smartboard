@@ -27,6 +27,7 @@ import { createControls, type Controls } from './controls';
 import { createSettingsDialog, type SettingsDialog } from './settings';
 import { createMenu, type Menu, type MenuGroup } from './menu';
 import { downloadTextFile, sketchFileName } from './sketch-file';
+import { LOAD_ACCEPT, MAX_PROGRAM_FILE_BYTES, fileToLink, loadProblem } from './program-file';
 import { createArduinoIdeDialog, type ArduinoIdeDialog } from './arduino-ide-dialog';
 import { createAboutDialog, type AboutDialog } from './about-dialog';
 import { createHandinDialog, type HandinDialog, type HandinWork } from './handin-dialog';
@@ -168,6 +169,8 @@ export class App {
 
   private readonly runButton: HTMLButtonElement;
   private readonly newButton: HTMLButtonElement;
+  private readonly loadButton: HTMLButtonElement;
+  private readonly loadInput: HTMLInputElement;
   private readonly ideButton: HTMLButtonElement;
   private readonly uploadSlot: HTMLButtonElement;
   private readonly statusBox: HTMLElement;
@@ -222,6 +225,8 @@ export class App {
 
     this.runButton = this.slot<HTMLButtonElement>('run');
     this.newButton = this.slot<HTMLButtonElement>('new');
+    this.loadButton = this.slot<HTMLButtonElement>('load');
+    this.loadInput = this.slot<HTMLInputElement>('load-file');
     this.ideButton = this.slot<HTMLButtonElement>('ide');
     this.uploadSlot = this.slot<HTMLButtonElement>('upload');
     this.statusBox = this.slot('status');
@@ -358,6 +363,13 @@ export class App {
     // --- header actions ---------------------------------------------------
     this.createModeButtons();
     this.newButton.addEventListener('click', () => void this.newSketch());
+    // Load: the browser's file chooser (the hidden input), then the file as a link into its mode.
+    this.loadButton.addEventListener('click', () => this.loadInput.click());
+    this.loadInput.addEventListener('change', () => {
+      const file = this.loadInput.files?.[0];
+      this.loadInput.value = ''; // the same file can be chosen again
+      if (file) void this.loadFile(file);
+    });
     // One button: Run while idle, Stop while a sketch runs (Ctrl+Enter still restarts, Esc stops).
     this.runButton.addEventListener('click', () => void (this.running ? this.stop() : this.run()));
     this.ideButton.addEventListener('click', () => this.openInIde());
@@ -366,7 +378,7 @@ export class App {
     this.slot('reload').addEventListener('click', () => location.reload());
     if (review) {
       // The teacher reviews one hand-in: no new work, no examples, no links out of the sandbox.
-      for (const slot of ['new', 'examples', 'share', 'ide']) this.slot(slot).hidden = true;
+      for (const slot of ['new', 'load', 'examples', 'share', 'ide']) this.slot(slot).hidden = true;
       this.uploadButton.dispose(); // review mode: no upload from a hand-in
     }
 
@@ -1160,10 +1172,34 @@ export class App {
    */
   private async openLink(link: ModeLink): Promise<void> {
     const target = this.modes[link.kind];
-    if (!(await target.confirmLink())) return;
+    if (!(await target.confirmLink(link.source))) return;
     this.setMode(target.id);
     await target.enter(link);
     if (this.mode === target) this.selectTab(target.firstTab);
+  }
+
+  /**
+   * Header "📂 Load": a file saved earlier (Share ▾ → Download .ino / .py / blocks) back into its
+   * mode, asking first when that mode's own program would be lost, like a share link (§7.6).
+   */
+  async loadFile(file: File): Promise<void> {
+    if (file.size > MAX_PROGRAM_FILE_BYTES) {
+      this.toast(loadProblem(file.name, 'too_big'));
+      return;
+    }
+    let text: string;
+    try {
+      text = await file.text();
+    } catch {
+      this.toast(loadProblem(file.name, 'unreadable'));
+      return;
+    }
+    const link = fileToLink(file.name, text);
+    if ('error' in link) {
+      this.toast(link.error);
+      return;
+    }
+    await this.openLink(link);
   }
 
   private readonly onWindowResize = (): void => {
@@ -1278,6 +1314,7 @@ export class App {
           <div class="z1-mode" role="group" aria-label="Programming mode" data-slot="modes"></div>
           <nav class="z1-toolbar" aria-label="Sketch actions">
             <button type="button" class="z1-btn" data-slot="new" aria-label="Start a new blank sketch" title="New blank sketch"><span aria-hidden="true">＋</span> New</button>
+            <button type="button" class="z1-btn" data-slot="load" aria-label="Load a program saved as a file" title="Load a saved file (.ino sketch, .py program or .json blocks)"><span aria-hidden="true">📂</span> Load</button>
             <div data-slot="examples"></div>
             <button type="button" class="z1-btn z1-btn-run" data-slot="run" aria-label="Run the sketch (Ctrl+Enter)" title="Run (Ctrl+Enter)"><span aria-hidden="true" data-role="icon">▶</span> <span data-role="label">Run</span></button>
             <div data-slot="settings"></div>
@@ -1302,6 +1339,7 @@ export class App {
           </section>
         </main>
         <div class="z1-toast" data-slot="toast" role="status" aria-live="polite" hidden></div>
+        <input type="file" data-slot="load-file" accept="${LOAD_ACCEPT}" aria-label="Load a program saved as a file" hidden>
       </div>
     `;
   }

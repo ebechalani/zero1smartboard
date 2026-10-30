@@ -174,7 +174,7 @@ export class PythonMode implements ModeController {
     if (!this.editor) this.host.showMirror(this, '', PYTHON_LOADING);
     const editor = await this.ensureEditor();
     if (!editor || !this.host.isCurrent(this)) return; // could not load, or the student switched back meanwhile
-    if (link?.kind === 'python') this.load(link.python, 'Python program loaded from the link');
+    if (link?.kind === 'python') this.load(link.python, link.source ? `Loaded ${link.source}` : 'Python program loaded from the link');
     else this.lint();
   }
 
@@ -263,9 +263,9 @@ export class PythonMode implements ModeController {
     return example ? { kind: 'example', title: example.title } : null;
   }
 
-  async confirmLink(): Promise<boolean> {
+  async confirmLink(source?: string): Promise<boolean> {
     if (!(await this.ensureEditor())) return true; // nothing to lose here: the link cannot be shown either
-    return this.confirmReplace('Load the Python program from this link?');
+    return this.confirmReplace(source ? `Load the Python program from ${source}?` : 'Load the Python program from this link?');
   }
 
   goToLine(line: number, column?: number): void {

@@ -20,7 +20,8 @@ import {
 import type { MenuExample } from '../examples-menu';
 import { SKETCH_RUN_WORDS } from './code-mode';
 import type { HandinWork } from '../handin-dialog';
-import type { ExportedWork, ModeController, ModeHost, ModeLink, ReviewMessage, SketchResult } from './types';
+import { blocksFileName } from '../sketch-file';
+import type { ExportedWork, ModeController, ModeHost, ModeLink, ProgramFile, ReviewMessage, SketchResult } from './types';
 
 /** Delay between a block change and the save of the workspace to localStorage. */
 const BLOCKS_SAVE_MS = 400;
@@ -28,10 +29,25 @@ const BLOCKS_SAVE_MS = 400;
 /** Exports and uploads while Blockly is still being downloaded. */
 export const BLOCKS_LOADING = 'The blocks are still loading — try again in a moment';
 
+/** Share ▾ → Download blocks (.json): the workspace as a file that the header's Load opens again. */
+export const BLOCKS_FILE: ProgramFile = {
+  label: 'Download blocks (.json)',
+  title: 'Save your blocks as a file (open it again with Load)',
+  fileName: blocksFileName,
+  contents: (work) => {
+    try {
+      return `${JSON.stringify(JSON.parse(work.workspaceJson), null, 2)}\n`;
+    } catch {
+      return work.workspaceJson;
+    }
+  },
+};
+
 /** "Edit a copy in Code mode" is off while the generator fails on the blocks. */
 const GENERATOR_FAILED = 'The blocks could not be turned into a sketch';
 
 export class BlocksMode implements ModeController {
+  readonly programFile = BLOCKS_FILE;
   readonly id = 'blocks';
   readonly button = { label: 'Blocks', title: 'Build the sketch with blocks' };
   readonly firstTab = 'blocks';
@@ -89,7 +105,7 @@ export class BlocksMode implements ModeController {
     if (!this.panel) this.host.showMirror(this, '', BLOCKS_LOADING);
     const panel = await this.ensurePanel();
     if (!panel || !this.host.isCurrent(this)) return; // could not load, or the student switched back meanwhile
-    if (link?.kind === 'blocks') this.loadIntoBlocks(panel, link.workspace, 'Blocks loaded from the link');
+    if (link?.kind === 'blocks') this.loadIntoBlocks(panel, link.workspace, link.source ? `Loaded ${link.source}` : 'Blocks loaded from the link');
     this.syncMirror(panel);
     if (this.host.isTabSelected('blocks')) panel.resize();
   }
@@ -164,8 +180,8 @@ export class BlocksMode implements ModeController {
     return example ? { kind: 'example', title: example.title } : null;
   }
 
-  async confirmLink(): Promise<boolean> {
-    return this.confirmReplace('Load the blocks from this link?');
+  async confirmLink(source?: string): Promise<boolean> {
+    return this.confirmReplace(source ? `Load the blocks from ${source}?` : 'Load the blocks from this link?');
   }
 
   resize(): void {

@@ -21,11 +21,13 @@ export type { AppMode };
 /** The right-column tabs (§7.2). */
 export type TabId = 'blocks' | 'code' | 'serial' | 'pinmap' | 'python' | 'js';
 
-/** A share link for one mode: `#code=` (or `#example=`), `#blocks=`, `#python=`. */
-export type ModeLink =
-  | { kind: 'code'; code: string }
-  | { kind: 'blocks'; workspace: object }
-  | { kind: 'python'; python: string };
+/**
+ * A program to show in its mode: a share link (`#code=` or `#example=`, `#blocks=`, `#python=`),
+ * or a file the student opened with Load (`source` = its name, src/ui/program-file.ts).
+ */
+export type ModeLink = ({ kind: 'code'; code: string } | { kind: 'blocks'; workspace: object } | { kind: 'python'; python: string }) & {
+  source?: string;
+};
 
 /** What the URL hash carried: a mode's program, or a class to join (`#class=`). */
 export type HashPayload = ModeLink | { kind: 'class'; code: string };
@@ -173,7 +175,7 @@ export interface ModeController {
   readonly words: ModeWords;
   /** The console texts of a run in this mode (§7.8). */
   readonly runWords: RunWords;
-  /** Share ▾ → "Download .py" in Python mode; absent in Code and Blocks mode (§7.11). */
+  /** Share ▾ → the mode's own file: "Download .py" (Python), "Download blocks (.json)" (Blocks); absent in Code mode (§7.11). */
   readonly programFile?: ProgramFile;
   /** Where the lines of the mode's own diagnostics and of a composed line map are (the console jumps there, §7.10). */
   readonly lineSource: 'sketch' | 'python';
@@ -198,8 +200,11 @@ export interface ModeController {
   newProgram(): Promise<void>;
   /** The blank program or an untouched example (with its title), for the Hand in dialog. */
   untouched(): HandinWork['unchanged'];
-  /** Before a share link replaces the mode's program: true when nothing would be lost or the student agreed. */
-  confirmLink(): Promise<boolean>;
+  /**
+   * Before a share link (or the file `source`, opened with Load) replaces the mode's program: true
+   * when nothing would be lost or the student agreed.
+   */
+  confirmLink(source?: string): Promise<boolean>;
   /** A share link opened with the page asks with confirmLink() too, like one opened later (Python, §7.6). */
   readonly confirmsStartLink?: boolean;
   /** Move the cursor to a line of the mode's own program; absent in Blocks mode (no text editor). */

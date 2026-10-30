@@ -281,7 +281,7 @@ export const EXAMPLES: Example[] = [
     id: '45_buttons_leds',
     title: 'Buttons light the LEDs',
     group: 'Push Button',
-    description: 'The red LED is on while Button 1 (D6) is held and the green LED while Button 2 (D7) is held.',
+    description: 'The red LED is on while Button 1 (D7) is held and the green LED while Button 2 (D6) is held.',
     source: buttonsLeds,
   },
   {

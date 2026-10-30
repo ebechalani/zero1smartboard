@@ -12,8 +12,8 @@ photos of the physical board.
 |------:|-----------------|-------------|------|--------------------|
 | 1     | Potentiometer   | POT         | A3   | 17                 |
 | 2     | LDR sensor      | LDR         | A3   | 17                 |
-| 3     | Push button     | A (Button 1)| D6   | 6                  |
-| 4     | Push button     | B (Button 2)| D7   | 7                  |
+| 3     | Push button     | B (Button 2)| D6   | 6                  |
+| 4     | Push button     | A (Button 1)| D7   | 7                  |
 | 5     | Driver          | IN1         | A0   | 14                 |
 | 6     | Servo motor     | Servo       | D4   | 4                  |
 | 7     | LCD             | SDA         | A4   | 18                 |

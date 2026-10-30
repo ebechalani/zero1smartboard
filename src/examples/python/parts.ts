@@ -74,7 +74,7 @@ export const PYTHON_PART_EXAMPLES: PythonExample[] = [
     id: '45_buttons_leds',
     title: 'Buttons light the LEDs',
     group: 'Push Button',
-    description: 'The red LED is on while Button 1 (D6) is held and the green LED while Button 2 (D7) is held: button.value() and if / else.',
+    description: 'The red LED is on while Button 1 (D7) is held and the green LED while Button 2 (D6) is held: button.value() and if / else.',
     python: buttonsLeds,
   },
   {

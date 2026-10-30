@@ -17,7 +17,7 @@ All sketches use the fixed ZERO1 pin map (see `docs/PINOUT.md`):
 | DC motor (driver IN1) | A0 | on/off only |
 | Servo | D4 | external header, `Servo.h` |
 | Potentiometer / LDR | A3 | shared: the **POT / LDR slide switch** selects which one is read |
-| Buttons 1 / 2 | D6 / D7 | pressed = HIGH (pull-down wiring, changeable in Settings) |
+| Buttons 1 / 2 | D7 / D6 | pressed = HIGH (pull-down wiring, changeable in Settings) |
 | DHT22 | D5 | external header, `DHT dht(5, DHT22)` |
 | Ultrasonic HC-SR04 | TRIG D3, ECHO D2 | external header |
 | LCD 16x2 | SDA A4, SCL A5 | I2C address **0x27**, `lcd.init()` then `lcd.backlight()` |
@@ -88,7 +88,7 @@ or two per part of the board, that can be used in any order.
 
 | # | File | What it teaches | Expected behaviour |
 |---|------|-----------------|--------------------|
-| 45 | `45_buttons_leds.ino` | `digitalRead()`, `if / else`, two inputs in one `loop()` | Red LED on while Button 1 (D6) is held; green LED on while Button 2 (D7) is held. |
+| 45 | `45_buttons_leds.ino` | `digitalRead()`, `if / else`, two inputs in one `loop()` | Red LED on while Button 1 (D7) is held; green LED on while Button 2 (D6) is held. |
 | 46 | `46_buttons_beeps.ino` | Input triggers output; a function parameter sets the length; waiting for the release | Button 1 → one 100 ms beep, Button 2 → one 1 s beep; holding a button does not repeat. |
 
 ## RGB LED

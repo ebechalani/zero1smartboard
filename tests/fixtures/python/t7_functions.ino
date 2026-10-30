@@ -1,6 +1,6 @@
 // Made from a Python program in the ZERO1 Simulator; edits here are not turned back into Python.
 
-const int BUTTON_1 = 6;        // button 1
+const int BUTTON_1 = 7;        // button 1
 const int BUZZER = 8;          // buzzer
 
 const int button = BUTTON_1;

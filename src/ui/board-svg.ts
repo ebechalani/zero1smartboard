@@ -842,8 +842,8 @@ function buttonRow(): string {
   return g(
     { class: 'z1-buttons' },
     silkBox(684, 342, 236, 120, ''),
-    button(BOARD_IDS.buttonA, BOARD_IDS.buttonACap, 743, 'Button 1', 'D6 · key 1', 'Button 1 — D6 (hold, or press key 1)'),
-    button(BOARD_IDS.buttonB, BOARD_IDS.buttonBCap, 861, 'Button 2', 'D7 · key 2', 'Button 2 — D7 (hold, or press key 2)'),
+    button(BOARD_IDS.buttonA, BOARD_IDS.buttonACap, 743, 'Button 1', 'D7 · key 1', 'Button 1 — D7 (hold, or press key 1)'),
+    button(BOARD_IDS.buttonB, BOARD_IDS.buttonBCap, 861, 'Button 2', 'D6 · key 2', 'Button 2 — D6 (hold, or press key 2)'),
   );
 }
 
