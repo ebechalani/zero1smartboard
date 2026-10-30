@@ -795,12 +795,13 @@ WCAG AA on its background). Responsive grid:
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│ header: ZERO1 Simulator · [Code|Blocks|Python] · [＋ New] [Examples ▾]  │
-│   [▶ Run ⇄ ■ Stop] [⚙ Settings ▾] [🔗 Share · Ali K… ▾] [∞ Arduino IDE] │
-│   [⬆ Upload] · run status                                              │
+│ header: ZERO1 Simulator · [Code|Blocks|Python] · [＋ New] [📂 Load]     │
+│   [Examples ▾] [▶ Run ⇄ ■ Stop] [⚙ Settings ▾] [🔗 Share · Ali K… ▾]    │
+│   [∞ Arduino IDE] [⬆ Upload] · run status                              │
 │                       Settings ▾: Reset the board · Board settings… ·   │
 │                                   About…                                │
 │                       Share ▾: Hand in to my teacher · Copy link ·      │
+│                                Download .py / Download blocks (.json) · │
 │                                Download .ino                            │
 ├───────────────────────────────┬─────────────────────────────────────┤
 │ board SVG (scales to fit)     │ tabs: Code | Serial Monitor |       │
@@ -817,8 +818,15 @@ Code | Blocks switch, the actions, run status) is one row from 1366 px wide
 (up to 1439 px the Settings button shows only its ⚙; the run status texts
 stay short, e.g. "2 errors", "Error at 1523 ms"); narrower, the actions
 move to rows of their own under the brand, the mode switch and the status.
-**＋ New** and **Examples ▾** are two separate buttons (one function each, by
-teacher request; `examples-menu.ts` lists the examples by topic); **Run** is one
+**＋ New**, **📂 Load** and **Examples ▾** are separate buttons (one function
+each, by teacher request; `examples-menu.ts` lists the examples by topic).
+**Load** opens the browser's file chooser (a hidden `<input type=file>`,
+`LOAD_ACCEPT`) and shows the chosen file in its mode as a share link would
+(`fileToLink()` in `program-file.ts` → `openLink()`): a Blockly workspace JSON
+(what Share ▾ → Download blocks saves) → Blocks, a `.py` → Python, a sketch
+(`.ino`, `.txt`, `.cpp`, …) → Code; it asks first when hand-written work would
+be lost ("Load the sketch from blink.ino?"), toasts "Loaded blink.ino", and
+refuses binary, empty, over-1 MB or unknown files with a toast. **Run** is one
 button that reads "▶ Run" while idle and a red "■ Stop" (`.is-stop`) while a
 sketch runs, a click then stops it (Ctrl+Enter still restarts, Esc stops).
 Below 1536 px the brand reads "ZERO1 Simulator" (`.z1-title-short`); the full
@@ -828,7 +836,9 @@ Reset the board, Board settings… and About… (`about-dialog.ts`: © 2026 ZERO
 Education, all rights reserved; the board by Wissam Daccache, the simulator by
 Eddy Bachaalany; a link to `THIRD_PARTY_NOTICES.md`, plain text in the review
 frame, whose sandbox has no popups), **Share ▾** holds Hand in to my teacher,
-Copy link and Download .ino. The Hand in item exists only when the class
+Copy link, the mode's own file (Download .py in Python mode, Download blocks
+(.json) in Blocks mode: the workspace, pretty-printed, that Load opens again)
+and Download .ino. The Hand in item exists only when the class
 platform is configured (`isClassroomConfigured()`, docs/CLASSROOM.md §1.1);
 while a name is remembered the Share button reads "Share · Ali Khoury" (the
 name part is cut at 14ch with an ellipsis, the `aria-label` and `title` have

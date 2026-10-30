@@ -51,6 +51,14 @@ export function pythonFileName(studentName: string, date: Date): string {
 }
 
 /**
+ * Share ▾ → Download blocks (.json) in Blocks mode: the workspace as a file that Load opens again,
+ * e.g. `zero1_ali_khoury_0928_143210.blocks.json`.
+ */
+export function blocksFileName(studentName: string, date: Date): string {
+  return `${sketchName(studentName, date).toLowerCase()}.blocks.json`;
+}
+
+/**
  * Save `text` as a file through a temporary `<a download>`. Pass the open
  * modal dialog as `container`: a modal makes the rest of the page inert.
  */

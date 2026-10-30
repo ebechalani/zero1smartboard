@@ -2418,7 +2418,10 @@ current mode. Link text: "Go to line {N} in the Python program" / "… in the sk
 ### 7.11 Share ▾ and downloads
 
 Python mode items: **Hand in to my teacher · Copy link · Download .py · Download .ino**
-(`menu.setItems()` on mode change).
+(`menu.setItems()` on mode change). Blocks mode has **Download blocks (.json)** in the
+same place (`BLOCKS_FILE` in blocks-mode.ts: the workspace, pretty-printed, as
+`zero1_ali_khoury_0928_143210.blocks.json`); Code mode has no file of its own besides the
+.ino. The header's **📂 Load** opens any of these files again (docs/ARCHITECTURE.md §8).
 
 - Copy link → `#python=<base64url UTF-8>` (`encodeSharePython`, owner C) — works with errors.
 - Download .py → `pythonFileName(student, date)` = `zero1_ali_khoury_0928_143210.py`

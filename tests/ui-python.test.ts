@@ -1156,7 +1156,7 @@ describe('the console jumps by source (§7.10)', () => {
 // ---------------------------------------------------------------------------
 
 describe('Share ▾ and the board in Python mode (§7.11, §7.12)', () => {
-  it('lists Download .py and Download .ino in Python mode only', async () => {
+  it("lists the mode's own file: Download .py in Python mode, Download blocks (.json) in Blocks mode, none in Code mode", async () => {
     const root = start();
     expect(menuItems(root, 'share')).toEqual(['Hand in to my teacher', 'Copy link', 'Download .ino']);
     await switchTo(root, 'python');
@@ -1164,7 +1164,9 @@ describe('Share ▾ and the board in Python mode (§7.11, §7.12)', () => {
     const item = Array.from(root.querySelectorAll<HTMLElement>('[data-slot="share"] [role="menuitem"]')).find((b) => b.textContent === 'Download .py')!;
     expect(item.title).toBe('Save the Python program (for the ZERO1 simulator)');
     await switchTo(root, 'blocks');
-    expect(menuItems(root, 'share')).toEqual(['Hand in to my teacher', 'Copy link', 'Download .ino']);
+    expect(menuItems(root, 'share')).toEqual(['Hand in to my teacher', 'Copy link', 'Download blocks (.json)', 'Download .ino']);
+    const blocksItem = Array.from(root.querySelectorAll<HTMLElement>('[data-slot="share"] [role="menuitem"]')).find((b) => b.textContent === 'Download blocks (.json)')!;
+    expect(blocksItem.title).toBe('Save your blocks as a file (open it again with Load)');
   });
 
   it('Download .py saves the program, also with errors, as zero1_<name>_MMDD_HHMMSS.py', async () => {
@@ -1175,6 +1177,20 @@ describe('Share ▾ and the board in Python mode (§7.11, §7.12)', () => {
     const [file] = await downloads.files();
     expect(file.name).toMatch(/^zero1_ali_khoury_\d{4}_\d{6}\.py$/);
     expect(file.text).toBe(BROKEN);
+    expect(toastText(root)).toBe(`Downloading ${file.name}`);
+  });
+
+  it('Download blocks (.json) saves the workspace, pretty-printed, as zero1_<name>_MMDD_HHMMSS.blocks.json', async () => {
+    saveSession({ v: 2, code: 'BKT4M9', className: '8B Robotics', firstName: 'Ali', lastName: 'Khoury', uid: 'u1', lastUsedAt: 0, lastHandinAt: 0 });
+    const root = start();
+    await switchTo(root, 'blocks');
+    const downloads = catchDownloads();
+    pick(root, 'share', 'Download blocks (.json)');
+    const [file] = await downloads.files();
+    expect(file.name).toMatch(/^zero1_ali_khoury_\d{4}_\d{6}\.blocks\.json$/);
+    expect(file.text.endsWith('\n')).toBe(true);
+    expect(file.text).toContain('\n  "blocks"'); // pretty-printed: readable in a text editor
+    expect(JSON.parse(file.text)).toEqual(JSON.parse(JSON.stringify((fake.panel as FakePanel).getWorkspaceJson())));
     expect(toastText(root)).toBe(`Downloading ${file.name}`);
   });
 

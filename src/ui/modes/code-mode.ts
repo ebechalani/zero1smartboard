@@ -93,7 +93,7 @@ export class CodeMode implements ModeController {
   async enter(link: ModeLink | null): Promise<void> {
     if (link?.kind !== 'code') return;
     this.setText(link.code);
-    this.host.toast('Sketch loaded from the link');
+    this.host.toast(link.source ? `Loaded ${link.source}` : 'Sketch loaded from the link');
   }
 
   leave(): void {}
@@ -139,8 +139,8 @@ export class CodeMode implements ModeController {
     return example ? { kind: 'example', title: example.title } : null;
   }
 
-  async confirmLink(): Promise<boolean> {
-    return this.confirmReplace('Load the sketch from this link?');
+  async confirmLink(source?: string): Promise<boolean> {
+    return this.confirmReplace(source ? `Load the sketch from ${source}?` : 'Load the sketch from this link?');
   }
 
   goToLine(line: number, column?: number): void {

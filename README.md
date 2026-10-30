@@ -35,6 +35,8 @@ No installation is needed for students: the simulator is a static web page.
   Projects, then 20 short part-by-part sketches grouped by LED, Buzzer, Push
   Button, RGB LED, LDR, Seven-Segment, Ultrasonic, Servo Motor, DHT Sensor
   and DC Motor (the same groups exist as block programs in Blocks mode).
+- **📂 Load** — open a saved file again: an `.ino` sketch, a `.py` program or
+  the `.json` blocks file that Share ▾ → Download blocks saves.
 - **Share ▾** — a menu: copy a link to the work, download it as an `.ino`
   file, or hand it in to the teacher (when classes are set up).
 - **Classes** — teachers create a class on the teacher page and share the
