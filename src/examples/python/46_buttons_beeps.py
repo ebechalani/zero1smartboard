@@ -10,8 +10,8 @@ WHAT IT TEACHES
     you keep the button held down.
 
 PARTS AND PINS
-  - Button 1 (A) ....... D6  (BUTTON_1)
-  - Button 2 (B) ....... D7  (BUTTON_2)
+  - Button 1 (A) ....... D7  (BUTTON_1)
+  - Button 2 (B) ....... D6  (BUTTON_2)
   - Buzzer ............. D8  (BUZZER)
 
 EXPECTED BEHAVIOUR

@@ -10,8 +10,8 @@
       line on Serial), even if you keep the button held down.
 
   PARTS AND PINS
-    - Button 1 (A) ....... D6
-    - Button 2 (B) ....... D7
+    - Button 1 (A) ....... D7
+    - Button 2 (B) ....... D6
     - Servo (SG90) ....... D4  (external "SERVO" header, keep it plugged in)
 
   EXPECTED BEHAVIOUR
@@ -30,8 +30,8 @@
 
 #include <Servo.h>
 
-const int BUTTON_A = 6;
-const int BUTTON_B = 7;
+const int BUTTON_A = 7;
+const int BUTTON_B = 6;
 const int SERVO_PIN = 4;
 
 Servo myServo;

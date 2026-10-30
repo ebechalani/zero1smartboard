@@ -2,7 +2,7 @@
 // No print(), no input(), nothing that can stop the program: no Serial.begin (§3.4).
 
 const int LED_RED = A1;        // red LED
-const int BUTTON_1 = 6;        // button 1
+const int BUTTON_1 = 7;        // button 1
 
 const int led = LED_RED;
 const int button = BUTTON_1;

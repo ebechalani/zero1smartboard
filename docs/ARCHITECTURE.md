@@ -863,7 +863,7 @@ export function createBoardView(container: HTMLElement, board: Zero1Board): Boar
   `setBacklightSwitch`), clicking the LDR opens nothing (light lives in the
   inputs panel), clicking the servo/ultrasonic/DHT header toggles
   `setConnected`. Hover tooltips (`<title>`) with the pin name for every
-  module ("Button 1 — D6").
+  module ("Button 1 — D7").
 - Must not import the transpiler or executor. Must work with 60 fps updates
   (cache element references; only write attributes that changed).
 
@@ -1152,7 +1152,7 @@ teacher would show a beginner: comments, constants for pins, small functions):
 Part-by-part groups (listed after the four lesson groups, one short beginner
 sketch per item of the teacher's list; items that only differed by the button
 are merged into one sketch with both buttons; "Button 1" / "Button 2" are the
-buttons the teacher calls A / B, on D6 / D7):
+buttons the teacher calls A / B, on D7 / D6):
 
 5. **LED** — `40_led_blink_red.ino` (500 ms on / 500 ms off); `41_led_red_green.ino`
    (red and green alternate every 500 ms, never both on);

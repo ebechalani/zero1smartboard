@@ -4,7 +4,7 @@ Button toggle with debounce: every press of button 1 switches the red LED.
 */
 
 const int LED_RED = A1;        // red LED
-const int BUTTON_1 = 6;        // button 1
+const int BUTTON_1 = 7;        // button 1
 
 const long DEBOUNCE_MS = 50;   // the reading must stay stable this long
 const int button = BUTTON_1;

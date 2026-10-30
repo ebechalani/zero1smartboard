@@ -8,8 +8,8 @@ WHAT IT TEACHES
     is checked in turn, again and again, many times per second.
 
 PARTS AND PINS
-  - Button 1 (A) ....... D6  (BUTTON_1)
-  - Button 2 (B) ....... D7  (BUTTON_2)
+  - Button 1 (A) ....... D7  (BUTTON_1)
+  - Button 2 (B) ....... D6  (BUTTON_2)
   - Red LED ............ A1  (LED_RED)
   - Green LED .......... A2  (LED_GREEN)
 

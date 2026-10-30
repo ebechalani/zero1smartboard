@@ -11,8 +11,8 @@
     - Waiting for a button inside a while loop, and leaving loop() early with return.
 
   PARTS AND PINS
-    - Button 1 (A) ....... D6  START
-    - Button 2 (B) ....... D7  REACT
+    - Button 1 (A) ....... D7  START
+    - Button 2 (B) ....... D6  REACT
     - 7-segment .......... DATA D12, LATCH D11, CLOCK D10
     - Buzzer ............. D8
     - Red LED ............ A1
@@ -37,8 +37,8 @@
     - Give the red LED to a second player and make it a duel.
 */
 
-const int BUTTON_A = 6;      // START button
-const int BUTTON_B = 7;      // REACT button
+const int BUTTON_A = 7;      // START button
+const int BUTTON_B = 6;      // REACT button
 const int BUZZER_PIN = 8;
 const int LED_RED = A1;
 const int LED_GREEN = A2;

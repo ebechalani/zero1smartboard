@@ -20,8 +20,8 @@ export const A = { A0: 14, A1: 15, A2: 16, A3: 17, A4: 18, A5: 19 } as const;
 /** ZERO1 Smart Board pin map (from the "Create the bridge" lesson table). */
 export const Z1 = {
   POT_LDR: 17, // A3  - potentiometer OR LDR, selected by the POT/LDR jumper
-  BTN_A: 6, //   D6  - push button A ("Button 1")
-  BTN_B: 7, //   D7  - push button B ("Button 2")
+  BTN_A: 7, //   D7  - push button A ("Button 1")
+  BTN_B: 6, //   D6  - push button B ("Button 2")
   MOTOR_IN1: 14, // A0 - motor driver IN1 (DC motor on/off)
   SERVO: 4, //   D4  - servo signal (external servo header)
   LCD_SDA: 18, // A4 - I2C SDA (LCD 16x2)

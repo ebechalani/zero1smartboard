@@ -9,8 +9,8 @@
       started by its own button.
 
   PARTS AND PINS
-    - Button 1 (A) ....... D6
-    - Button 2 (B) ....... D7
+    - Button 1 (A) ....... D7
+    - Button 2 (B) ....... D6
     - 7-segment DATA ..... D12  (74HC595 DS)
     - 7-segment LATCH .... D11  (74HC595 ST_CP)
     - 7-segment CLOCK .... D10  (74HC595 SH_CP)
@@ -29,8 +29,8 @@
     - Show the digits faster (delay(300)).
 */
 
-const int BUTTON_A = 6;
-const int BUTTON_B = 7;
+const int BUTTON_A = 7;
+const int BUTTON_B = 6;
 const int DATA_PIN = 12;
 const int LATCH_PIN = 11;
 const int CLOCK_PIN = 10;

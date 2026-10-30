@@ -420,8 +420,8 @@ export function registerZero1Blocks(): void {
   Blockly.Extensions.register(
     EXT.buttonTooltip,
     Blockly.Extensions.buildTooltipForDropdown('BUTTON', {
-      '1': 'True while push button 1 (pin 6) is held down.',
-      '2': 'True while push button 2 (pin 7) is held down.',
+      '1': 'True while push button 1 (pin 7) is held down.',
+      '2': 'True while push button 2 (pin 6) is held down.',
     }),
   );
   Blockly.Extensions.register(

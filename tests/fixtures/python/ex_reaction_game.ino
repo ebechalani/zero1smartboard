@@ -5,8 +5,8 @@ Reaction game: wait for the 8, then press button 2 as fast as you can.
 
 const int LED_RED = A1;        // red LED
 const int LED_GREEN = A2;      // green LED
-const int BUTTON_1 = 6;        // button 1
-const int BUTTON_2 = 7;        // button 2
+const int BUTTON_1 = 7;        // button 1
+const int BUTTON_2 = 6;        // button 2
 const int BUZZER = 8;          // buzzer
 const int SEG_DATA = 12;       // 7-segment: 74HC595 data
 const int SEG_LATCH = 11;      // 7-segment: 74HC595 latch

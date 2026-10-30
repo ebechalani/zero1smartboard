@@ -6,8 +6,8 @@
     - if / else if / else: three cases, only one of them runs.
 
   PARTS AND PINS
-    - Button 1 (A) ....... D6
-    - Button 2 (B) ....... D7
+    - Button 1 (A) ....... D7
+    - Button 2 (B) ....... D6
     - RGB LED (NeoPixel) . D9
 
   EXPECTED BEHAVIOUR
@@ -22,8 +22,8 @@
 
 #include <Adafruit_NeoPixel.h>
 
-const int BUTTON_A = 6;
-const int BUTTON_B = 7;
+const int BUTTON_A = 7;
+const int BUTTON_B = 6;
 const int RGB_PIN = 9;
 
 Adafruit_NeoPixel pixels(1, RGB_PIN, NEO_GRB + NEO_KHZ800);

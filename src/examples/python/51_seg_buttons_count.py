@@ -9,8 +9,8 @@ WHAT IT TEACHES
     range(7, 0, -1), each started by its own button.
 
 PARTS AND PINS
-  - Button 1 (A) ....... D6  (BUTTON_1)
-  - Button 2 (B) ....... D7  (BUTTON_2)
+  - Button 1 (A) ....... D7  (BUTTON_1)
+  - Button 2 (B) ....... D6  (BUTTON_2)
   - 7-segment DATA ..... D12 (74HC595 DS)
   - 7-segment LATCH .... D11 (74HC595 ST_CP)
   - 7-segment CLOCK .... D10 (74HC595 SH_CP)

@@ -80,7 +80,7 @@ No installation is needed for students: the simulator is a static web page.
 | Part            | Signal      | Pin |
 |-----------------|-------------|-----|
 | Potentiometer / LDR (slide switch) | POT / LDR | A3 |
-| Push buttons    | Button 1 / Button 2 | D6 / D7 |
+| Push buttons    | Button 1 / Button 2 | D7 / D6 |
 | Motor driver    | IN1         | A0  |
 | Servo           | signal      | D4  |
 | LCD 16x2 (I2C 0x27) | SDA / SCL | A4 / A5 |

@@ -42,7 +42,7 @@ simple English; every block has a tooltip that names the pin(s) it uses.
 Pin constants generated (only when used):
 
 ```
-const int LED_RED = A1;   const int LED_GREEN = A2;   const int BUTTON_1 = 6;  const int BUTTON_2 = 7;
+const int LED_RED = A1;   const int LED_GREEN = A2;   const int BUTTON_1 = 7;  const int BUTTON_2 = 6;
 const int POT_LDR = A3;   const int MOTOR = A0;       const int SERVO_PIN = 4; const int BUZZER = 8;
 const int DHT_PIN = 5;    const int TRIG_PIN = 3;     const int ECHO_PIN = 2;  const int RGB_PIN = 9;
 const int SEG_DATA = 12;  const int SEG_LATCH = 11;   const int SEG_CLOCK = 10;
@@ -321,7 +321,7 @@ Groups as the text examples. Each is a workspace JSON with the two hats:
 
 Then the part-by-part groups, one block program per text sketch 40–59 (same
 ids with a `b` prefix, same titles and behaviour; see docs/ARCHITECTURE.md
-§9). "Button 1" is D6 and "Button 2" is D7; when a sketch answers both
+§9). "Button 1" is D7 and "Button 2" is D6; when a sketch answers both
 buttons, both branches are in the one program:
 
 5. **LED** — `b40_led_blink_red` (red on 500 ms / off 500 ms),
