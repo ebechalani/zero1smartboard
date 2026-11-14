@@ -8,7 +8,7 @@
  * payload (note, Python lines, X-sketch-error, success note).
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { BLOCKED_TEXT, CH340_DRIVER, FTDI_DRIVER, LINUX_PORT_HINT, NO_BOARD_TEXT, createUploadDialog, detectOs, HELP_TEXT, sizeText, type ClientOs, type UploadDialog } from '../src/upload/ui/upload-dialog';
+import { BLOCKED_TEXT, BOARD_DRIVER, CH340_DRIVER, FIRST_TIME_TEXT, KNOWN_BOARD_TEXT, LINUX_PORT_HINT, NO_BOARD_TEXT, UPLOAD_DONE_KEY, createUploadDialog, detectOs, HELP_TEXT, sizeText, type ClientOs, type UploadDialog } from '../src/upload/ui/upload-dialog';
 import { browserSupportsUpload, installUploadButton, isAndroid, UNSUPPORTED_ADVICE, UNSUPPORTED_FALLBACK, UNSUPPORTED_TEXT } from '../src/upload';
 import type { ConsoleMessage } from '../src/types';
 import { FAILED_BUILD, FakeUploadService, OK_BUILD, type FakeUploadServiceOptions } from './fakes/upload/fake-upload-service';
@@ -73,7 +73,7 @@ describe('stages', () => {
     expect(m.dialog.stage()).toBe('download');
     expect(m.stageText()).toBe('Downloading the compiler (once, about 6 MB)');
     await until(m, 'choose');
-    expect(m.service.calls).toEqual(['prepare', 'build']);
+    expect(m.service.calls).toEqual(['prepare', 'build', 'knownPort']); // no board chosen before: the chooser
     expect(m.service.lastSource).toBe(SKETCH);
     expect(m.role('progress').hidden).toBe(true); // the bar is for download/compile/upload only
     expect(m.role('size').hidden).toBe(false);
@@ -97,7 +97,7 @@ describe('stages', () => {
     m.click('choose');
     await until(m, 'done');
     observer.disconnect();
-    expect(m.service.calls.slice(-2)).toEqual(['requestPort', 'upload']);
+    expect(m.service.calls.slice(-3)).toEqual(['requestPort', 'upload', 'rememberPort']);
     expect(texts).toContain('Connecting to the board…');
     expect(texts).toContain('Uploading (page 1 of 5)');
     expect(texts).toContain('Uploading (page 5 of 5)');
@@ -120,7 +120,7 @@ describe('stages', () => {
     m.dialog.close();
     m.dialog.open({ code: SKETCH + '// v2\n', kind: 'code' });
     await until(m, 'choose');
-    expect(m.service.calls).toEqual(['prepare', 'build', 'prepare', 'build']);
+    expect(m.service.calls.filter((c) => c !== 'knownPort')).toEqual(['prepare', 'build', 'prepare', 'build']);
     expect(m.service.lastSource).toContain('// v2');
   });
 });
@@ -237,6 +237,121 @@ describe('Python mode (docs/PYTHON.md §7.12)', () => {
   });
 });
 
+describe('the board chosen before (no chooser while it stays plugged in)', () => {
+  it('uploads to the known board right after compiling, without the chooser, and says how to pick another', async () => {
+    const m = mount({ known: true });
+    m.dialog.open({ code: SKETCH, kind: 'code' });
+    await until(m, 'upload');
+    expect(m.stageText()).toBe(KNOWN_BOARD_TEXT.connecting);
+    await until(m, 'done');
+    expect(m.service.calls).toEqual(['prepare', 'build', 'knownPort', 'upload', 'rememberPort']); // never requestPort
+    const known = m.role('known');
+    expect(known.hidden).toBe(false);
+    expect(known.textContent).toContain(KNOWN_BOARD_TEXT.done);
+    // "Choose another board…": the remembered board is forgotten and the chooser comes back
+    m.click('choose-other');
+    expect(m.service.calls.slice(-1)).toEqual(['forgetPort']);
+    expect(m.dialog.stage()).toBe('choose');
+    expect(m.role('known').hidden).toBe(true);
+    expect(m.button('choose').disabled).toBe(false);
+    m.click('choose');
+    await until(m, 'done');
+    expect(m.service.calls.filter((c) => c.startsWith('requestPort'))).toEqual(['requestPort']);
+  });
+
+  it('after a chosen upload the next one skips the chooser too', async () => {
+    const m = mount({});
+    m.dialog.open({ code: SKETCH, kind: 'code' });
+    await until(m, 'choose');
+    m.click('choose');
+    await until(m, 'done');
+    expect(m.role('known').hidden).toBe(false); // the service remembers the port: the note shows
+    m.service.o.known = true; // what rememberPort() did in the real service
+    m.dialog.open({ code: SKETCH, kind: 'code' });
+    await until(m, 'done');
+    expect(m.service.calls.filter((c) => c.startsWith('requestPort'))).toEqual(['requestPort']); // only the first time
+  });
+
+  it('when the known board fails, the help says so and Try again opens the chooser', async () => {
+    const m = mount({ known: true, uploadError: 'NO_ANSWER' });
+    m.dialog.open({ code: SKETCH, kind: 'code' });
+    await until(m, 'error');
+    expect(m.role('help').textContent).toBe(`${HELP_TEXT.NO_ANSWER} ${KNOWN_BOARD_TEXT.failed}`);
+    expect(m.role('known').hidden).toBe(true);
+    m.click('retry');
+    expect(m.dialog.stage()).toBe('choose');
+    m.service.o.uploadError = undefined;
+    m.click('choose');
+    await until(m, 'done');
+    expect(m.service.calls.filter((c) => c.startsWith('requestPort'))).toEqual(['requestPort']);
+  });
+
+  it('a service without knownPort() (an older one) still shows the chooser, and no note after the upload', async () => {
+    const m = mount({});
+    (m.service as unknown as { knownPort?: unknown }).knownPort = undefined;
+    m.dialog.open({ code: SKETCH, kind: 'code' });
+    await until(m, 'choose');
+    m.click('choose');
+    await until(m, 'done');
+    expect(m.role('known').hidden).toBe(true);
+  });
+});
+
+describe('first upload on this computer (the shipped Windows driver)', () => {
+  afterEach(() => localStorage.removeItem(UPLOAD_DONE_KEY));
+
+  it('on Windows the choose step opens with the driver download box while this browser never finished an upload', async () => {
+    localStorage.removeItem(UPLOAD_DONE_KEY);
+    const m = mount({}, 'windows');
+    m.dialog.open({ code: SKETCH, kind: 'code' });
+    await until(m, 'choose');
+    const box = m.role('first-time');
+    expect(box.hidden).toBe(false);
+    expect(box.textContent).toContain(FIRST_TIME_TEXT.title);
+    expect(box.textContent).toContain(FIRST_TIME_TEXT.after);
+    const link = box.querySelector<HTMLAnchorElement>('a.z1-upload-driver')!;
+    expect(link.getAttribute('href')).toBe(BOARD_DRIVER.windows);
+    expect(link.getAttribute('download')).toBe(BOARD_DRIVER.fileName);
+    expect(link.target).toBe('');
+    expect(box.compareDocumentPosition(m.button('choose')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy(); // the box comes first
+    // after a successful upload the browser remembers: no box next time
+    m.click('choose');
+    await until(m, 'done');
+    expect(localStorage.getItem(UPLOAD_DONE_KEY)).toBe('1');
+    expect(box.hidden).toBe(true);
+    m.dialog.open({ code: SKETCH, kind: 'code' });
+    await until(m, 'choose');
+    expect(m.role('first-time').hidden).toBe(true);
+  });
+
+  it('no box on a Mac, Chromebook or Linux, nor on Windows once an upload worked here', async () => {
+    for (const os of ['mac', 'chromeos', 'linux', 'other'] as ClientOs[]) {
+      const m = mount({}, os);
+      m.dialog.open({ code: SKETCH, kind: 'code' });
+      await until(m, 'choose');
+      expect(m.role('first-time').hidden, os).toBe(true);
+    }
+    localStorage.setItem(UPLOAD_DONE_KEY, '1');
+    const m = mount({}, 'windows');
+    m.dialog.open({ code: SKETCH, kind: 'code' });
+    await until(m, 'choose');
+    expect(m.role('first-time').hidden).toBe(true);
+  });
+
+  it('the shipped driver is FTDI\'s installer, named with its version, and the site has the file', async () => {
+    expect(BOARD_DRIVER.fileName).toBe('CDM212364_Setup.exe');
+    expect(BOARD_DRIVER.windows).toBe(`drivers/${BOARD_DRIVER.fileName}`);
+    expect(BOARD_DRIVER.version).toBe('2.12.36.4');
+    const { createHash } = await import('node:crypto');
+    const { readFileSync } = await import('node:fs');
+    const { resolve } = await import('node:path');
+    const bytes = readFileSync(resolve('public', BOARD_DRIVER.windows)); // vitest runs from the repository root
+    expect(bytes.length).toBe(2_264_632);
+    expect(createHash('sha256').update(bytes).digest('hex')).toBe(BOARD_DRIVER.sha256);
+    expect(readFileSync(resolve('public/THIRD_PARTY_NOTICES.md'), 'utf8')).toContain(BOARD_DRIVER.sha256);
+  });
+});
+
 describe('upload errors', () => {
   it.each([
     ['NO_ANSWER', 'Is the Arduino IDE Serial Monitor open?'],
@@ -291,11 +406,11 @@ describe('upload errors', () => {
     expect(tips.textContent).toContain('data cable');
     expect(tips.textContent).not.toContain('Close the Arduino IDE'); // an open port is still listed: not a reason
     expect(tips.textContent).toContain('Site settings → Serial ports → Ask (default)'); // no list at all: the site's serial ports are blocked
-    const links = Array.from(tips.querySelectorAll('a'), (a) => [a.getAttribute('href'), a.target]);
+    const links = Array.from(tips.querySelectorAll('a'), (a) => [a.getAttribute('href'), a.target, a.getAttribute('download')]);
     expect(links).toEqual([
-      [CH340_DRIVER.windows, '_blank'],
-      [FTDI_DRIVER.windows, '_blank'],
-      [CH340_DRIVER.mac, '_blank'],
+      [BOARD_DRIVER.windows, '', BOARD_DRIVER.fileName], // the shipped installer: a same-origin download, no new tab
+      [CH340_DRIVER.windows, '_blank', null],
+      [CH340_DRIVER.mac, '_blank', null],
     ]);
     expect(tips.textContent).toContain('If the Arduino IDE sees the board, its driver is installed');
     // the board has another USB chip: every serial port this time, and the upload goes on
@@ -360,7 +475,8 @@ describe('upload errors', () => {
       document.body.appendChild(parent);
       const dialog = createUploadDialog(parent, { service: new FakeUploadService({}) });
       const first = dialog.element.querySelector<HTMLAnchorElement>('[data-role="not-listed"] .z1-upload-driver-tip a.z1-upload-driver');
-      expect(first?.getAttribute('href')).toBe(CH340_DRIVER.windows);
+      expect(first?.getAttribute('href')).toBe(BOARD_DRIVER.windows);
+      expect(dialog.element.querySelector('[data-role="not-listed"] .z1-upload-driver-tip')!.textContent).toContain('A board with a CH340 chip needs the CH340 driver instead');
     } finally {
       if (own) Object.defineProperty(nav, 'userAgentData', own);
       else delete (nav as { userAgentData?: unknown }).userAgentData;
@@ -370,13 +486,12 @@ describe('upload errors', () => {
   it('the driver tip fits the computer: a download button on Windows, none needed on a Chromebook or Linux', () => {
     const tip = (os: ClientOs) => mount({}, os).role('not-listed').querySelector('.z1-upload-driver-tip')!;
     const windows = tip('windows');
-    // the ZERO1 boards have a CH340 or an FTDI FT232R USB chip: both drivers, one click each
-    const buttons = Array.from(windows.querySelectorAll<HTMLAnchorElement>('a.z1-upload-driver'), (a) => [a.textContent, a.getAttribute('href'), a.target]);
-    expect(buttons).toEqual([
-      ['⬇ CH340 driver for Windows', CH340_DRIVER.windows, '_blank'],
-      ['⬇ FTDI driver for Windows', FTDI_DRIVER.windows, '_blank'],
-    ]);
+    // the ZERO1 board has an FTDI FT232R USB chip: its driver ships with the site, one click; the CH340 one is a link
+    const buttons = Array.from(windows.querySelectorAll<HTMLAnchorElement>('a.z1-upload-driver'), (a) => [a.textContent, a.getAttribute('href'), a.getAttribute('download')]);
+    expect(buttons).toEqual([['⬇ Download the board driver (Windows, 2 MB)', BOARD_DRIVER.windows, BOARD_DRIVER.fileName]]);
+    expect(windows.querySelector<HTMLAnchorElement>('a[href="' + CH340_DRIVER.windows + '"]')!.textContent).toBe('CH340 driver');
     expect(windows.textContent).toContain('If the Arduino IDE sees the board, its driver is installed');
+    expect(windows.textContent).toContain('Extract');
     expect(windows.textContent).toContain('administrator rights');
     const mac = tip('mac');
     expect(mac.textContent).toContain('macOS 13 or newer needs no driver');

@@ -31,6 +31,8 @@ export interface WebSerialPortLike {
   readonly writable: WritableStream<Uint8Array> | null;
   setSignals(signals: { dataTerminalReady?: boolean; requestToSend?: boolean; break?: boolean }): Promise<void>;
   getInfo?(): { usbVendorId?: number; usbProductId?: number };
+  /** False for a granted port whose device is unplugged (Chrome 117+); absent in older browsers. */
+  readonly connected?: boolean;
 }
 
 export interface WebSerialLike {

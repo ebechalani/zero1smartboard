@@ -137,6 +137,16 @@
   color: var(--accent-strong);
 }
 
+/* Under "Done": the next uploads go to this board by itself, and the way to another board. */
+.z1-upload-known {
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+.z1-upload-known .z1-btn-small {
+  margin-left: 6px;
+}
+
 /* errors: the message, a help line, then the diagnostics list */
 .z1-upload-error {
   display: flex;
@@ -211,10 +221,21 @@
 .z1-upload-note a {
   color: var(--accent-soft);
 }
-.z1-upload-notlisted a.z1-upload-driver {
+.z1-upload-notlisted a.z1-upload-driver,
+.z1-upload-firsttime a.z1-upload-driver {
   display: inline-flex;
   margin: 6px 0;
   color: var(--accent-strong);
   text-decoration: none;
   font-weight: 600;
+}
+
+/* First upload on a Windows computer: the board's driver, one click away, before the chooser. */
+.z1-upload-firsttime {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 12px;
+  margin-bottom: 10px;
+  font-size: 13px;
+  color: var(--muted);
 }

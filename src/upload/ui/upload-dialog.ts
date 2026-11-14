@@ -14,6 +14,7 @@
  * The browser's port chooser needs a user gesture, so "Choose your board" is a
  * button: the click calls service.requestPort() before any await.
  */
+import type { WebSerialPortLike } from '../serial/webserial';
 import type { ConsoleMessage } from '../../types';
 import type { AppMode } from '../../ui/blocks-panel';
 import type { BuildOutput, DownloadProgress, UploadProgress, UploadResult, UploadServiceLike } from '../service';
@@ -73,13 +74,12 @@ export function detectOs(nav: { userAgent?: string; userAgentData?: { platform?:
  * click away (WCH's pages; installing needs administrator rights, on school computers the IT).
  */
 function driverTip(os: ClientOs): string {
-  const button = (href: string, text: string) => `<a class="z1-btn z1-upload-driver" href="${href}" target="_blank" rel="noopener" data-role="driver">${text}</a>`;
-  const win = `${button(CH340_DRIVER.windows, '⬇ CH340 driver for Windows')} ${button(FTDI_DRIVER.windows, '⬇ FTDI driver for Windows')}`;
+  const ch340 = `<a href="${CH340_DRIVER.windows}" target="_blank" rel="noopener" data-role="driver">CH340 driver</a>`;
   const mac = `<a href="${CH340_DRIVER.mac}" target="_blank" rel="noopener" data-role="driver">CH340 driver for Mac</a>`;
   const seen = 'If the Arduino IDE sees the board, its driver is installed: click <b>Show every serial port…</b> below and pick the same COM port.';
   switch (os) {
     case 'windows':
-      return `<li class="z1-upload-driver-tip">${seen} Otherwise install the driver of the board's USB chip (CH340 or FTDI; Windows usually does it by itself):<br>${win}<br>Run it, then unplug and replug the board. On a school computer, ask the IT team (it needs administrator rights).</li>`;
+      return `<li class="z1-upload-driver-tip">${seen} Otherwise the board needs its USB driver, once per computer:<br>${driverButton()}<br>Run it (<b>Extract</b>, then <b>Install</b>; it needs administrator rights: on a school computer, ask the IT team), then unplug and replug the board. A board with a CH340 chip needs the ${ch340} instead.</li>`;
     case 'mac':
       return `<li class="z1-upload-driver-tip">macOS 13 or newer needs no driver (CH340 and FTDI are built in). On macOS 12 or older, a CH340 board needs the ${mac}; then unplug and replug the board.</li>`;
     case 'chromeos':
@@ -87,8 +87,13 @@ function driverTip(os: ClientOs): string {
     case 'linux':
       return `<li class="z1-upload-driver-tip">Linux needs no driver. On Ubuntu, the <code>brltty</code> package can take the board: remove it (<code>sudo apt remove brltty</code>), then unplug and replug the board.</li>`;
     default:
-      return `<li class="z1-upload-driver-tip">${seen} <b>Windows:</b> install the driver of the board's USB chip (<a href="${CH340_DRIVER.windows}" target="_blank" rel="noopener" data-role="driver">CH340</a> or <a href="${FTDI_DRIVER.windows}" target="_blank" rel="noopener" data-role="driver">FTDI</a>), then unplug and replug the board. <b>macOS 12 or older:</b> ${mac}.</li>`;
+      return `<li class="z1-upload-driver-tip">${seen} <b>Windows:</b> the board needs its USB driver once: ${driverButton()} then unplug and replug the board (a board with a CH340 chip needs the ${ch340} instead). <b>macOS 12 or older:</b> ${mac}.</li>`;
   }
+}
+
+/** The shipped Windows driver as a download button (a same-origin `download` link: no new tab, no page in between). */
+function driverButton(): string {
+  return `<a class="z1-btn z1-upload-driver" href="${BOARD_DRIVER.windows}" download="${BOARD_DRIVER.fileName}" data-role="driver">⬇ Download the board driver (Windows, ${BOARD_DRIVER.sizeText})</a>`;
 }
 
 export type UploadStage = 'download' | 'compile' | 'choose' | 'upload' | 'done' | 'error';
@@ -134,9 +139,47 @@ export const CH340_DRIVER = {
   windows: 'https://www.wch-ic.com/downloads/CH341SER_EXE.html',
   mac: 'https://www.wch-ic.com/downloads/CH341SER_MAC_ZIP.html',
 } as const;
-export const FTDI_DRIVER = {
-  windows: 'https://ftdichip.com/drivers/vcp-drivers/',
+/**
+ * The ZERO1 board's USB-serial chip is an FTDI FT232R. Its Windows driver, FTDI's own VCP
+ * installer (CDM 2.12.36.4, unmodified, Authenticode-signed by FTDI; public/THIRD_PARTY_NOTICES.md
+ * §3), ships with the site under public/drivers/, so that it is one click away also on a school
+ * network. A web page cannot install it: the student runs the file. macOS 13+, ChromeOS and
+ * Linux have the driver built in; FTDI's current version is at ftdichip.com/drivers/vcp-drivers/.
+ */
+export const BOARD_DRIVER = {
+  /** Relative to the page (the site's base is './'). */
+  windows: 'drivers/CDM212364_Setup.exe',
+  fileName: 'CDM212364_Setup.exe',
+  version: '2.12.36.4',
+  sizeText: '2 MB',
+  sha256: '835dd64b199190d20dc37c0cadeb064b7eaaaef271703781b2b259b7085437a4',
 } as const;
+
+/** localStorage key set after the first successful upload from this browser: the first-time box then goes. */
+export const UPLOAD_DONE_KEY = 'z1.upload.done';
+
+/** The first-time box of the choose step (Windows, while this browser never finished an upload). */
+export const FIRST_TIME_TEXT = {
+  title: 'First upload on this computer?',
+  before: 'The ZERO1 board needs its USB driver once (Windows):',
+  after: 'Run it (Extract, then Install), unplug and replug the board, then click Choose the board…. Driver already installed? Just choose the board.',
+} as const;
+
+function uploadedBefore(): boolean {
+  try {
+    return localStorage.getItem(UPLOAD_DONE_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function rememberUploaded(): void {
+  try {
+    localStorage.setItem(UPLOAD_DONE_KEY, '1');
+  } catch {
+    // private mode or quota: the box simply shows again next time
+  }
+}
 
 /** The chooser was refused at once, without a list: serial ports are blocked for this site (setting or school policy). */
 export const BLOCKED_TEXT =
@@ -151,6 +194,16 @@ export const LINUX_PORT_HINT = 'On Linux, also add yourself to the dialout group
 
 /** After the chooser closed without a board: most often the board was not in the list. */
 export const NO_BOARD_TEXT = 'No board chosen. Board not in the list? See the tips below.';
+
+/** The board chosen before is still plugged in: uploads go to it without the chooser (docs/UPLOAD.md §2). */
+export const KNOWN_BOARD_TEXT = {
+  connecting: 'Connecting to the board chosen before…',
+  /** Under "Done": how the next uploads work, and the way to another board. */
+  done: 'Next time, Upload goes to this board by itself while it stays plugged in.',
+  chooseOther: 'Choose another board…',
+  /** Added to the help when the upload to the remembered board failed. */
+  failed: 'This was the board chosen last time. Try again, then pick the board in the list.',
+} as const;
 
 const PAGE_SIZE = 128;
 
@@ -203,6 +256,9 @@ export function createUploadDialog(parent: HTMLElement, options: UploadDialogOpt
       <p class="z1-upload-size" data-role="size" hidden></p>
 
       <div class="z1-upload-choose" data-role="choose" hidden>
+        <div class="z1-upload-firsttime" data-role="first-time" hidden>
+          <b>${FIRST_TIME_TEXT.title}</b> ${FIRST_TIME_TEXT.before}<br>${driverButton()}<br>${FIRST_TIME_TEXT.after}
+        </div>
         <button type="button" class="z1-btn z1-btn-primary" data-action="choose">Choose the board…</button>
         <ol>
           <li>Plug the ZERO1 board into a USB port.</li>
@@ -219,6 +275,8 @@ export function createUploadDialog(parent: HTMLElement, options: UploadDialogOpt
           <button type="button" class="z1-btn" data-action="choose-any">Show every serial port…</button>
         </details>
       </div>
+
+      <p class="z1-upload-known" data-role="known" hidden>${KNOWN_BOARD_TEXT.done} <button type="button" class="z1-btn z1-btn-small" data-action="choose-other">${KNOWN_BOARD_TEXT.chooseOther}</button></p>
 
       <div class="z1-upload-error" data-role="error" hidden>
         <p class="z1-upload-message" data-role="message"></p>
@@ -250,6 +308,9 @@ export function createUploadDialog(parent: HTMLElement, options: UploadDialogOpt
   const progressBar = progressEl.firstElementChild as HTMLElement;
   const sizeEl = role('size');
   const chooseEl = role('choose');
+  const firstTimeEl = role('first-time');
+  const knownEl = role('known');
+  const chooseOtherButton = action('choose-other');
   const errorEl = role('error');
   const messageEl = role('message');
   const helpEl = role('help');
@@ -280,6 +341,7 @@ export function createUploadDialog(parent: HTMLElement, options: UploadDialogOpt
     icon.textContent = tone === 'ok' ? '✓' : tone === 'error' ? '!' : tone === 'idle' ? '?' : '';
     dialog.dataset.stage = next;
     chooseEl.hidden = next !== 'choose';
+    if (next !== 'done') knownEl.hidden = true;
     retryButton.hidden = next !== 'error';
     cancelButton.hidden = next === 'done' || next === 'error';
     closeButton.hidden = !(next === 'done' || next === 'error');
@@ -390,16 +452,28 @@ export function createUploadDialog(parent: HTMLElement, options: UploadDialogOpt
         fail(`The program is too big: ${flash} bytes, but the board only has room for ${result.maxFlash} bytes.`, HELP_TEXT.TOO_LARGE, result.diagnostics, 'Sketch too big');
         return;
       }
-      setStage('choose', STAGE_TEXT.choose, 'idle');
-      chooseButton.disabled = false;
-      chooseAnyButton.disabled = false;
-      chooseButton.focus();
+      // The board chosen before, still plugged in: straight to the upload, no chooser (no click needed).
+      const known = (await service.knownPort?.()) ?? null;
+      if (current !== session) return;
+      if (known) {
+        await uploadTo(known, current, true);
+        return;
+      }
+      showChooser();
     } catch (err) {
       if (current !== session) return;
       const d = describeError(err);
       consoleMessage({ level: 'error', text: `Upload: ${d.message}` });
       fail(d.message, d.help, [], 'The compiler could not start');
     }
+  };
+
+  /** Stage 3: "Choose the board…" (and the tips), the buttons enabled. */
+  const showChooser = (): void => {
+    setStage('choose', STAGE_TEXT.choose, 'idle');
+    chooseButton.disabled = false;
+    chooseAnyButton.disabled = false;
+    chooseButton.focus();
   };
 
   /** Stage 3 + 4: the chooser (from the click), then the upload. `anyPort`: every serial port, not only the usual board chips. */
@@ -436,9 +510,15 @@ export function createUploadDialog(parent: HTMLElement, options: UploadDialogOpt
       return;
     }
     if (current !== session) return;
+    await uploadTo(port, current, false);
+  };
+
+  /** Stage 4: the upload to `port`; `known` = the board chosen before, used without the chooser. */
+  const uploadTo = async (port: WebSerialPortLike, current: number, known: boolean): Promise<void> => {
+    if (!build?.hex) return;
     abort = new AbortController();
     const signal = abort.signal;
-    setStage('upload', 'Connecting to the board…');
+    setStage('upload', known ? KNOWN_BOARD_TEXT.connecting : 'Connecting to the board…');
     setProgress(0);
     try {
       const result: UploadResult = await service.upload(build.hex, {
@@ -447,7 +527,7 @@ export function createUploadDialog(parent: HTMLElement, options: UploadDialogOpt
         log: (line) => log.push(line),
         onProgress: (p: UploadProgress) => {
           if (current !== session) return;
-          if (p.phase === 'connect') setStage('upload', 'Connecting to the board…');
+          if (p.phase === 'connect') setStage('upload', known ? KNOWN_BOARD_TEXT.connecting : 'Connecting to the board…');
           else if (p.phase === 'write') {
             const pages = Math.ceil(p.total / PAGE_SIZE);
             setStage('upload', `Uploading (page ${Math.min(pages, Math.floor(p.done / PAGE_SIZE) + (p.done < p.total ? 1 : 0))} of ${pages})`);
@@ -460,6 +540,10 @@ export function createUploadDialog(parent: HTMLElement, options: UploadDialogOpt
       showDetails(log);
       setProgress(1);
       setStage('done', payload.successNote ?? STAGE_TEXT.done, 'ok');
+      rememberUploaded(); // the driver is there: no first-time box from now on
+      firstTimeEl.hidden = true;
+      service.rememberPort?.(port); // the next Upload goes to this board without the chooser
+      knownEl.hidden = !service.knownPort;
       consoleMessage({ level: 'info', text: `Uploaded to the board: ${result.pagesWritten} pages in ${(result.ms.total / 1000).toFixed(1)} s. The sketch is running.` });
       closeButton.focus();
     } catch (err) {
@@ -467,7 +551,8 @@ export function createUploadDialog(parent: HTMLElement, options: UploadDialogOpt
       const d = describeError(err);
       showDetails(log);
       consoleMessage({ level: 'error', text: `Upload failed (${d.code}): ${d.message}` });
-      const help = d.code === 'PORT' && os === 'linux' ? `${d.help} ${LINUX_PORT_HINT}` : d.help;
+      let help = d.code === 'PORT' && os === 'linux' ? `${d.help} ${LINUX_PORT_HINT}` : d.help;
+      if (known && d.code !== 'ABORTED') help = `${help} ${KNOWN_BOARD_TEXT.failed}`.trim();
       fail(d.message, help, [], d.code === 'ABORTED' ? 'Upload cancelled' : 'Upload failed');
     } finally {
       abort = null;
@@ -489,12 +574,14 @@ export function createUploadDialog(parent: HTMLElement, options: UploadDialogOpt
   chooseAnyButton.addEventListener('click', () => void chooseAndUpload({ anyPort: true }));
   retryButton.addEventListener('click', () => {
     session++;
-    if (build?.hex) {
-      setStage('choose', STAGE_TEXT.choose, 'idle');
-      chooseButton.disabled = false;
-      chooseAnyButton.disabled = false;
-      chooseButton.focus();
-    } else void compile();
+    if (build?.hex) showChooser(); // the chooser, also after a failure of the board chosen before
+    else void compile();
+  });
+  chooseOtherButton.addEventListener('click', () => {
+    session++;
+    service.forgetPort?.();
+    if (build?.hex) showChooser();
+    else void compile();
   });
   cancelButton.addEventListener('click', cancel);
   closeButton.addEventListener('click', () => dialog.close());
@@ -517,6 +604,7 @@ export function createUploadDialog(parent: HTMLElement, options: UploadDialogOpt
       session++;
       payload = next;
       notListedEl.open = false; // the tips open again only after an empty chooser
+      firstTimeEl.hidden = !(os === 'windows' && !uploadedBefore()); // Windows, until an upload from this browser worked
       const note = role('note');
       note.textContent = next.note ?? '';
       note.hidden = !next.note;
