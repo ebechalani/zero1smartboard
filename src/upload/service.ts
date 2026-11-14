@@ -65,6 +65,16 @@ export interface UploadServiceLike {
    * with another chip, "My board is not in the list").
    */
   requestPort(options?: { anyPort?: boolean }): Promise<WebSerialPortLike>;
+  /**
+   * The board chosen before, when it is still plugged in: the browser keeps the permission, so no
+   * chooser (and no click) is needed. The port of the last successful upload (rememberPort) when it
+   * is there, else the only granted port; null when there is none or several.
+   */
+  knownPort?(): Promise<WebSerialPortLike | null>;
+  /** After a successful upload: knownPort() prefers this board from now on. */
+  rememberPort?(port: WebSerialPortLike): void;
+  /** "Choose another board…": knownPort() no longer prefers the remembered board. */
+  forgetPort?(): void;
   /** Flash the HEX to the board (reset, sync, write, verify, run). */
   upload(hex: string, options?: UploadOptions): Promise<UploadResult>;
   /** Total download size of the toolchain, for the "about 6 MB" text (bytes on the wire are smaller: gzip). */
@@ -137,6 +147,8 @@ export async function detectUploadSupport(options: { baseUrl?: string; serial?: 
 }
 
 export interface UploadServiceOptions {
+  /** Where the board of the last successful upload is remembered (default localStorage; null = nowhere). */
+  storage?: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'> | null;
   /** The toolchain folder URL (default: `<site>/toolchain/`). */
   baseUrl?: string;
   /** The manifest, when detectUploadSupport() already fetched it. */
@@ -155,10 +167,42 @@ function defaultCreateWorker(): Worker {
 }
 
 /** The real service: a toolchain worker + Web Serial. */
+/** localStorage key of the USB ids of the board of the last successful upload (`{"vid":1027,"pid":24577}`). */
+export const LAST_PORT_KEY = 'z1.upload.port';
+
+interface UsbIds {
+  vid: number;
+  pid: number | null;
+}
+
+function defaultStorage(): Pick<Storage, 'getItem' | 'setItem' | 'removeItem'> | null {
+  try {
+    return globalThis.localStorage ?? null;
+  } catch {
+    return null; // storage blocked: the chooser comes back every time
+  }
+}
+
+function readLastPort(storage: Pick<Storage, 'getItem'> | null): UsbIds | null {
+  try {
+    const raw = storage?.getItem(LAST_PORT_KEY);
+    if (!raw) return null;
+    const v = JSON.parse(raw) as { vid?: unknown; pid?: unknown };
+    return typeof v.vid === 'number' ? { vid: v.vid, pid: typeof v.pid === 'number' ? v.pid : null } : null;
+  } catch {
+    return null;
+  }
+}
+
+function sameUsbIds(info: { usbVendorId?: number; usbProductId?: number } | undefined, last: UsbIds): boolean {
+  return info?.usbVendorId === last.vid && (info.usbProductId ?? null) === last.pid;
+}
+
 export class UploadService implements UploadServiceLike {
   private readonly baseUrl: string;
   private readonly createWorker: () => Worker;
   private readonly serial: WebSerialLike | null;
+  private readonly storage: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'> | null;
   private readonly fetchFn: typeof fetch;
   private manifest: ToolchainManifest | undefined;
   private worker: Worker | null = null;
@@ -171,6 +215,7 @@ export class UploadService implements UploadServiceLike {
     this.manifest = options.manifest;
     this.createWorker = options.createWorker ?? defaultCreateWorker;
     this.serial = options.serial === undefined ? getWebSerial() : options.serial;
+    this.storage = options.storage === undefined ? defaultStorage() : options.storage;
     this.fetchFn = options.fetch ?? ((input, init) => fetch(input, init));
   }
 
@@ -250,6 +295,38 @@ export class UploadService implements UploadServiceLike {
   requestPort(options: { anyPort?: boolean } = {}): Promise<WebSerialPortLike> {
     if (!this.serial) return Promise.reject(new UploadError('UNSUPPORTED', UNSUPPORTED_TEXT['no-serial']));
     return requestBoardPort(this.serial, options.anyPort ? null : CHOOSER_FILTERS);
+  }
+
+  async knownPort(): Promise<WebSerialPortLike | null> {
+    if (!this.serial) return null;
+    let ports: WebSerialPortLike[];
+    try {
+      ports = (await this.serial.getPorts()).filter((p) => p.connected !== false);
+    } catch {
+      return null;
+    }
+    const last = readLastPort(this.storage);
+    const same = last ? ports.filter((p) => sameUsbIds(p.getInfo?.(), last)) : [];
+    if (same.length === 1) return same[0]!;
+    return ports.length === 1 ? ports[0]! : null;
+  }
+
+  rememberPort(port: WebSerialPortLike): void {
+    const info = port.getInfo?.();
+    if (info?.usbVendorId === undefined) return; // a port without USB ids (Bluetooth) is not worth remembering
+    try {
+      this.storage?.setItem(LAST_PORT_KEY, JSON.stringify({ vid: info.usbVendorId, pid: info.usbProductId ?? null }));
+    } catch {
+      // private mode or quota: the chooser simply comes back next time
+    }
+  }
+
+  forgetPort(): void {
+    try {
+      this.storage?.removeItem(LAST_PORT_KEY);
+    } catch {
+      // nothing to forget
+    }
   }
 
   async upload(hex: string, options: UploadOptions = {}): Promise<UploadResult> {

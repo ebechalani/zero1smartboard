@@ -26,6 +26,8 @@ export interface FakeUploadServiceOptions {
   imageBytes?: number;
   /** Hold the upload until `release()` is called (for Cancel tests). */
   hold?: boolean;
+  /** knownPort() finds the board chosen before (default: none, the chooser is needed). */
+  known?: boolean;
 }
 
 export const OK_BUILD: BuildOutput = {
@@ -114,6 +116,21 @@ export class FakeUploadService implements UploadServiceLike {
     if (this.o.buildError) throw new Error(this.o.buildError);
     const b = this.o.build ?? OK_BUILD;
     return typeof b === 'function' ? b(source) : b;
+  }
+
+  async knownPort(): Promise<WebSerialPortLike | null> {
+    this.calls.push('knownPort');
+    await tick();
+    return this.o.known ? { open: async () => {}, close: async () => {}, readable: null, writable: null, setSignals: async () => {}, getInfo: () => ({ usbVendorId: 0x0403, usbProductId: 0x6001 }) } : null;
+  }
+
+  rememberPort(): void {
+    this.calls.push('rememberPort');
+  }
+
+  forgetPort(): void {
+    this.calls.push('forgetPort');
+    this.o.known = false;
   }
 
   async requestPort(options: { anyPort?: boolean } = {}): Promise<WebSerialPortLike> {

@@ -60,7 +60,23 @@ The last two are our own MIT-licensed, API-compatible replacements for
 The Optiboot bootloader on the board (GPL-2.0) is not shipped: the site only
 talks to it.
 
-## 3. Licence texts
+## 3. The board's Windows USB driver (`drivers/CDM212364_Setup.exe`)
+
+The ZERO1 board talks to the computer through an FTDI FT232R USB-serial chip.
+Windows needs FTDI's driver for it once per computer; so that it is one click
+away in the Upload dialog (also on a school network), the site ships FTDI's own
+installer, unmodified: **FTDI CDM Drivers 2.12.36.4 for Windows**
+(`CDM212364_Setup.exe`, 2,264,632 bytes, SHA-256
+`835dd64b199190d20dc37c0cadeb064b7eaaaef271703781b2b259b7085437a4`), Authenticode-signed
+by Future Technology Devices International Ltd on 2021-03-17.
+
+© Future Technology Devices International Ltd. The driver is distributed under
+FTDI's Driver Licence Terms, which the installer shows and which are published at
+<https://ftdichip.com/driver-licence-terms/>: it may be used only with products
+based on FTDI chips (the ZERO1 board is one) and the licence information must not
+be changed. The current version is at <https://ftdichip.com/drivers/vcp-drivers/>.
+
+## 4. Licence texts
 
 ### MIT License (LiquidCrystal_I2C and NewPing ZERO1 editions)
 

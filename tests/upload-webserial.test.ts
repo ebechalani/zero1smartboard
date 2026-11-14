@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 import { uploadWithWebSerial, WebSerialUploadPort, requestBoardPort, UNO_USB_FILTERS, OPEN_TIMEOUT_MS } from '../src/upload/serial/webserial';
 import type { WebSerialPortLike } from '../src/upload/serial/webserial';
 import { UploadError } from '../src/upload/serial/errors';
-import { UploadService } from '../src/upload/service';
+import { LAST_PORT_KEY, UploadService } from '../src/upload/service';
 import { RealtimeSimSerialPort } from './fakes/upload/realtime-webserial';
 import { newOptibootUno, compareFlash, readText, fixture } from './fakes/upload/scenario';
 import type { UploadProgress } from '../src/upload/serial/uploader';
@@ -183,6 +183,38 @@ test('UploadService.requestPort: the usual chips by default, every serial port w
   await service.requestPort();
   await service.requestPort({ anyPort: true });
   assert.deepEqual(seen, [{ filters: UNO_USB_FILTERS }, {}]);
+});
+
+test('UploadService.knownPort: the remembered board among the granted ports, else the only one, else none', async () => {
+  const port = (usbVendorId: number, usbProductId: number, connected?: boolean) =>
+    ({ open: async () => {}, close: async () => {}, readable: null, writable: null, setSignals: async () => {}, getInfo: () => ({ usbVendorId, usbProductId }), ...(connected === undefined ? {} : { connected }) }) as WebSerialPortLike;
+  const memory = new Map<string, string>();
+  const storage = { getItem: (k: string) => memory.get(k) ?? null, setItem: (k: string, v: string) => void memory.set(k, v), removeItem: (k: string) => void memory.delete(k) };
+  let granted: WebSerialPortLike[] = [];
+  const serial = { requestPort: async () => scriptedPort([]), getPorts: async () => granted };
+  const service = new UploadService({ serial, createWorker: () => ({}) as Worker, storage });
+  const ftdi = port(0x0403, 0x6001);
+  const ch340 = port(0x1a86, 0x7523);
+  assert.equal(await service.knownPort(), null); // nothing granted yet
+  granted = [ftdi];
+  assert.equal(await service.knownPort(), ftdi); // the only granted port, even before any upload
+  granted = [ftdi, ch340];
+  assert.equal(await service.knownPort(), null); // two boards, none remembered: the chooser
+  service.rememberPort(ch340);
+  assert.equal(memory.get(LAST_PORT_KEY), '{"vid":6790,"pid":29987}'); // 0x1a86:0x7523
+  assert.equal(await service.knownPort(), ch340); // the board of the last successful upload
+  granted = [ftdi, port(0x1a86, 0x7523, false)]; // the remembered board is unplugged (Chrome 117+ says so)
+  assert.equal(await service.knownPort(), ftdi);
+  granted = [ch340, port(0x1a86, 0x7523)]; // two of the same kind: ambiguous
+  assert.equal(await service.knownPort(), null);
+  service.forgetPort();
+  assert.equal(memory.has(LAST_PORT_KEY), false);
+  granted = [ftdi, ch340];
+  assert.equal(await service.knownPort(), null);
+  service.rememberPort({ ...ftdi, getInfo: () => ({}) }); // a Bluetooth port has no USB ids: not remembered
+  assert.equal(memory.has(LAST_PORT_KEY), false);
+  const noSerial = new UploadService({ serial: null, createWorker: () => ({}) as Worker, storage });
+  assert.equal(await noSerial.knownPort(), null);
 });
 
 test('a port that never opens (a Bluetooth port picked from every serial port) is given up, and closed if it opens late', async () => {

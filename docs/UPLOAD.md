@@ -58,14 +58,46 @@ the Upload dialog says *serial ports are blocked for this site* (a chooser close
 in under 250 ms cannot have been closed by a person). An iframe embedding the
 simulator needs `allow="serial"`.
 
+### The board chosen before
+
+Web Serial keeps the permission for a port the student chose, so the chooser is
+only needed once per board and browser. After compiling, the dialog asks the
+service for the **known port** (`UploadService.knownPort()`): among the granted
+ports that are still plugged in (`getPorts()`, minus `connected === false`), the
+board of the last successful upload (its USB ids are remembered in localStorage
+`z1.upload.port`, `rememberPort()`), else the only granted port; with none or
+several, the chooser shows as before. A known port is used at once, with the
+stage text *Connecting to the board chosen before…* (opening a port needs no user
+gesture; only `requestPort()` does). Under **Done** the dialog says that the next
+uploads go to this board by itself, with **Choose another board…**
+(`forgetPort()`, then the chooser). When the known board fails, the help adds
+*This was the board chosen last time. Try again, then pick the board in the
+list.*, and **Try again** opens the chooser.
+
 ### USB-serial drivers
 
-Most ZERO1 boards use a WCH CH340 chip (USB id `1A86:7523`); some have an FTDI
-FT232R (`0403:6001`; on Windows its hardware id reads `FTDIBUS\COMPORT&VID_0403&PID_6001`
-and the port *USB Serial Port (COMx)*). FTDI drivers are built into Windows
-(Windows Update), macOS and Linux; the Windows package is at
-<https://ftdichip.com/drivers/vcp-drivers/>. If the Arduino IDE sees the board,
-its driver is installed. The table is for the CH340:
+The ZERO1 board has an FTDI FT232R USB-serial chip (`0403:6001`; on Windows its
+hardware id reads `FTDIBUS\COMPORT&VID_0403&PID_6001` and the port *USB Serial
+Port (COMx)*); some boards have a WCH CH340 (`1A86:7523`) instead. macOS 13+,
+ChromeOS and Linux have the FTDI driver built in. Windows gets it from Windows
+Update when it is online, otherwise it needs FTDI's installer: the site ships it
+as `public/drivers/CDM212364_Setup.exe` (FTDI CDM 2.12.36.4, unmodified, signed
+by FTDI; `BOARD_DRIVER` in `src/upload/ui/upload-dialog.ts`; licence note in
+`public/THIRD_PARTY_NOTICES.md` §3), so that it is one click away on a school
+network. **A web page cannot install a driver**: the Upload dialog puts the
+download in front of the student at the right moment instead:
+
+- on Windows, while this browser has never finished an upload (`z1.upload.done`
+  in localStorage), the choose step opens with a **First upload on this
+  computer?** box: **⬇ Download the board driver (2 MB)**, then run it (Extract,
+  then Install; administrator rights), unplug and replug the board, Choose the
+  board…;
+- the **My board is not in the list** panel's Windows line has the same button
+  (and the CH340 driver link for a CH340 board).
+
+To ship a newer FTDI version: replace the file, and update the file name, version
+and SHA-256 in `BOARD_DRIVER` and in the notices. If the Arduino IDE sees the
+board, its driver is installed. The table is for the CH340:
 
 | OS | Driver |
 |---|---|
@@ -83,9 +115,9 @@ Arduino IDE saw it.
 When it closes without a board, the Upload dialog opens **My board is not in the
 list**: use a data cable and another USB port, what to do when no list opened at
 all (serial ports blocked for the site), the driver line for this computer
-(Windows: "If the Arduino IDE sees the board, its driver is installed", then
-*CH340* and *FTDI* driver links; macOS 13+, ChromeOS: no driver needed; Linux:
-remove `brltty`), and **Show every serial port…**, which opens the chooser with
+(Windows: "If the Arduino IDE sees the board, its driver is installed", then the
+shipped board driver and the *CH340* link; macOS 13+, ChromeOS: no driver needed;
+Linux: remove `brltty`), and **Show every serial port…**, which opens the chooser with
 no filter: with the list open, unplug and replug the board, and its entry is the
 one that appears (Chrome updates the list live); no new entry means a driver or
 cable problem. After an empty chooser the keyboard focus goes to the tips. An open
